@@ -7,7 +7,7 @@ import { MainNav } from "@/components/main-nav"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata = {
-  title: "CloudOS - Cloud Computing Platform",
+  title: "OpenCloud - Open Source Cloud Software",
   description: "A modern cloud computing platform for your infrastructure needs",
 }
 
