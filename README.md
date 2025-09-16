@@ -5,8 +5,9 @@ OpenCloud is meant to be flexible in the sense of where it can be ran, as is the
 
 ## Getting Started
 1. Clone this repository
-2. `$ npm i`
-3. `$ npm run dev`
+2. `$ cd ui`
+3. `$ npm i`
+4. `$ npm run dev`
 
 ## Contributing
 We welcome all contributions to OpenCloud, but these contributions must follow our contribution guidelines
