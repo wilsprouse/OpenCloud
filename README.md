@@ -10,5 +10,5 @@ OpenCloud is meant to be flexible in the sense of where it can be ran, as is the
 4. `$ npm run dev`
 
 ## Contributing
-We welcome all contributions to OpenCloud, but these contributions must follow our contribution guidelines
+We welcome all contributions to OpenCloud, but these contributions must follow our [contribution guidelines](CONTRIBUTING.md)
 
