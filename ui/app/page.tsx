@@ -13,7 +13,7 @@ export default function DashboardPage() {
   return (
     <>
       <DashboardShell>
-        <DashboardHeader heading="Welcome back, John" text="Here's what's happening with your cloud services today.">
+        <DashboardHeader heading="Welcome back, John" text="Here's what's happening with your services today.">
           <Button>
             Deploy Service <ChevronRight className="ml-2 h-4 w-4" />
           </Button>

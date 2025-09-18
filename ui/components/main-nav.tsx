@@ -9,7 +9,7 @@ export function MainNav() {
       <div className="flex items-center gap-6 md:gap-10">
         <Link href="/" className="flex items-center space-x-2">
           <Cloud className="h-6 w-6" />
-          <span className="hidden font-bold sm:inline-block">CloudOS</span>
+          <span className="hidden font-bold sm:inline-block">OpenCloud</span>
         </Link>
         <nav className="hidden gap-6 md:flex">
           <Link href="/" className="flex items-center text-sm font-medium text-foreground">
