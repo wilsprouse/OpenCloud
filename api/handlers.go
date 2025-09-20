@@ -34,10 +34,7 @@ func GetSystemMetrics(w http.ResponseWriter, r *http.Request) {
 	freeBytes := float64(statfs.Bavail) * float64(statfs.Bsize)
 	freeGB := freeBytes / (1000 * 1000 * 1000) // divide by GiB (binary GB)
 
-	//freeBytes := ((statfs.Bavail * uint64(statfs.Bsize)) / (1000 * 1000 * 1000))
-
-
-	ret := map[string]interface{}{
+	ret := map[string]interface{} {
 		"STORAGE": fmt.Sprintf("%.2f", freeGB),
 		"CPU": 100,
 		"MEMORY": 101,
