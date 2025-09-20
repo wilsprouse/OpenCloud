@@ -1,9 +1,29 @@
+"use client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { Cpu, HardDrive, MemoryStick, Network, Activity, Clock } from "lucide-react"
+import axios from "axios";
+import { useEffect } from "react";
+import client from "../app/utility/post";
 
 export function ServerMetrics() {
+
+  useEffect(() => {
+    const getMetrics = async () => {
+      
+      client.get("get-server-metrics")
+        .then((response) => {
+          console.log("Metrics:", response.data);
+        })
+        .catch((error) => {
+          console.error("Error fetching data:", error);
+        });
+    };
+
+    getMetrics();
+  }, []); // empty deps -> runs once on mount
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -13,7 +33,7 @@ export function ServerMetrics() {
         </div>
         <Badge variant="outline" className="bg-green-50 text-green-700">
           <Activity className="w-3 h-3 mr-1" />
-          All Systems Operational
+          All Systems Operational 
         </Badge>
       </div>
 

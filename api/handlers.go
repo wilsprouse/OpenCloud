@@ -3,17 +3,20 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"encoding/json"
 	"golang.org/x/sys/unix"
 	"os"
 )
 
-func GetSystemMetrics(w http.ResponseWriter, r *http.Request) {
-	"""
-	This function gets system metrics to populate the dashboard with. 
-	These metrics include CPU usage, Memory, and Disk Usage
 
-	This function returns a json payload of the metrics it collects
-	"""
+func GetSystemMetrics(w http.ResponseWriter, r *http.Request) {
+	/*
+		This function gets system metrics to populate the dashboard with. 
+		These metrics include CPU usage, Memory, and Disk Usage
+
+		This function returns a json payload of the metrics it collects
+	*/
+
 	wd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting pwd: %v\n", err)
@@ -29,6 +32,17 @@ func GetSystemMetrics(w http.ResponseWriter, r *http.Request) {
 
 	freeBytes := statfs.Bavail * uint64(statfs.Bsize)
 
-	fmt.Fprintf(w, "Hello, Go HTTP Server! You have %d bytes avail", freeBytes)
+
+	ret := map[string]interface{}{
+		"STORAGE": freeBytes,
+		"CPU": 100,
+		"MEMORY": 101,
+	} // Return Value
+
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	json.NewEncoder(w).Encode(ret)
 
 }

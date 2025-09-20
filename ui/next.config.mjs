@@ -9,6 +9,9 @@ const nextConfig = {
     images: {
       unoptimized: true,
     },
+    env: {
+      REACT_APP_BACKEND: process.env.REACT_APP_BACKEND,
+    },
   }
   
   export default nextConfig
