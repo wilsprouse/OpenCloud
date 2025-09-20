@@ -3,26 +3,40 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { Cpu, HardDrive, MemoryStick, Network, Activity, Clock } from "lucide-react"
-import axios from "axios";
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 import client from "../app/utility/post";
 
 export function ServerMetrics() {
 
-  useEffect(() => {
-    const getMetrics = async () => {
-      
-      client.get("get-server-metrics")
-        .then((response) => {
-          console.log("Metrics:", response.data);
-        })
-        .catch((error) => {
-          console.error("Error fetching data:", error);
-        });
-    };
+  const [ storage, setStorage ] = useState("")
 
-    getMetrics();
+  useEffect(() => {
+    
+    const getMetrics = async () => {
+
+      try {
+        const response = await client.get("get-server-metrics")
+      
+        // update state with STORAGE field
+        setStorage(response.data.STORAGE)
+
+        // if you want to see it right away, log from response
+        //console.log("Metrics (from storage state):", re)
+      } catch (error) {
+        console.error("Error fetching data:", error)
+      }
+    }
+
+    getMetrics() 
+  
   }, []); // empty deps -> runs once on mount
+
+    // Log whenever storage state changes
+  useEffect(() => {
+    if (storage) {
+      console.log("Metrics (from state):", storage)
+    }
+  }, [storage])
 
   return (
     <div className="space-y-6">
@@ -70,11 +84,11 @@ export function ServerMetrics() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Disk Usage</CardTitle>
+            <CardTitle className="text-sm font-medium">Storage</CardTitle>
             <HardDrive className="h-4 w-4 text-purple-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">847 GB</div>
+            <div className="text-2xl font-bold">{storage} GB</div>
             <Progress value={84} className="mt-2" />
             <div className="flex justify-between text-xs text-muted-foreground mt-2">
               <span>84% of 1 TB</span>
