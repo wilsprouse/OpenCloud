@@ -8,7 +8,10 @@ import client from "../app/utility/post";
 
 export function ServerMetrics() {
 
-  const [ storage, setStorage ] = useState("")
+  const [ UsedStorage, setUsedStorage ] = useState("")
+  const [ AvailableStorage, setAvailableStorage ] = useState("")
+  const [ TotalStorage, setTotalStorage ] = useState("")
+  const [ PercentageUsed, setPercentageUsed ] = useState("")
 
   useEffect(() => {
     
@@ -17,11 +20,12 @@ export function ServerMetrics() {
       try {
         const response = await client.get("get-server-metrics")
       
-        // update state with STORAGE field
-        setStorage(response.data.STORAGE)
+        // update state with UsedStorage field
+        setUsedStorage(response.data.STORAGE.UsedStorage)
+        setAvailableStorage(response.data.STORAGE.AvailableStorage)
+        setTotalStorage(response.data.STORAGE.TotalStorage)
+        setPercentageUsed(response.data.STORAGE.PercentageUsed)
 
-        // if you want to see it right away, log from response
-        //console.log("Metrics (from storage state):", re)
       } catch (error) {
         console.error("Error fetching data:", error)
       }
@@ -30,13 +34,6 @@ export function ServerMetrics() {
     getMetrics() 
   
   }, []); // empty deps -> runs once on mount
-
-    // Log whenever storage state changes
-  useEffect(() => {
-    if (storage) {
-      console.log("Metrics (from state):", storage)
-    }
-  }, [storage])
 
   return (
     <div className="space-y-6">
@@ -88,11 +85,10 @@ export function ServerMetrics() {
             <HardDrive className="h-4 w-4 text-purple-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{storage} GB</div>
-            <Progress value={84} className="mt-2" />
+            <div className="text-2xl font-bold">{AvailableStorage} GB</div>
+            <Progress value={parseInt(PercentageUsed)} className="mt-2" />
             <div className="flex justify-between text-xs text-muted-foreground mt-2">
-              <span>84% of 1 TB</span>
-              <span>153 GB free</span>
+              <span>{PercentageUsed}% Used of {TotalStorage} GB</span>
             </div>
           </CardContent>
         </Card>
