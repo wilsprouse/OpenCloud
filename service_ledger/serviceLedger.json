@@ -1,0 +1,8 @@
+{
+    "Containers" : {
+        "enabled" : false
+    },
+    "Functions" : {
+        "enabled" : false
+    }
+}
