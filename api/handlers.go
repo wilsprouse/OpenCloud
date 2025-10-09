@@ -23,8 +23,18 @@ type Metrics struct {
 
 func getStorageMetrics() (float64, float64, float64) {
 	/*
-		TODO: Write this docstring
+		getStorageMetrics retrieves disk usage statistics for the current working directory.
+
+		Returns:
+  			- usedGB:        The amount of storage currently used (in gigabytes)
+  			- availableGB:   The amount of storage available (in gigabytes)
+  			- totalGB:       The total storage capacity (in gigabytes)
+
+		The function uses the unix.Statfs system call to gather filesystem information.
+		If an error occurs (for example, failing to get the working directory or filesystem stats),
+		the function prints the error to stderr and returns zeros for all values.
 	*/
+
 	wd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting pwd: %v\n", err)
