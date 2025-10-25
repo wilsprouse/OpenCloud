@@ -26,6 +26,7 @@ func withCORS(next http.Handler) http.Handler {
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/get-server-metrics", api.GetSystemMetrics)
+	mux.HandleFunc("/get-containers", api.GetContainers)
 
 	// Wrap all routes with CORS middleware
 	handler := withCORS(mux)

@@ -32,7 +32,7 @@ export default function ContainersPage() {
   const fetchContainers = async () => {
     setLoading(true)
     try {
-      const res = await axios.get<Container[]>("/api/containers")
+      const res = await axios.get<Container[]>("/api/get-containers")
       setContainers(res.data)
     } catch (err) {
       console.error("Failed to fetch containers:", err)

@@ -3,8 +3,11 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"context"
 	"encoding/json"
 	"golang.org/x/sys/unix"
+	"github.com/docker/docker/api/types/image"
+    "github.com/docker/docker/client"
 	"os"
 )
 
@@ -84,4 +87,28 @@ func GetSystemMetrics(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(ret)
 
+}
+
+func GetContainers(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+
+    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+    if err != nil {
+        panic(err)
+    }
+
+    images, err := cli.ImageList(ctx, image.ListOptions{
+        All: true, // include intermediate images
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    for _, img := range images {
+        // Many images have multiple repo tags
+        fmt.Printf("ID: %s\n", img.ID[7:19])
+        fmt.Printf("RepoTags: %v\n", img.RepoTags)
+        fmt.Printf("Size: %.2f MB\n\n", float64(img.Size)/1_000_000)
+    }
+	
 }
