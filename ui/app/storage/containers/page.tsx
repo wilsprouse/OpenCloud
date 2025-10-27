@@ -17,34 +17,35 @@ import axios from "axios"
 import { Button } from "@/components/ui/button"
 import client from "@/app/utility/post";
 
-type Container = {
+type Image = {
   Id: string
   Names: string[]
   Image: string
   State: string
+  Size: string
   Status: string
 }
 
-export default function ContainersPage() {
-  const [containers, setContainers] = useState<Container[]>([])
+export default function ContainerRegistry() {
+  const [images, setImages] = useState<Image[]>([])
   const [loading, setLoading] = useState(false)
 
   // Fetch containers
-  const fetchContainers = async () => {
+  const fetchImages = async () => {
     setLoading(true)
     try {
-      const res = await client.get<Container[]>("/get-containers")
-      setContainers(res.data)
+      const res = await client.get<Image[]>("/get-containers")
+      setImages(res.data)
     } catch (err) {
       console.error("Failed to fetch containers:", err)
     } finally {
       setLoading(false)
     }
-    console.log("Console log: " + containers)
+    console.log("Console log: " + images)
   }
 
   useEffect(() => {
-    fetchContainers()
+    fetchImages()
   }, [])
 
   // Manage container actions
@@ -55,7 +56,7 @@ export default function ContainersPage() {
       } else {
         await axios.post(`/api/containers/${id}/${action}`)
       }
-      fetchContainers() // refresh list
+      fetchImages() // refresh list
     } catch (err) {
       console.error(`Failed to ${action} container:`, err)
     }
@@ -64,7 +65,7 @@ export default function ContainersPage() {
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-4">Container Registry</h1>
-      <Button onClick={fetchContainers} disabled={loading}>
+      <Button onClick={fetchImages} disabled={loading}>
         {loading ? "Refreshing..." : "Refresh"}
       </Button>
 
@@ -75,18 +76,18 @@ export default function ContainersPage() {
               <th className="px-4 py-2 text-left">ID</th>
               <th className="px-4 py-2 text-left">Name</th>
               <th className="px-4 py-2 text-left">Image</th>
-              <th className="px-4 py-2 text-left">State</th>
+              <th className="px-4 py-2 text-left">Size</th>
               <th className="px-4 py-2 text-left">Status</th>
               <th className="px-4 py-2 text-left">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {containers.map((c) => (
+            {images.map((c) => (
               <tr key={c.Id} className="border-t">
                 <td className="px-4 py-2">{c.Id.slice(7, 19)}</td>
                 <td className="px-4 py-2">{c.Names?.[0]?.replace(/^\//, "")}</td>
                 <td className="px-4 py-2">{c.Image}</td>
-                <td className="px-4 py-2">{c.State}</td>
+                <td className="px-4 py-2">{(Number(c.Size) / 1_000_000).toFixed(2)} MB</td>
                 <td className="px-4 py-2">{c.Status}</td>
                 <td className="px-4 py-2 flex gap-2">
                   {c.State !== "running" && (
@@ -117,10 +118,10 @@ export default function ContainersPage() {
                 </td>
               </tr>
             ))}
-            {containers.length === 0 && !loading && (
+            {images.length === 0 && !loading && (
               <tr>
                 <td className="px-4 py-4 text-center text-gray-500" colSpan={6}>
-                  No containers found
+                  No images found
                 </td>
               </tr>
             )}
