@@ -2,3 +2,5 @@ node_modules/
 package-lock.json
 .next/
 bin/
+ui/.eslintrc.json
+ui/tsconfig.tsbuildinfo
