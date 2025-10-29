@@ -75,7 +75,7 @@ export default function ContainerRegistry() {
             <tr>
               <th className="px-4 py-2 text-left">ID</th>
               <th className="px-4 py-2 text-left">Name</th>
-              <th className="px-4 py-2 text-left">Image</th>
+              <th className="px-4 py-2 text-left">Image ID</th>
               <th className="px-4 py-2 text-left">Size</th>
               <th className="px-4 py-2 text-left">Status</th>
               <th className="px-4 py-2 text-left">Actions</th>
@@ -86,7 +86,7 @@ export default function ContainerRegistry() {
               <tr key={c.Id} className="border-t">
                 <td className="px-4 py-2">{c.Id.slice(7, 19)}</td>
                 <td className="px-4 py-2">{c.Names?.[0]?.replace(/^\//, "")}</td>
-                <td className="px-4 py-2">{c.Image}</td>
+                <td className="px-4 py-2">{c.Id.slice(7, 19)}</td>
                 <td className="px-4 py-2">{(Number(c.Size) / 1_000_000).toFixed(2)} MB</td>
                 <td className="px-4 py-2">{c.Status}</td>
                 <td className="px-4 py-2 flex gap-2">

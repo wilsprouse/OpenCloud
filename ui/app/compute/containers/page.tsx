@@ -63,7 +63,7 @@ export default function ContainersPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Container Registry</h1>
+      <h1 className="text-2xl font-bold mb-4">Container</h1>
       <Button onClick={fetchContainers} disabled={loading}>
         {loading ? "Refreshing..." : "Refresh"}
       </Button>
@@ -74,7 +74,7 @@ export default function ContainersPage() {
             <tr>
               <th className="px-4 py-2 text-left">ID</th>
               <th className="px-4 py-2 text-left">Name</th>
-              <th className="px-4 py-2 text-left">Image</th>
+              <th className="px-4 py-2 text-left">Image ID</th>
               <th className="px-4 py-2 text-left">State</th>
               <th className="px-4 py-2 text-left">Status</th>
               <th className="px-4 py-2 text-left">Actions</th>
