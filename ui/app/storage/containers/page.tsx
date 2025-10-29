@@ -32,6 +32,9 @@ type Image = {
   Status: string
 }
 
+// Constants
+const REGISTRY_URL = "registry.opencloud.local"
+
 export default function ContainerRegistry() {
   const [images, setImages] = useState<Image[]>([])
   const [loading, setLoading] = useState(false)
@@ -81,8 +84,12 @@ export default function ContainerRegistry() {
     c.Id?.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch (err) {
+      console.error("Failed to copy to clipboard:", err)
+    }
   }
 
   return (
@@ -329,8 +336,8 @@ export default function ContainerRegistry() {
               <div>
                 <div className="text-xs font-medium text-muted-foreground mb-1">Registry URL</div>
                 <div className="flex items-center justify-between p-2 bg-muted rounded text-sm font-mono">
-                  <span className="truncate">registry.opencloud.local</span>
-                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard("registry.opencloud.local")}>
+                  <span className="truncate">{REGISTRY_URL}</span>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(REGISTRY_URL)}>
                     <Copy className="h-3 w-3" />
                   </Button>
                 </div>
@@ -338,8 +345,8 @@ export default function ContainerRegistry() {
               <div>
                 <div className="text-xs font-medium text-muted-foreground mb-1">Pull Command</div>
                 <div className="flex items-center justify-between p-2 bg-muted rounded text-sm font-mono">
-                  <span className="truncate">docker pull registry.opencloud.local/image</span>
-                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard("docker pull registry.opencloud.local/image")}>
+                  <span className="truncate">docker pull {REGISTRY_URL}/image</span>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(`docker pull ${REGISTRY_URL}/image`)}>
                     <Copy className="h-3 w-3" />
                   </Button>
                 </div>
@@ -347,8 +354,8 @@ export default function ContainerRegistry() {
               <div>
                 <div className="text-xs font-medium text-muted-foreground mb-1">Push Command</div>
                 <div className="flex items-center justify-between p-2 bg-muted rounded text-sm font-mono">
-                  <span className="truncate">docker push registry.opencloud.local/image</span>
-                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard("docker push registry.opencloud.local/image")}>
+                  <span className="truncate">docker push {REGISTRY_URL}/image</span>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => copyToClipboard(`docker push ${REGISTRY_URL}/image`)}>
                     <Copy className="h-3 w-3" />
                   </Button>
                 </div>
