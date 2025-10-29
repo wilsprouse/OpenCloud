@@ -27,6 +27,7 @@ type Image = {
   Id: string
   Names: string[]
   Image: string
+  RepoTags: string[]
   State: string
   Size: string
   Status: string
@@ -80,7 +81,7 @@ export default function ContainerRegistry() {
   // Filter images based on search
   const filteredImages = images.filter(c => 
     c.Names?.[0]?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.Image?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.RepoTags?.[0]?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.Id?.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
@@ -189,7 +190,7 @@ export default function ContainerRegistry() {
                         <div className="space-y-1 flex-1 min-w-0">
                           <div className="flex items-center space-x-2">
                             <h4 className="font-medium truncate">
-                              {c.Names?.[0]?.replace(/^\//, "") || "Unnamed"}
+                              {c.RepoTags?.[0]?.replace(/^\//, "") || "Unnamed"}
                             </h4>
                             <Badge 
                               variant="outline" 
@@ -202,7 +203,7 @@ export default function ContainerRegistry() {
                           <div className="flex items-center space-x-4 text-xs text-muted-foreground">
                             <span className="flex items-center">
                               <Layers className="h-3 w-3 mr-1" />
-                              ID: {c.Id.slice(0, 12)}
+                              ID: {c.Id.slice(7, 19)}
                             </span>
                             <span>•</span>
                             <span className="flex items-center">
@@ -282,8 +283,8 @@ export default function ContainerRegistry() {
                     <Upload className="h-4 w-4" />
                   </div>
                   <div className="text-left">
-                    <div className="font-medium text-sm">Push Image</div>
-                    <div className="text-xs text-muted-foreground">Upload container image</div>
+                    <div className="font-medium text-sm">Upload Image</div>
+                    <div className="text-xs text-muted-foreground">Upload container file (Dockerfile)</div>
                   </div>
                 </div>
               </Button>
