@@ -7,6 +7,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { DashboardHeader } from "@/components/dashboard-header"
 import { DashboardShell } from "@/components/dashboard-shell"
+import { 
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import client from "@/app/utility/post"
 import { 
   Container, 
@@ -20,7 +39,8 @@ import {
   Copy,
   Package,
   HardDrive,
-  Layers
+  Layers,
+  FileText
 } from "lucide-react"
 
 type Image = {
@@ -40,6 +60,16 @@ export default function ContainerRegistry() {
   const [images, setImages] = useState<Image[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [isBuilding, setIsBuilding] = useState(false)
+  
+  // Dockerfile form state
+  const [dockerfileContent, setDockerfileContent] = useState("")
+  const [imageName, setImageName] = useState("")
+  const [imageTag, setImageTag] = useState("latest")
+  const [buildContext, setBuildContext] = useState(".")
+  const [nocache, setNocache] = useState(false)
+  const [platform, setPlatform] = useState("linux/amd64")
 
   // Fetch containers
   const fetchImages = async () => {
@@ -90,6 +120,45 @@ export default function ContainerRegistry() {
       await navigator.clipboard.writeText(text)
     } catch (err) {
       console.error("Failed to copy to clipboard:", err)
+    }
+  }
+
+  // Handle dockerfile upload and build
+  const handleBuildImage = async () => {
+    if (!dockerfileContent || !imageName) {
+      alert("Please provide both a Dockerfile and an image name")
+      return
+    }
+
+    setIsBuilding(true)
+    try {
+      // Send the dockerfile and build parameters to the backend
+      await client.post("/build-image", {
+        dockerfile: dockerfileContent,
+        imageName: `${imageName}:${imageTag}`,
+        context: buildContext,
+        nocache: nocache,
+        platform: platform,
+      })
+      
+      // Reset form and close dialog
+      setDockerfileContent("")
+      setImageName("")
+      setImageTag("latest")
+      setBuildContext(".")
+      setNocache(false)
+      setPlatform("linux/amd64")
+      setIsDialogOpen(false)
+      
+      // Refresh the image list
+      await fetchImages()
+      
+      alert("Image built successfully!")
+    } catch (err) {
+      console.error("Failed to build image:", err)
+      alert("Failed to build image. Please check the logs.")
+    } finally {
+      setIsBuilding(false)
     }
   }
 
@@ -277,17 +346,147 @@ export default function ContainerRegistry() {
               <CardDescription>Common registry operations</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-blue-600">
-                    <Upload className="h-4 w-4" />
+              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 rounded-lg bg-white text-blue-600">
+                        <Upload className="h-4 w-4" />
+                      </div>
+                      <div className="text-left">
+                        <div className="font-medium text-sm">Build from Dockerfile</div>
+                        <div className="text-xs text-muted-foreground">Upload and build container image</div>
+                      </div>
+                    </div>
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Build Docker Image</DialogTitle>
+                    <DialogDescription>
+                      Upload your Dockerfile and configure build options to create a new container image.
+                    </DialogDescription>
+                  </DialogHeader>
+                  
+                  <div className="grid gap-4 py-4">
+                    {/* Image Name */}
+                    <div className="grid gap-2">
+                      <Label htmlFor="imageName">Image Name *</Label>
+                      <Input
+                        id="imageName"
+                        placeholder="my-app"
+                        value={imageName}
+                        onChange={(e) => setImageName(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Name for your container image (e.g., my-app, nginx-custom)
+                      </p>
+                    </div>
+
+                    {/* Image Tag */}
+                    <div className="grid gap-2">
+                      <Label htmlFor="imageTag">Tag</Label>
+                      <Input
+                        id="imageTag"
+                        placeholder="latest"
+                        value={imageTag}
+                        onChange={(e) => setImageTag(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Version tag for the image (default: latest)
+                      </p>
+                    </div>
+
+                    {/* Dockerfile Content */}
+                    <div className="grid gap-2">
+                      <Label htmlFor="dockerfile">Dockerfile Content *</Label>
+                      <Textarea
+                        id="dockerfile"
+                        placeholder={`FROM node:18-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install\nCOPY . .\nEXPOSE 3000\nCMD ["npm", "start"]`}
+                        className="min-h-[200px] font-mono text-sm"
+                        value={dockerfileContent}
+                        onChange={(e) => setDockerfileContent(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Paste your Dockerfile content here
+                      </p>
+                    </div>
+
+                    {/* Build Context */}
+                    <div className="grid gap-2">
+                      <Label htmlFor="buildContext">Build Context Path</Label>
+                      <Input
+                        id="buildContext"
+                        placeholder="."
+                        value={buildContext}
+                        onChange={(e) => setBuildContext(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Path to build context (default: current directory)
+                      </p>
+                    </div>
+
+                    {/* Platform Selection */}
+                    <div className="grid gap-2">
+                      <Label htmlFor="platform">Target Platform</Label>
+                      <Select value={platform} onValueChange={setPlatform}>
+                        <SelectTrigger id="platform">
+                          <SelectValue placeholder="Select platform" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="linux/amd64">Linux AMD64</SelectItem>
+                          <SelectItem value="linux/arm64">Linux ARM64</SelectItem>
+                          <SelectItem value="linux/arm/v7">Linux ARM v7</SelectItem>
+                          <SelectItem value="linux/386">Linux 386</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Target architecture for the image
+                      </p>
+                    </div>
+
+                    {/* No Cache Option */}
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="nocache"
+                        checked={nocache}
+                        onChange={(e) => setNocache(e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                      <Label htmlFor="nocache" className="text-sm font-normal cursor-pointer">
+                        Build without cache (--no-cache)
+                      </Label>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <div className="font-medium text-sm">Upload Image</div>
-                    <div className="text-xs text-muted-foreground">Upload container file (Dockerfile)</div>
-                  </div>
-                </div>
-              </Button>
+
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsDialogOpen(false)}
+                      disabled={isBuilding}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleBuildImage}
+                      disabled={isBuilding || !dockerfileContent || !imageName}
+                    >
+                      {isBuilding ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          Building...
+                        </>
+                      ) : (
+                        <>
+                          <Package className="mr-2 h-4 w-4" />
+                          Build Image
+                        </>
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100">
                 <div className="flex items-center space-x-3">
