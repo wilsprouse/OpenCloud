@@ -17,7 +17,6 @@ type Blob = {
 export default function BlobStorage() {
   const [blobs, setBlobs] = useState<Blob[]>([])
   const [loading, setLoading] = useState(false)
-  const [selectedContainer, setSelectedContainer] = useState<string>("default")
 
   // Fetch blobs
   const fetchBlobs = async () => {
@@ -104,8 +103,8 @@ export default function BlobStorage() {
       </div>
 
       <div className="mt-6 overflow-x-auto">
-        <table className="min-w-full border border-gray-200 rounded-md">
-          <thead className="bg-gray-100">
+        <table className="min-w-full border border-gray-200 dark:border-gray-700 rounded-md">
+          <thead className="bg-gray-100 dark:bg-gray-800">
             <tr>
               <th className="px-4 py-2 text-left">Name</th>
               <th className="px-4 py-2 text-left">Container</th>
