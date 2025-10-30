@@ -4,3 +4,4 @@ package-lock.json
 bin/
 ui/.eslintrc.json
 ui/tsconfig.tsbuildinfo
+*.pem
