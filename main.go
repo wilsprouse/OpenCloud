@@ -28,6 +28,7 @@ func main() {
 	mux.HandleFunc("/get-server-metrics", api.GetSystemMetrics)
 	mux.HandleFunc("/get-containers", api.GetContainers)
 	mux.HandleFunc("/get-images", api.GetContainerRegistry)
+	mux.HandleFunc("/build-image", api.BuildImage)
 
 	// Wrap all routes with CORS middleware
 	handler := withCORS(mux)
