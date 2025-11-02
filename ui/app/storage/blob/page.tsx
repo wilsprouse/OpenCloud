@@ -52,7 +52,7 @@ export default function BlobStorage() {
   const [uploadContainer, setUploadContainer] = useState("")
   
   // Container form state
-  const [containerName, setContainerName] = useState("")
+  const [containerName, setContainerName] = useState<string>("")
 
   // Fetch blobs
   const fetchBlobs = async () => {
@@ -93,25 +93,48 @@ export default function BlobStorage() {
 
   const handleUpload = async () => {
     try {
-      if (!selectedFile) {
-        console.log("No file selected")
+      if (!selectedFile || !uploadContainer) {
+        console.warn("No file or container selected")
         return
       }
+
       console.log(`Uploading file: ${selectedFile.name} to container: ${uploadContainer}`)
-      // Backend implementation will handle file upload
-      setIsUploadDialogOpen(false)
-      setSelectedFile(null)
-      setUploadContainer("")
-      fetchBlobs()
+
+      // Create FormData for multipart/form-data upload
+      const formData = new FormData()
+      formData.append("file", selectedFile)
+      formData.append("container", uploadContainer)
+
+      // POST to backend endpoint
+      const res = await client.post("/upload-object", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      })
+
+      if (res.status === 200 || res.status === 201) {
+        console.log("Upload successful:", res.data)
+
+        // Reset form & close dialog
+        setIsUploadDialogOpen(false)
+        setSelectedFile(null)
+        setUploadContainer("")
+
+        // Refresh blob list
+        fetchBlobs()
+      } else {
+        console.error("Upload failed:", res.status, res.statusText)
+      }
     } catch (err) {
       console.error("Failed to upload blob:", err)
     }
   }
 
-  const handleCreateContainer = async () => {
+  const handleCreateContainer = async (name: string) => {
     try {
       console.log(`Creating container: ${containerName}`)
       // Backend implementation will handle container creation
+
+      const res = await client.post("/create-container", { name })
+
       setIsContainerDialogOpen(false)
       setContainerName("")
     } catch (err) {
@@ -163,7 +186,7 @@ export default function BlobStorage() {
             <DialogTrigger asChild>
               <Button variant="outline">
                 <FolderPlus className="mr-2 h-4 w-4" />
-                Create Container
+                Create Bucket
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -188,7 +211,7 @@ export default function BlobStorage() {
                 <Button variant="outline" onClick={() => setIsContainerDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={handleCreateContainer} disabled={!containerName}>
+                <Button onClick={() => handleCreateContainer(containerName)} disabled={!containerName}>
                   Create
                 </Button>
               </DialogFooter>
@@ -244,7 +267,7 @@ export default function BlobStorage() {
       <div className="grid gap-6 md:grid-cols-3">
         <Card className="border-l-4 border-l-blue-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Blobs</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Objects</CardTitle>
             <File className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
@@ -260,7 +283,7 @@ export default function BlobStorage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{uniqueContainers}</div>
-            <p className="text-xs text-muted-foreground">Unique containers</p>
+            <p className="text-xs text-muted-foreground">Unique containers with Objects</p>
           </CardContent>
         </Card>
 
@@ -271,7 +294,7 @@ export default function BlobStorage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatSize(totalSize)}</div>
-            <p className="text-xs text-muted-foreground">Total blob size</p>
+            <p className="text-xs text-muted-foreground">Total Object size</p>
           </CardContent>
         </Card>
       </div>
@@ -281,15 +304,15 @@ export default function BlobStorage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Stored Blobs</CardTitle>
-              <CardDescription>View and manage your blob storage files</CardDescription>
+              <CardTitle>Stored Objects</CardTitle>
+              <CardDescription>View and manage your objects</CardDescription>
             </div>
           </div>
           <div className="relative mt-4">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Search blobs by name, container, or content type..."
+              placeholder="Search objects by name, container, or content type..."
               className="w-full pl-8 pr-4 py-2 border rounded-md bg-background"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
