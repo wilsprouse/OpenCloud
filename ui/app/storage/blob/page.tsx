@@ -71,21 +71,40 @@ export default function BlobStorage() {
     fetchBlobs()
   }, [])
 
-  // Handle blob actions
-  const handleDownload = async (id: string, name: string) => {
+  const handleDownload = async (container: string, name: string) => {
     try {
-      console.log(`Downloading blob: ${name}`)
-      // Backend implementation will handle actual download
-    } catch (err) {
-      console.error("Failed to download blob:", err)
-    }
-  }
+      console.log(`Downloading blob: ${name} from container: ${container}`);
 
-  const handleDelete = async (id: string) => {
+      // Send POST request with JSON body
+      const res = await client.post("/download-object", { container, name }, {
+        responseType: "blob", // important for file download
+      });
+
+      // Create a download link
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", name); // use the blob's original filename
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url); // cleanup
+    } catch (err) {
+      console.error("Failed to download blob:", err);
+    }
+  };
+
+  const handleDelete = async (container: string, name: string) => {
     try {
-      console.log(`Deleting blob: ${id}`)
-      // Backend implementation will handle actual delete
-      fetchBlobs() // refresh list
+      const res = await client.delete("/delete-object", {
+        data: { container, name },
+      })
+
+      if (res.status === 200) {
+        fetchBlobs() // Refresh blob list after deletion
+      } else {
+        console.error("Failed to delete blob:", res.statusText)
+      }
     } catch (err) {
       console.error("Failed to delete blob:", err)
     }
@@ -352,7 +371,7 @@ export default function BlobStorage() {
                   <Button 
                     variant="ghost" 
                     size="icon"
-                    onClick={() => handleDownload(blob.id, blob.name)}
+                    onClick={() => handleDownload(blob.container, blob.name)}
                     title="Download"
                   >
                     <Download className="h-4 w-4" />
@@ -360,7 +379,7 @@ export default function BlobStorage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => handleDelete(blob.id)}
+                    onClick={() => handleDelete(blob.container, blob.name)}
                     title="Delete"
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />

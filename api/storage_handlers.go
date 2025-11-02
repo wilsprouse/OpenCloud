@@ -167,3 +167,73 @@ func UploadObject(w http.ResponseWriter, r *http.Request) {
         "container": container,
 	})
 } 
+
+func DeleteObject(w http.ResponseWriter, r *http.Request) {
+    var req struct {
+        Container string `json:"container"`
+        Name      string `json:"name"`
+    }
+
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
+
+    home, _ := os.UserHomeDir()
+    filePath := filepath.Join(home, ".opencloud", "blob_storage", req.Container, req.Name)
+
+    if err := os.Remove(filePath); err != nil {
+        if os.IsNotExist(err) {
+            http.Error(w, "File not found", http.StatusNotFound)
+            return
+        }
+        http.Error(w, "Error deleting file", http.StatusInternalServerError)
+        return
+    }
+
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(map[string]string{
+        "status":    "deleted",
+        "container": req.Container,
+        "name":      req.Name,
+    })
+}
+
+func DownloadObject(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+
+    // Decode JSON body into a map
+    var body map[string]string
+    if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        return
+    }
+
+    container, ok1 := body["container"]
+    name, ok2 := body["name"]
+    if !ok1 || !ok2 || container == "" || name == "" {
+        http.Error(w, "Missing container or name", http.StatusBadRequest)
+        return
+    }
+
+    // Adjust this path to match your storage layout
+	home, _ := os.UserHomeDir()
+    filePath := filepath.Join(home, ".opencloud", "blob_storage", container, name)
+
+    file, err := os.Open(filePath)
+    if err != nil {
+        http.Error(w, "File not found", http.StatusNotFound)
+        return
+    }
+    defer file.Close()
+
+    // Set headers so the browser downloads the file
+    w.Header().Set("Content-Disposition", "attachment; filename="+name)
+    w.Header().Set("Content-Type", "application/octet-stream")
+
+    // Serve the file
+    http.ServeFile(w, r, filePath)
+}
