@@ -1,89 +1,26 @@
 package api
 
 import (
-	"archive/tar"
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
+	"path/filepath"
+	"net/http"
+	"context"
+	"encoding/json"
+	"mime"
+	"time"
 	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/api/types"
+    "github.com/docker/docker/client"
 )
 
-type BuildImageRequest struct {
-	Dockerfile string `json:"dockerfile"`
-	ImageName  string `json:"imageName"`
-	Context    string `json:"context"`
-	NoCache    bool   `json:"nocache"`
-	Platform   string `json:"platform"`
-}
-
-func BuildImage(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Building Image!")
-	var req BuildImageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
-		return
-	}
-	fmt.Println("Building Image2!")
-
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		http.Error(w, "Failed to connect to Docker daemon", http.StatusInternalServerError)
-		return
-	}
-
-	// Create a tar archive of the build context
-	buf := new(bytes.Buffer)
-	tw := tar.NewWriter(buf)
-
-	// Write Dockerfile
-	tw.WriteHeader(&tar.Header{
-		Name: "Dockerfile",
-		Size: int64(len(req.Dockerfile)),
-	})
-	tw.Write([]byte(req.Dockerfile))
-	tw.Close()
-	fmt.Println("Building Image3!")
-
-	// Prepare build options
-	opts := types.ImageBuildOptions{
-		Tags:           []string{req.ImageName},
-		NoCache:        req.NoCache,
-		Platform:       req.Platform,
-		Remove:         true,
-		SuppressOutput: false,
-	}
-	fmt.Println("Building Image3.1!")
-
-	// Trigger build
-	buildResponse, err := cli.ImageBuild(ctx, buf, opts)
-	fmt.Println("Building Image3.1.1!")
-	if err != nil {
-		fmt.Println("Build error: %v", err)
-		http.Error(w, fmt.Sprintf("Build error: %v", err), http.StatusInternalServerError)
-		return
-	}
-	fmt.Println("Building Image3.1.2!")
-	defer buildResponse.Body.Close()
-	fmt.Println("Building Image3.2!")
-
-	// Stream Docker's output to the client or log
-	io.Copy(os.Stdout, buildResponse.Body)
-	fmt.Println("Building Image4!")
-
-	// Send success back
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "Build complete",
-		"image":  req.ImageName,
-	})
-
+type Blob struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Size         int64  `json:"size"`
+	ContentType  string `json:"contentType"`
+	LastModified string `json:"lastModified"`
+	Container    string `json:"container"`
 }
 
 func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
@@ -122,3 +59,111 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
 	}
 
 }
+
+/*
+
+GetBlobBuckets()
+- Reads from ~/.opencloud/blob_storage
+
+*/
+func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	root := filepath.Join(home, ".opencloud", "blob_storage")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		http.Error(w, "Failed to read blob storage directory", http.StatusInternalServerError)
+		return
+	}
+
+	var blobs []Blob
+	for _, container := range entries {
+		if !container.IsDir() {
+			continue
+		}
+		containerPath := filepath.Join(root, container.Name())
+
+		files, _ := os.ReadDir(containerPath)
+		for _, file := range files {
+			info, _ := os.Stat(filepath.Join(containerPath, file.Name()))
+
+			blobs = append(blobs, Blob{
+				ID:           fmt.Sprintf("%s-%s", container.Name(), file.Name()), // simple unique ID
+				Name:         file.Name(),
+				Size:         info.Size(),
+				ContentType:  mime.TypeByExtension(filepath.Ext(file.Name())),
+				LastModified: info.ModTime().UTC().Format(time.RFC3339),
+				Container:    container.Name(),
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(blobs)
+}
+
+func CreateBucket(w http.ResponseWriter, r *http.Request) {
+
+	var body struct {
+        Name string `json:"name"`
+    }
+    if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+        http.Error(w, "Invalid request", http.StatusBadRequest)
+        return
+    }
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	bucketPath := filepath.Join(home, ".opencloud", "blob_storage", body.Name)
+	if err := os.Mkdir(bucketPath, 0755); err != nil {
+		http.Error(w, "Failed to create container", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "container": body.Name})
+}
+
+func UploadObject(w http.ResponseWriter, r *http.Request) {
+    err := r.ParseMultipartForm(10 << 20) // 10MB limit
+    if err != nil {
+        http.Error(w, "Error parsing form data", http.StatusBadRequest)
+        return
+    }
+
+    container := r.FormValue("container")
+    file, handler, err := r.FormFile("file")
+    if err != nil {
+        http.Error(w, "Error retrieving file", http.StatusBadRequest)
+        return
+    }
+    defer file.Close()
+
+    home, _ := os.UserHomeDir()
+    containerPath := filepath.Join(home, ".opencloud", "blob_storage", container)
+    os.MkdirAll(containerPath, 0755)
+
+    dst, err := os.Create(filepath.Join(containerPath, handler.Filename))
+    if err != nil {
+        http.Error(w, "Error creating file", http.StatusInternalServerError)
+        return
+    }
+    defer dst.Close()
+
+    io.Copy(dst, file)
+
+    w.WriteHeader(http.StatusCreated)
+    json.NewEncoder(w).Encode(map[string]string{
+        "status": "ok",
+        "filename": handler.Filename,
+        "container": container,
+	})
+} 
