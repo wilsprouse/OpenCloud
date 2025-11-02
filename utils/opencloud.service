@@ -1,0 +1,24 @@
+[Unit]
+Description=OpenCloud Backend Service
+After=network.target
+
+[Service]
+ExecStart=/home/ubuntu/OpenCloud/bin/opencloud
+
+# Restart automatically on crash or reboot
+Restart=always
+RestartSec=5
+
+# Run as a non-root user (recommended)
+User=ubuntu
+Group=ubuntu
+
+# Environment variables for your app
+Environment=PORT=3030
+Environment=ENV=production
+Environment=LOG_LEVEL=info
+
+# Optional: redirect logs to journald
+StandardOutput=journal
+StandardError=journal
+

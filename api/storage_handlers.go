@@ -32,14 +32,16 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
         panic(err)
     }
 
-    images, err := cli.ImageList(ctx, image.ListOptions{
+ //   images, err := cli.ImageList(ctx, types.ImageListOptions{
+	//images, err := cli.ImageList(ctx, types.ImageListOptions{
+	images, err := cli.ImageList(ctx, image.ListOptions{
         All: true, // include intermediate images
     })
     if err != nil {
         panic(err)
     }
 
-    for _, img := range images {
+    /*for _, img := range images {
 		fmt.Printf("ID: %s\n", img.ID[7:19])
 		fmt.Printf("RepoTags: %v\n", img.RepoTags)
 		fmt.Printf("RepoDigests: %v\n", img.RepoDigests)
@@ -48,7 +50,7 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Virtual Size: %.2f MB\n", float64(img.VirtualSize)/1_000_000)
 		fmt.Printf("Labels: %v\n", img.Labels)
 		fmt.Printf("Containers: %d\n\n", img.Containers)
-    }
+    }*/
 
 	// Encode the images as JSON and write to response
 	if err := json.NewEncoder(w).Encode(images); err != nil {

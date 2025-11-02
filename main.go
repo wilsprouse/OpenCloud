@@ -31,6 +31,7 @@ func main() {
 	mux.HandleFunc("/get-blobs", api.GetBlobBuckets)
 	mux.HandleFunc("/create-container", api.CreateBucket)
 	mux.HandleFunc("/upload-object", api.UploadObject)
+	mux.HandleFunc("/build-image", api.BuildImage)
 
 	// Wrap all routes with CORS middleware
 	handler := withCORS(mux)
