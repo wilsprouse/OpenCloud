@@ -65,7 +65,7 @@ export default function BlobStorage() {
 
   const handleCreateContainer = async (name: string) => {
     try {
-      console.log(`Creating container: ${containerName}`)
+      console.log(`Creating container: ${name}`)
       const res = await client.post("/create-container", { name })
 
       if (res.status === 200 || res.status === 201) {

@@ -74,7 +74,7 @@ GetBlobBuckets()
 
 */
 /*
-ListBlobContainers returns a list of blob storage containers with metadata
+ListBlobContainers returns a list of blob storage containers with metadata.
 */
 func ListBlobContainers(w http.ResponseWriter, r *http.Request) {
 	home, err := os.UserHomeDir()
@@ -133,7 +133,7 @@ func ListBlobContainers(w http.ResponseWriter, r *http.Request) {
 }
 
 /*
-GetBlobBuckets returns blobs from all containers or a specific container if specified
+GetBlobBuckets returns blobs from all containers or a specific container if specified.
 */
 func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
 	home, err := os.UserHomeDir()
