@@ -23,6 +23,13 @@ type Blob struct {
 	Container    string `json:"container"`
 }
 
+type Container struct {
+	Name         string `json:"name"`
+	ObjectCount  int    `json:"objectCount"`
+	TotalSize    int64  `json:"totalSize"`
+	LastModified string `json:"lastModified"`
+}
+
 func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
@@ -66,7 +73,10 @@ GetBlobBuckets()
 - Reads from ~/.opencloud/blob_storage
 
 */
-func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
+/*
+ListBlobContainers returns a list of blob storage containers with metadata
+*/
+func ListBlobContainers(w http.ResponseWriter, r *http.Request) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
@@ -80,15 +90,86 @@ func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var containers []Container
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		
+		containerPath := filepath.Join(root, entry.Name())
+		containerInfo, err := os.Stat(containerPath)
+		if err != nil {
+			continue
+		}
+
+		// Count objects and calculate total size
+		files, _ := os.ReadDir(containerPath)
+		objectCount := 0
+		var totalSize int64
+		var lastModified time.Time = containerInfo.ModTime()
+		
+		for _, file := range files {
+			if file.IsDir() {
+				continue
+			}
+			objectCount++
+			info, _ := os.Stat(filepath.Join(containerPath, file.Name()))
+			totalSize += info.Size()
+			if info.ModTime().After(lastModified) {
+				lastModified = info.ModTime()
+			}
+		}
+
+		containers = append(containers, Container{
+			Name:         entry.Name(),
+			ObjectCount:  objectCount,
+			TotalSize:    totalSize,
+			LastModified: lastModified.UTC().Format(time.RFC3339),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(containers)
+}
+
+/*
+GetBlobBuckets returns blobs from all containers or a specific container if specified
+*/
+func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	// Check if a specific container is requested via query parameter
+	containerFilter := r.URL.Query().Get("container")
+
+	root := filepath.Join(home, ".opencloud", "blob_storage")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		http.Error(w, "Failed to read blob storage directory", http.StatusInternalServerError)
+		return
+	}
+
 	var blobs []Blob
 	for _, container := range entries {
 		if !container.IsDir() {
 			continue
 		}
+		
+		// Skip if a specific container is requested and this isn't it
+		if containerFilter != "" && container.Name() != containerFilter {
+			continue
+		}
+		
 		containerPath := filepath.Join(root, container.Name())
 
 		files, _ := os.ReadDir(containerPath)
 		for _, file := range files {
+			if file.IsDir() {
+				continue
+			}
 			info, _ := os.Stat(filepath.Join(containerPath, file.Name()))
 
 			blobs = append(blobs, Blob{
