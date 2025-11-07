@@ -32,10 +32,13 @@ export function MainNav() {
                 className="min-w-[180px] rounded-md bg-white p-1 shadow-lg ring-1 ring-black/5 dark:bg-neutral-900"
                 sideOffset={5}
               >
-                <DropdownMenu.Item className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                <Link
+                  href="/compute/functions"
+                  className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                >
                   <Cloud className="h-4 w-4" />
-                  Functions (Coming Soon)
-                </DropdownMenu.Item>
+                  Functions
+                </Link>
                 <Link
                   href="/compute/containers"
                   className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800"
