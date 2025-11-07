@@ -28,6 +28,7 @@ func main() {
 	mux.HandleFunc("/get-server-metrics", api.GetSystemMetrics)
 	mux.HandleFunc("/get-containers", api.GetContainers)
 	mux.HandleFunc("/get-images", api.GetContainerRegistry)
+	mux.HandleFunc("/list-blob-containers", api.ListBlobContainers)
 	mux.HandleFunc("/get-blobs", api.GetBlobBuckets)
 	mux.HandleFunc("/create-container", api.CreateBucket)
 	mux.HandleFunc("/upload-object", api.UploadObject)

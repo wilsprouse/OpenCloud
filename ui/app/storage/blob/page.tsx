@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { DashboardHeader } from "@/components/dashboard-header"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { 
@@ -19,146 +19,67 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import client from "@/app/utility/post"
 import { 
-  Upload, 
   RefreshCw, 
-  Download, 
   Search,
-  Trash2,
   FolderPlus,
   File,
   HardDrive,
   Package,
-  FileText
+  Folder,
+  ChevronRight
 } from "lucide-react"
 
-type Blob = {
-  id: string
+type Container = {
   name: string
-  size: number
-  contentType: string
+  objectCount: number
+  totalSize: number
   lastModified: string
-  container: string
 }
 
 export default function BlobStorage() {
-  const [blobs, setBlobs] = useState<Blob[]>([])
+  const router = useRouter()
+  const [containers, setContainers] = useState<Container[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
-  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
   const [isContainerDialogOpen, setIsContainerDialogOpen] = useState(false)
-  
-  // Upload form state
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [uploadContainer, setUploadContainer] = useState("")
   
   // Container form state
   const [containerName, setContainerName] = useState<string>("")
 
-  // Fetch blobs
-  const fetchBlobs = async () => {
+  // Fetch containers
+  const fetchContainers = async () => {
     setLoading(true)
     try {
-      const res = await client.get<Blob[]>("/get-blobs")
-      setBlobs(res.data)
+      const res = await client.get<Container[]>("/list-blob-containers")
+      setContainers(res.data || [])
     } catch (err) {
-      console.error("Failed to fetch blobs:", err)
+      console.error("Failed to fetch containers:", err)
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchBlobs()
+    fetchContainers()
   }, [])
-
-  const handleDownload = async (container: string, name: string) => {
-    try {
-      console.log(`Downloading blob: ${name} from container: ${container}`);
-
-      // Send POST request with JSON body
-      const res = await client.post("/download-object", { container, name }, {
-        responseType: "blob", // important for file download
-      });
-
-      // Create a download link
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", name); // use the blob's original filename
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url); // cleanup
-    } catch (err) {
-      console.error("Failed to download blob:", err);
-    }
-  };
-
-  const handleDelete = async (container: string, name: string) => {
-    try {
-      const res = await client.delete("/delete-object", {
-        data: { container, name },
-      })
-
-      if (res.status === 200) {
-        fetchBlobs() // Refresh blob list after deletion
-      } else {
-        console.error("Failed to delete blob:", res.statusText)
-      }
-    } catch (err) {
-      console.error("Failed to delete blob:", err)
-    }
-  }
-
-  const handleUpload = async () => {
-    try {
-      if (!selectedFile || !uploadContainer) {
-        console.warn("No file or container selected")
-        return
-      }
-
-      console.log(`Uploading file: ${selectedFile.name} to container: ${uploadContainer}`)
-
-      // Create FormData for multipart/form-data upload
-      const formData = new FormData()
-      formData.append("file", selectedFile)
-      formData.append("container", uploadContainer)
-
-      // POST to backend endpoint
-      const res = await client.post("/upload-object", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      })
-
-      if (res.status === 200 || res.status === 201) {
-        console.log("Upload successful:", res.data)
-
-        // Reset form & close dialog
-        setIsUploadDialogOpen(false)
-        setSelectedFile(null)
-        setUploadContainer("")
-
-        // Refresh blob list
-        fetchBlobs()
-      } else {
-        console.error("Upload failed:", res.status, res.statusText)
-      }
-    } catch (err) {
-      console.error("Failed to upload blob:", err)
-    }
-  }
 
   const handleCreateContainer = async (name: string) => {
     try {
-      console.log(`Creating container: ${containerName}`)
-      // Backend implementation will handle container creation
-
+      console.log(`Creating container: ${name}`)
       const res = await client.post("/create-container", { name })
 
-      setIsContainerDialogOpen(false)
-      setContainerName("")
+      if (res.status === 200 || res.status === 201) {
+        setIsContainerDialogOpen(false)
+        setContainerName("")
+        fetchContainers()
+      }
     } catch (err) {
       console.error("Failed to create container:", err)
     }
+  }
+
+  const handleContainerClick = (containerName: string) => {
+    router.push(`/storage/blob/${encodeURIComponent(containerName)}`)
   }
 
   // Format file size
@@ -180,39 +101,36 @@ export default function BlobStorage() {
     }
   }
 
-  // Filter blobs based on search
-  const filteredBlobs = blobs.filter(blob => 
-    blob.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    blob.container.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    blob.contentType.toLowerCase().includes(searchTerm.toLowerCase())
+  // Filter containers based on search
+  const filteredContainers = containers.filter(container => 
+    container.name.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   // Calculate statistics
-  const totalBlobs = blobs.length
-  const totalSize = blobs.reduce((sum, blob) => sum + blob.size, 0)
-  const containers = [...new Set(blobs.map(blob => blob.container))]
-  const uniqueContainers = containers.length
+  const totalContainers = containers.length
+  const totalObjects = containers.reduce((sum, container) => sum + container.objectCount, 0)
+  const totalSize = containers.reduce((sum, container) => sum + container.totalSize, 0)
 
   return (
     <DashboardShell>
-      <DashboardHeader heading="Blob Storage" text="Manage your files and objects in cloud storage">
+      <DashboardHeader heading="Blob Storage" text="Manage your containers and objects in cloud storage">
         <div className="flex items-center space-x-2">
-          <Button variant="outline" onClick={fetchBlobs} disabled={loading}>
+          <Button variant="outline" onClick={fetchContainers} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
           <Dialog open={isContainerDialogOpen} onOpenChange={setIsContainerDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline">
+              <Button>
                 <FolderPlus className="mr-2 h-4 w-4" />
-                Create Bucket
+                Create Container
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Create New Container</DialogTitle>
                 <DialogDescription>
-                  Containers help organize your blobs. Enter a name for your new container.
+                  Containers help organize your objects. Enter a name for your new container.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -236,49 +154,6 @@ export default function BlobStorage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Upload className="mr-2 h-4 w-4" />
-                Upload Blob
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Upload Blob</DialogTitle>
-                <DialogDescription>
-                  Select a file and choose a container to upload your blob.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="file">File</Label>
-                  <Input
-                    id="file"
-                    type="file"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="container">Container</Label>
-                  <Input
-                    id="container"
-                    placeholder="Container name"
-                    value={uploadContainer}
-                    onChange={(e) => setUploadContainer(e.target.value)}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleUpload} disabled={!selectedFile || !uploadContainer}>
-                  Upload
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
         </div>
       </DashboardHeader>
 
@@ -286,23 +161,23 @@ export default function BlobStorage() {
       <div className="grid gap-6 md:grid-cols-3">
         <Card className="border-l-4 border-l-blue-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Objects</CardTitle>
-            <File className="h-4 w-4 text-blue-500" />
+            <CardTitle className="text-sm font-medium">Total Containers</CardTitle>
+            <Package className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalBlobs}</div>
-            <p className="text-xs text-muted-foreground">Files stored</p>
+            <div className="text-2xl font-bold">{totalContainers}</div>
+            <p className="text-xs text-muted-foreground">Storage containers</p>
           </CardContent>
         </Card>
 
         <Card className="border-l-4 border-l-green-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Containers</CardTitle>
-            <Package className="h-4 w-4 text-green-500" />
+            <CardTitle className="text-sm font-medium">Total Objects</CardTitle>
+            <File className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{uniqueContainers}</div>
-            <p className="text-xs text-muted-foreground">Unique containers with Objects</p>
+            <div className="text-2xl font-bold">{totalObjects}</div>
+            <p className="text-xs text-muted-foreground">Files stored</p>
           </CardContent>
         </Card>
 
@@ -313,25 +188,25 @@ export default function BlobStorage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatSize(totalSize)}</div>
-            <p className="text-xs text-muted-foreground">Total Object size</p>
+            <p className="text-xs text-muted-foreground">Total storage size</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Main Blob List */}
+      {/* Main Container List */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Stored Objects</CardTitle>
-              <CardDescription>View and manage your objects</CardDescription>
+              <CardTitle>Containers</CardTitle>
+              <CardDescription>Browse and manage your storage containers</CardDescription>
             </div>
           </div>
           <div className="relative mt-4">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Search objects by name, container, or content type..."
+              placeholder="Search containers by name..."
               className="w-full pl-8 pr-4 py-2 border rounded-md bg-background"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -340,59 +215,46 @@ export default function BlobStorage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {filteredBlobs.map((blob) => (
+            {filteredContainers.map((container) => (
               <div
-                key={blob.id}
-                className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                key={container.name}
+                className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                onClick={() => handleContainerClick(container.name)}
               >
                 <div className="flex items-center space-x-4 flex-1">
                   <div className="p-2 rounded-lg bg-blue-50">
-                    <FileText className="h-5 w-5 text-blue-600" />
+                    <Folder className="h-5 w-5 text-blue-600" />
                   </div>
                   <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
-                      <h4 className="font-medium truncate">{blob.name}</h4>
-                      <Badge variant="outline">
-                        {blob.container}
-                      </Badge>
+                      <h4 className="font-medium truncate">{container.name}</h4>
                     </div>
-                    <p className="text-sm text-muted-foreground truncate">{blob.contentType}</p>
                     <div className="flex items-center space-x-4 text-xs text-muted-foreground">
                       <span className="flex items-center">
-                        <HardDrive className="h-3 w-3 mr-1" />
-                        {formatSize(blob.size)}
+                        <File className="h-3 w-3 mr-1" />
+                        {container.objectCount} {container.objectCount === 1 ? 'object' : 'objects'}
                       </span>
                       <span>•</span>
-                      <span>Modified: {formatDate(blob.lastModified)}</span>
+                      <span className="flex items-center">
+                        <HardDrive className="h-3 w-3 mr-1" />
+                        {formatSize(container.totalSize)}
+                      </span>
+                      <span>•</span>
+                      <span>Modified: {formatDate(container.lastModified)}</span>
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center space-x-2 ml-4">
-                  <Button 
-                    variant="ghost" 
-                    size="icon"
-                    onClick={() => handleDownload(blob.container, blob.name)}
-                    title="Download"
-                  >
-                    <Download className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleDelete(blob.container, blob.name)}
-                    title="Delete"
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
+                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
                 </div>
               </div>
             ))}
-            {filteredBlobs.length === 0 && !loading && (
+            {filteredContainers.length === 0 && !loading && (
               <div className="text-center py-12">
                 <Package className="mx-auto h-12 w-12 text-muted-foreground" />
-                <h3 className="mt-4 text-lg font-semibold">No blobs found</h3>
+                <h3 className="mt-4 text-lg font-semibold">No containers found</h3>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {searchTerm ? "Try adjusting your search terms" : "Upload your first blob to get started"}
+                  {searchTerm ? "Try adjusting your search terms" : "Create your first container to get started"}
                 </p>
               </div>
             )}
