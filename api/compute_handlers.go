@@ -63,7 +63,9 @@ func getTriggerMetadataPath(functionName string) string {
 	home, _ := os.UserHomeDir()
 	metadataDir := filepath.Join(home, ".opencloud", "triggers")
 	os.MkdirAll(metadataDir, 0755)
-	return filepath.Join(metadataDir, functionName+".json")
+	// Clean the function name to prevent path traversal
+	cleanName := filepath.Base(functionName)
+	return filepath.Join(metadataDir, cleanName+".json")
 }
 
 // loadTrigger loads the trigger metadata for a function
