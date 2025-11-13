@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -52,6 +53,7 @@ type FunctionItem = {
 }
 
 export default function FunctionsPage() {
+  const router = useRouter()
   const [functions, setFunctions] = useState<FunctionItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -120,6 +122,10 @@ export default function FunctionsPage() {
     } catch (err) {
       console.error("Failed to delete function:", err)
     }
+  }
+
+  const handleFunctionClick = (id: string) => {
+    router.push(`/compute/functions/${encodeURIComponent(id)}`)
   }
 
   // Format date
@@ -278,7 +284,10 @@ export default function FunctionsPage() {
                 key={fn.id}
                 className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
               >
-                <div className="flex items-center space-x-4 flex-1">
+                <div 
+                  className="flex items-center space-x-4 flex-1 cursor-pointer"
+                  onClick={() => handleFunctionClick(fn.id)}
+                >
                   <div className="p-2 rounded-lg bg-green-50">
                     <Zap className="h-5 w-5 text-green-600" />
                   </div>
@@ -310,7 +319,10 @@ export default function FunctionsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => handleInvokeFunction(fn.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleInvokeFunction(fn.id)
+                    }}
                   >
                     <Play className="h-4 w-4 mr-1" />
                     Invoke
@@ -318,13 +330,20 @@ export default function FunctionsPage() {
                   <Button
                     variant="outline"
                     size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleFunctionClick(fn.id)
+                    }}
                   >
                     <Edit className="h-4 w-4" />
                   </Button>
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() => handleDeleteFunction(fn.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteFunction(fn.id)
+                    }}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
