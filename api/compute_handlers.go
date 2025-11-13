@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"time"
 	"os"
+	"io"
 	"os/exec"
 	"bytes"
 	"fmt"
+	"strings"
 	"path/filepath"
 	"github.com/docker/docker/api/types/image"
     "github.com/docker/docker/client"
@@ -23,6 +25,14 @@ type FunctionItem struct {
 	Invocations  int       `json:"invocations"`
 	MemorySize   int       `json:"memorySize"`
 	Timeout      int       `json:"timeout"`
+}
+
+type UpdateFunctionRequest struct {
+	Name       string `json:"name"`
+	Runtime    string `json:"runtime"`
+	Code       string `json:"code"`
+	MemorySize int    `json:"memorySize"`
+	Timeout    int    `json:"timeout"`
 }
 
 func detectRuntime(filename string) string {
@@ -185,6 +195,154 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]string{
 		"output": out.String(),
 	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// DeleteFunction removes a user function file by name (e.g. /delete-function?name=hello.py)
+func DeleteFunction(w http.ResponseWriter, r *http.Request) {
+	fnName := r.URL.Query().Get("name")
+	if fnName == "" {
+		http.Error(w, "Missing function name", http.StatusBadRequest)
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to resolve home directory", http.StatusInternalServerError)
+		return
+	}
+
+	fnPath := filepath.Join(home, ".opencloud", "functions", fnName)
+
+	if _, err := os.Stat(fnPath); os.IsNotExist(err) {
+		http.Error(w, "Function not found", http.StatusNotFound)
+		return
+	}
+
+	if err := os.Remove(fnPath); err != nil {
+		http.Error(w, "Failed to delete function: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]string{
+		"status":  "success",
+		"message": "Function deleted successfully",
+		"name":    fnName,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// GetFunction handles routes like /get-function/<name>
+func GetFunction(w http.ResponseWriter, r *http.Request) {
+	// Extract function name from path after /get-function/
+	fnName := strings.TrimPrefix(r.URL.Path, "/get-function/")
+	if fnName == "" || fnName == "/get-function" {
+		http.Error(w, "Missing function name", http.StatusBadRequest)
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to resolve home directory", http.StatusInternalServerError)
+		return
+	}
+
+	fnPath := filepath.Join(home, ".opencloud", "functions", fnName)
+	info, err := os.Stat(fnPath)
+	if os.IsNotExist(err) {
+		http.Error(w, "Function not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, "Error checking function file", http.StatusInternalServerError)
+		return
+	}
+
+	code, err := os.ReadFile(fnPath)
+	if err != nil {
+		http.Error(w, "Failed to read function file", http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"name":         fnName,
+		"path":         fnPath,
+		"Invocations":	0,
+		"runtime":      detectRuntime(fnName),
+		"lastModified": info.ModTime().Format(time.RFC3339),
+		"sizeBytes":    info.Size(),
+		"code":         string(code),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func UpdateFunction(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract function ID from URL path
+	id := strings.TrimPrefix(r.URL.Path, "/update-function/")
+	if id == "" {
+		http.Error(w, "Function ID not provided", http.StatusBadRequest)
+		return
+	}
+
+	// Parse request body
+	var req UpdateFunctionRequest
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve file path
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+	fnDir := filepath.Join(home, ".opencloud", "functions")
+	fnPath := filepath.Join(fnDir, id)
+
+	// Check if function exists
+	if _, err := os.Stat(fnPath); os.IsNotExist(err) {
+		http.Error(w, "Function not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, "Failed to read function", http.StatusInternalServerError)
+		return
+	}
+
+	// Update function code
+	if err := os.WriteFile(fnPath, []byte(req.Code), 0644); err != nil {
+		http.Error(w, "Failed to update function code", http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with updated function info
+	resp := map[string]interface{}{
+		"id":           id,
+		"name":         req.Name,
+		"runtime":      req.Runtime,
+		"memorySize":   req.MemorySize,
+		"timeout":      req.Timeout,
+		"lastModified": time.Now().Format(time.RFC3339),
+		"invocations":  0, //getInvocationCount(id), // implement this if you track invocations
+		"code":         req.Code,
+		"status":       "active",
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
