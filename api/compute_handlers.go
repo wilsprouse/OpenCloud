@@ -25,14 +25,22 @@ type FunctionItem struct {
 	Invocations  int       `json:"invocations"`
 	MemorySize   int       `json:"memorySize"`
 	Timeout      int       `json:"timeout"`
+	Trigger      *Trigger  `json:"trigger,omitempty"`
+}
+
+type Trigger struct {
+	Type     string `json:"type"`     // "cron" for now
+	Schedule string `json:"schedule"` // CRON expression like "0 0 * * *"
+	Enabled  bool   `json:"enabled"`
 }
 
 type UpdateFunctionRequest struct {
-	Name       string `json:"name"`
-	Runtime    string `json:"runtime"`
-	Code       string `json:"code"`
-	MemorySize int    `json:"memorySize"`
-	Timeout    int    `json:"timeout"`
+	Name       string   `json:"name"`
+	Runtime    string   `json:"runtime"`
+	Code       string   `json:"code"`
+	MemorySize int      `json:"memorySize"`
+	Timeout    int      `json:"timeout"`
+	Trigger    *Trigger `json:"trigger,omitempty"`
 }
 
 func detectRuntime(filename string) string {
@@ -48,6 +56,48 @@ func detectRuntime(filename string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// getTriggerMetadataPath returns the path to the trigger metadata file for a function
+func getTriggerMetadataPath(functionName string) string {
+	home, _ := os.UserHomeDir()
+	metadataDir := filepath.Join(home, ".opencloud", "triggers")
+	os.MkdirAll(metadataDir, 0755)
+	return filepath.Join(metadataDir, functionName+".json")
+}
+
+// loadTrigger loads the trigger metadata for a function
+func loadTrigger(functionName string) *Trigger {
+	path := getTriggerMetadataPath(functionName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	
+	var trigger Trigger
+	if err := json.Unmarshal(data, &trigger); err != nil {
+		return nil
+	}
+	
+	return &trigger
+}
+
+// saveTrigger saves the trigger metadata for a function
+func saveTrigger(functionName string, trigger *Trigger) error {
+	if trigger == nil {
+		// Delete trigger file if trigger is nil
+		path := getTriggerMetadataPath(functionName)
+		os.Remove(path)
+		return nil
+	}
+	
+	path := getTriggerMetadataPath(functionName)
+	data, err := json.Marshal(trigger)
+	if err != nil {
+		return err
+	}
+	
+	return os.WriteFile(path, data, 0644)
 }
 
 func GetContainers(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +164,7 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 			Invocations:  0,
 			MemorySize:   128,
 			Timeout:      30,
+			Trigger:      loadTrigger(file.Name()),
 		}
 
 		functions = append(functions, fn)
@@ -225,6 +276,9 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Delete trigger metadata
+	saveTrigger(fnName, nil)
+
 	resp := map[string]string{
 		"status":  "success",
 		"message": "Function deleted successfully",
@@ -274,6 +328,7 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 		"lastModified": info.ModTime().Format(time.RFC3339),
 		"sizeBytes":    info.Size(),
 		"code":         string(code),
+		"trigger":      loadTrigger(fnName),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -330,6 +385,12 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Save trigger metadata
+	if err := saveTrigger(id, req.Trigger); err != nil {
+		http.Error(w, "Failed to save trigger metadata", http.StatusInternalServerError)
+		return
+	}
+
 	// Respond with updated function info
 	resp := map[string]interface{}{
 		"id":           id,
@@ -341,6 +402,7 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		"invocations":  0, //getInvocationCount(id), // implement this if you track invocations
 		"code":         req.Code,
 		"status":       "active",
+		"trigger":      req.Trigger,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

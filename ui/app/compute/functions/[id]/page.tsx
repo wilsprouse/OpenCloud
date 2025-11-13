@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import client from "@/app/utility/post"
 import { 
   ArrowLeft,
@@ -41,6 +42,11 @@ type FunctionDetail = {
   memorySize: number
   timeout: number
   code: string
+  trigger?: {
+    type: string
+    schedule: string
+    enabled: boolean
+  }
 }
 
 export default function FunctionDetail({ params }: { params: Promise<{ id: string }> }) {
@@ -57,6 +63,10 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const [code, setCode] = useState("")
   const [memorySize, setMemorySize] = useState("128")
   const [timeout, setTimeout] = useState("3")
+  
+  // Trigger state
+  const [triggerEnabled, setTriggerEnabled] = useState(false)
+  const [triggerSchedule, setTriggerSchedule] = useState("0 0 * * *")
 
   // Fetch function details
   const fetchFunctionDetails = async () => {
@@ -72,6 +82,15 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       setCode(data.code || "")
       setMemorySize(data.memorySize?.toString() || "128")
       setTimeout(data.timeout?.toString() || "3")
+      
+      // Populate trigger fields
+      if (data.trigger) {
+        setTriggerEnabled(data.trigger.enabled)
+        setTriggerSchedule(data.trigger.schedule || "0 0 * * *")
+      } else {
+        setTriggerEnabled(false)
+        setTriggerSchedule("0 0 * * *")
+      }
     } catch (err) {
       console.error("Failed to fetch function details:", err)
     } finally {
@@ -92,7 +111,12 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         runtime,
         code,
         memorySize: parseInt(memorySize),
-        timeout: parseInt(timeout)
+        timeout: parseInt(timeout),
+        trigger: triggerEnabled ? {
+          type: "cron",
+          schedule: triggerSchedule,
+          enabled: true
+        } : null
       })
 
       if (res.status === 200 || res.status === 201) {
@@ -238,6 +262,39 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                   <SelectItem value="ruby">Ruby</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="pt-4 border-t space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="trigger-enabled" className="text-base">
+                    CRON Trigger
+                  </Label>
+                  <div className="text-sm text-muted-foreground">
+                    Schedule automatic function execution
+                  </div>
+                </div>
+                <Switch
+                  id="trigger-enabled"
+                  checked={triggerEnabled}
+                  onCheckedChange={setTriggerEnabled}
+                />
+              </div>
+              
+              {triggerEnabled && (
+                <div className="space-y-2">
+                  <Label htmlFor="trigger-schedule">CRON Schedule</Label>
+                  <Input
+                    id="trigger-schedule"
+                    value={triggerSchedule}
+                    onChange={(e) => setTriggerSchedule(e.target.value)}
+                    placeholder="0 0 * * *"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Example: "0 0 * * *" runs daily at midnight
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="pt-4">
