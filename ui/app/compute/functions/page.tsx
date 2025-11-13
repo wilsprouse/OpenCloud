@@ -59,10 +59,8 @@ export default function FunctionsPage() {
   
   // Function form state
   const [functionName, setFunctionName] = useState<string>("")
-  const [functionRuntime, setFunctionRuntime] = useState<string>("nodejs20.x")
+  const [functionRuntime, setFunctionRuntime] = useState<string>("python")
   const [functionCode, setFunctionCode] = useState<string>("")
-  const [functionMemory, setFunctionMemory] = useState<string>("128")
-  const [functionTimeout, setFunctionTimeout] = useState<string>("3")
 
   // Fetch functions
   const fetchFunctions = async () => {
@@ -84,14 +82,13 @@ export default function FunctionsPage() {
   }, [])
 
   const handleCreateFunction = async () => {
+    // TODO: Implement this in the backend
     try {
       console.log(`Creating function: ${functionName}`)
       const res = await client.post("/create-function", { 
         name: functionName,
         runtime: functionRuntime,
         code: functionCode,
-        memorySize: parseInt(functionMemory),
-        timeout: parseInt(functionTimeout)
       })
 
       if (res.status === 200 || res.status === 201) {
@@ -99,8 +96,6 @@ export default function FunctionsPage() {
         setFunctionName("")
         setFunctionRuntime("nodejs20.x")
         setFunctionCode("")
-        setFunctionMemory("128")
-        setFunctionTimeout("3")
         fetchFunctions()
       }
     } catch (err) {
@@ -110,7 +105,7 @@ export default function FunctionsPage() {
 
   const handleInvokeFunction = async (id: string) => {
     try {
-      await client.post(`/invoke-function/${id}`)
+      await client.post(`/invoke-function?name=${id}`)
       fetchFunctions()
     } catch (err) {
       console.error("Failed to invoke function:", err)
@@ -118,6 +113,7 @@ export default function FunctionsPage() {
   }
 
   const handleDeleteFunction = async (id: string) => {
+    // TODO: Implement this in the backend
     try {
       await client.delete(`/delete-function/${id}`)
       fetchFunctions()
@@ -136,20 +132,6 @@ export default function FunctionsPage() {
     }
   }
 
-  // Get status badge color
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "active":
-        return "bg-green-100 text-green-800"
-      case "inactive":
-        return "bg-gray-100 text-gray-800"
-      case "error":
-        return "bg-red-100 text-red-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
-  }
-
   // Filter functions based on search
   const filteredFunctions = functions.filter(fn => 
     fn.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -163,7 +145,7 @@ export default function FunctionsPage() {
 
   return (
     <DashboardShell>
-      <DashboardHeader heading="Functions" text="Serverless compute functions similar to AWS Lambda">
+      <DashboardHeader heading="Functions" text="Compute scripts">
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={fetchFunctions} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -194,59 +176,20 @@ export default function FunctionsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="function-runtime">Runtime</Label>
+                  <Label htmlFor="function-runtime">Language</Label>
                   <Select value={functionRuntime} onValueChange={setFunctionRuntime}>
                     <SelectTrigger id="function-runtime">
-                      <SelectValue placeholder="Select runtime" />
+                      <SelectValue placeholder="Select Language" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="nodejs20.x">Node.js 20.x</SelectItem>
-                      <SelectItem value="nodejs18.x">Node.js 18.x</SelectItem>
-                      <SelectItem value="python3.12">Python 3.12</SelectItem>
-                      <SelectItem value="python3.11">Python 3.11</SelectItem>
-                      <SelectItem value="python3.10">Python 3.10</SelectItem>
-                      <SelectItem value="java21">Java 21</SelectItem>
-                      <SelectItem value="java17">Java 17</SelectItem>
-                      <SelectItem value="go1.x">Go 1.x</SelectItem>
-                      <SelectItem value="dotnet8">`.NET 8`</SelectItem>
-                      <SelectItem value="ruby3.3">Ruby 3.3</SelectItem>
+                      <SelectItem value="python">Python</SelectItem>
+                      <SelectItem value="nodejs">Node.js (Coming Soon)</SelectItem>
+                      <SelectItem value="java">Java 21 (Coming Soon)</SelectItem>
+                      <SelectItem value="go">Go 1.x (Coming Soon)</SelectItem>
+                      <SelectItem value="dotnet">.NET 8 (Coming Soon)</SelectItem>
+                      <SelectItem value="ruby">Ruby 3.3 (Coming Soon)</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="function-memory">Memory (MB)</Label>
-                    <Select value={functionMemory} onValueChange={setFunctionMemory}>
-                      <SelectTrigger id="function-memory">
-                        <SelectValue placeholder="Select memory" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="128">128 MB</SelectItem>
-                        <SelectItem value="256">256 MB</SelectItem>
-                        <SelectItem value="512">512 MB</SelectItem>
-                        <SelectItem value="1024">1024 MB</SelectItem>
-                        <SelectItem value="2048">2048 MB</SelectItem>
-                        <SelectItem value="4096">4096 MB</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="function-timeout">Timeout (seconds)</Label>
-                    <Select value={functionTimeout} onValueChange={setFunctionTimeout}>
-                      <SelectTrigger id="function-timeout">
-                        <SelectValue placeholder="Select timeout" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="3">3 seconds</SelectItem>
-                        <SelectItem value="5">5 seconds</SelectItem>
-                        <SelectItem value="10">10 seconds</SelectItem>
-                        <SelectItem value="30">30 seconds</SelectItem>
-                        <SelectItem value="60">60 seconds</SelectItem>
-                        <SelectItem value="300">300 seconds</SelectItem>
-                        <SelectItem value="900">900 seconds</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="function-code">Function Code</Label>
@@ -314,7 +257,7 @@ export default function FunctionsPage() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Functions</CardTitle>
-              <CardDescription>Manage your serverless functions</CardDescription>
+              <CardDescription>Manage your functions</CardDescription>
             </div>
           </div>
           <div className="relative mt-4">
@@ -341,10 +284,9 @@ export default function FunctionsPage() {
                   </div>
                   <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
-                      <h4 className="font-medium truncate">{fn.name}</h4>
-                      <Badge className={getStatusColor(fn.status)}>
-                        {fn.status}
-                      </Badge>
+                      <h4 className="font-medium truncate">
+                        {fn.name.replace(/\.[^/.]+$/, "")}
+                      </h4>
                     </div>
                     <div className="flex items-center space-x-4 text-xs text-muted-foreground">
                       <span className="flex items-center">
@@ -355,11 +297,6 @@ export default function FunctionsPage() {
                       <span className="flex items-center">
                         <Activity className="h-3 w-3 mr-1" />
                         {fn.invocations.toLocaleString()} invocations
-                      </span>
-                      <span>•</span>
-                      <span className="flex items-center">
-                        <Clock className="h-3 w-3 mr-1" />
-                        {fn.memorySize} MB / {fn.timeout}s timeout
                       </span>
                       <span>•</span>
                       <span className="flex items-center">

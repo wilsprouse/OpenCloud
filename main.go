@@ -34,6 +34,8 @@ func main() {
 	mux.HandleFunc("/upload-object", api.UploadObject)
 	mux.HandleFunc("/delete-object", api.DeleteObject)
 	mux.HandleFunc("/download-object", api.DownloadObject)
+	mux.HandleFunc("/list-functions", api.ListFunctions)
+	mux.HandleFunc("/invoke-function", api.InvokeFunction)
 	//mux.HandleFunc("/build-image", api.BuildImage)
 
 	// Wrap all routes with CORS middleware
