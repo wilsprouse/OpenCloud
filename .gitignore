@@ -6,3 +6,4 @@ ui/.eslintrc.json
 ui/tsconfig.tsbuildinfo
 *.pem
 *.backup
+.env
