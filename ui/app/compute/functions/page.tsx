@@ -117,7 +117,7 @@ export default function FunctionsPage() {
   const handleDeleteFunction = async (id: string) => {
     // TODO: Implement this in the backend
     try {
-      await client.delete(`/delete-function/${id}`)
+      await client.delete(`/delete-function?name=${id}`)
       fetchFunctions()
     } catch (err) {
       console.error("Failed to delete function:", err)

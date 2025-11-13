@@ -108,7 +108,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
 
   const handleInvoke = async () => {
     try {
-      await client.post(`/invoke-function/${encodeURIComponent(functionId)}`)
+      await client.post(`/invoke-function?name=${encodeURIComponent(functionId)}`)
       console.log("Function invoked successfully")
       fetchFunctionDetails() // Refresh to update invocation count
     } catch (err) {
@@ -202,44 +202,6 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         </div>
       </DashboardHeader>
 
-      {/* Statistics Cards */}
-      {functionData && (
-        <div className="grid gap-6 md:grid-cols-3">
-          <Card className="border-l-4 border-l-blue-500">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Invocations</CardTitle>
-              <Activity className="h-4 w-4 text-blue-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{functionData.invocations.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground">Function calls</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-l-4 border-l-purple-500">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Memory Allocated</CardTitle>
-              <Settings className="h-4 w-4 text-purple-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{memorySize} MB</div>
-              <p className="text-xs text-muted-foreground">Memory size</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-l-4 border-l-green-500">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Last Modified</CardTitle>
-              <Calendar className="h-4 w-4 text-green-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm font-bold">{formatDate(functionData.lastModified)}</div>
-              <p className="text-xs text-muted-foreground">Last update time</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Configuration Section */}
         <Card className="lg:col-span-1">
@@ -268,52 +230,12 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                   <SelectValue placeholder="Select runtime" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="nodejs20.x">Node.js 20.x</SelectItem>
-                  <SelectItem value="nodejs18.x">Node.js 18.x</SelectItem>
-                  <SelectItem value="python3.12">Python 3.12</SelectItem>
-                  <SelectItem value="python3.11">Python 3.11</SelectItem>
-                  <SelectItem value="python3.10">Python 3.10</SelectItem>
+                  <SelectItem value="nodejs">Node.js</SelectItem>
                   <SelectItem value="python">Python</SelectItem>
-                  <SelectItem value="java21">Java 21</SelectItem>
-                  <SelectItem value="java17">Java 17</SelectItem>
-                  <SelectItem value="go1.x">Go 1.x</SelectItem>
-                  <SelectItem value="dotnet8">.NET 8</SelectItem>
-                  <SelectItem value="ruby3.3">Ruby 3.3</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="memory">Memory (MB)</Label>
-              <Select value={memorySize} onValueChange={setMemorySize}>
-                <SelectTrigger id="memory">
-                  <SelectValue placeholder="Select memory" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="128">128 MB</SelectItem>
-                  <SelectItem value="256">256 MB</SelectItem>
-                  <SelectItem value="512">512 MB</SelectItem>
-                  <SelectItem value="1024">1024 MB</SelectItem>
-                  <SelectItem value="2048">2048 MB</SelectItem>
-                  <SelectItem value="4096">4096 MB</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="timeout">Timeout (seconds)</Label>
-              <Select value={timeout} onValueChange={setTimeout}>
-                <SelectTrigger id="timeout">
-                  <SelectValue placeholder="Select timeout" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="3">3 seconds</SelectItem>
-                  <SelectItem value="5">5 seconds</SelectItem>
-                  <SelectItem value="10">10 seconds</SelectItem>
-                  <SelectItem value="30">30 seconds</SelectItem>
-                  <SelectItem value="60">60 seconds</SelectItem>
-                  <SelectItem value="300">300 seconds</SelectItem>
-                  <SelectItem value="900">900 seconds</SelectItem>
+                  <SelectItem value="java">Java</SelectItem>
+                  <SelectItem value="go">Go</SelectItem>
+                  <SelectItem value="dotnet">.NET</SelectItem>
+                  <SelectItem value="ruby">Ruby</SelectItem>
                 </SelectContent>
               </Select>
             </div>
