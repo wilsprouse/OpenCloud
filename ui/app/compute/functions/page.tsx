@@ -50,6 +50,11 @@ type FunctionItem = {
   invocations: number
   memorySize: number
   timeout: number
+  trigger?: {
+    type: string
+    schedule: string
+    enabled: boolean
+  }
 }
 
 export default function FunctionsPage() {
@@ -307,6 +312,15 @@ export default function FunctionsPage() {
                         <Activity className="h-3 w-3 mr-1" />
                         {fn.invocations.toLocaleString()} invocations
                       </span>
+                      {fn.trigger && fn.trigger.enabled && (
+                        <>
+                          <span>•</span>
+                          <span className="flex items-center text-blue-600">
+                            <Clock className="h-3 w-3 mr-1" />
+                            CRON: {fn.trigger.schedule}
+                          </span>
+                        </>
+                      )}
                       <span>•</span>
                       <span className="flex items-center">
                         <Calendar className="h-3 w-3 mr-1" />

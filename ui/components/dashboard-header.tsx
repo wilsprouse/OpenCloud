@@ -1,7 +1,7 @@
 import type { FC, ReactNode } from "react"
 
 interface DashboardHeaderProps {
-  heading: string
+  heading: string | ReactNode
   text?: string
   children?: ReactNode
 }
