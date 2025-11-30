@@ -7,6 +7,7 @@ import (
 	"time"
 	"os"
 	"io"
+	//"log"
 	"os/exec"
 	"bytes"
 	"fmt"
@@ -337,6 +338,62 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func addCron() error {
+
+	fmt.Println("yolo")
+	cmd := exec.Command("crontab", "-l")
+	fmt.Println("yolo0.1")
+
+	output, err := cmd.CombinedOutput()
+	out := string(output)
+
+	// Handle case where user has no crontab yet
+	if err != nil {
+		if strings.Contains(out, "no crontab for") {
+			fmt.Println("No crontab found — continuing with empty crontab.")
+			out = "" // treat as empty crontab
+		} else {
+			// Real error → stop
+			return fmt.Errorf("Unexpected crontab error: %v\n%s", err, output)
+		}
+	}
+
+	fmt.Println("yolo2")
+	currentCrontab := out
+
+	// Cron job to append
+	newCronJob := "* * * * * echo \"Hello from Go cron!\" >> /tmp/go_cron.log"
+
+	// Prevent duplicate entries
+	if strings.Contains(currentCrontab, newCronJob) {
+		fmt.Println("Cron job already exists — skipping add.")
+		return nil
+	}
+
+	// Add newline only if needed
+	if !strings.HasSuffix(currentCrontab, "\n") && currentCrontab != "" {
+		currentCrontab += "\n"
+	}
+
+	updatedCrontab := currentCrontab + newCronJob + "\n"
+
+	fmt.Println("yolo3")
+
+	// Write new crontab
+	cmd = exec.Command("crontab", "-")
+	cmd.Stdin = strings.NewReader(updatedCrontab)
+	output, err = cmd.CombinedOutput()
+
+	fmt.Println("yolo4")
+
+	if err != nil {
+		return fmt.Errorf("error updating crontab: %v\n%s", err, output)
+	}
+
+	fmt.Println("Crontab updated successfully.")
+	return nil
+}
+
 func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPut {
@@ -388,8 +445,8 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Save trigger metadata
-	if err := saveTrigger(id, req.Trigger); err != nil {
-		http.Error(w, "Failed to save trigger metadata", http.StatusInternalServerError)
+	if err := addCron(); err != nil {
+		http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
 		return
 	}
 
