@@ -102,14 +102,6 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// This is useless? Dont think its doing anything or displaying anywhere
-		// TODO: Remove it
-		triggered := Trigger{
-			Type:     "cron - Juicy",
-			Schedule: "0 9 * * * - Juicy", // Every day at 9:00 AM
-			Enabled:  true,
-		}
-
 		fn := FunctionItem{
 			ID:           file.Name(),
 			Name:         file.Name(),
@@ -119,7 +111,7 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 			Invocations:  0,
 			MemorySize:   128,
 			Timeout:      30,
-			Trigger:      &triggered, //loadTrigger(file.Name()),
+			Trigger:      nil, //loadTrigger(file.Name()),
 		}
 
 		functions = append(functions, fn)
@@ -282,7 +274,7 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 		"lastModified": info.ModTime().Format(time.RFC3339),
 		"sizeBytes":    info.Size(),
 		"code":         string(code),
-		"trigger":      "juicy", //loadTrigger(fnName),
+		"trigger":      nil, //loadTrigger(fnName),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
