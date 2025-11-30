@@ -118,17 +118,6 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
         panic(err)
     }
 
-    /*for _, img := range images {
-		fmt.Printf("ID: %s\n", img.ID[7:19])
-		fmt.Printf("RepoTags: %v\n", img.RepoTags)
-		fmt.Printf("RepoDigests: %v\n", img.RepoDigests)
-		fmt.Printf("Created: %d\n", img.Created)
-		fmt.Printf("Size: %.2f MB\n", float64(img.Size)/1_000_000)
-		fmt.Printf("Virtual Size: %.2f MB\n", float64(img.VirtualSize)/1_000_000)
-		fmt.Printf("Labels: %v\n", img.Labels)
-		fmt.Printf("Containers: %d\n\n", img.Containers)
-    }*/
-
 	// Encode the images as JSON and write to response
 	if err := json.NewEncoder(w).Encode(images); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -338,7 +327,9 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func addCron(filePath string) error {
+func addCron(filePath string, schedule string) error {
+
+	fmt.Println(schedule)
 
 	cmd := exec.Command("crontab", "-l")
 	output, err := cmd.CombinedOutput()
@@ -372,7 +363,7 @@ func addCron(filePath string) error {
 
 	// Cron job to append
 	//newCronJob := "* * * * * echo \"Hello from Go cron!\" >> /tmp/go_cron.log"
-	newCronJob := fmt.Sprintf("* * * * * %s %s >> %s/go_cron_output.log 2>&1", detectRuntime(filePath), filePath, fnDir)
+	newCronJob := fmt.Sprintf("%s %s %s >> %s/go_cron_output.log 2>&1", schedule, detectRuntime(filePath), filePath, fnDir)
 
 	// Prevent duplicate entries
 	if strings.Contains(currentCrontab, newCronJob) {
@@ -450,11 +441,17 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save trigger metadata
-	if err := addCron(fnPath); err != nil {
-		http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
-		return
+	// Save cron metadata only if trigger is enabled
+	if req.Trigger != nil && req.Trigger.Enabled {
+    	if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
+     	   	http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
+        	return
+    	}
 	}
+	//if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
+	//	http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
+	//	return
+	//}
 
 	// Respond with updated function info
 	resp := map[string]interface{}{
