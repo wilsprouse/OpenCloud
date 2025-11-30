@@ -42,6 +42,10 @@ func ReadServiceLedger() (ServiceLedger, error) {
 
 	data, err := os.ReadFile(ledgerPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// Return empty ledger if file doesn't exist
+			return make(ServiceLedger), nil
+		}
 		return nil, err
 	}
 
@@ -65,7 +69,7 @@ func WriteServiceLedger(ledger ServiceLedger) error {
 		return err
 	}
 
-	return os.WriteFile(ledgerPath, data, 0644)
+	return os.WriteFile(ledgerPath, data, 0600)
 }
 
 // IsServiceEnabled checks if a specific service is enabled
