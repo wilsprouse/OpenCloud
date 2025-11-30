@@ -338,12 +338,9 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func addCron() error {
+func addCron(filePath string) error {
 
-	fmt.Println("yolo")
 	cmd := exec.Command("crontab", "-l")
-	fmt.Println("yolo0.1")
-
 	output, err := cmd.CombinedOutput()
 	out := string(output)
 
@@ -358,11 +355,11 @@ func addCron() error {
 		}
 	}
 
-	fmt.Println("yolo2")
 	currentCrontab := out
 
 	// Cron job to append
-	newCronJob := "* * * * * echo \"Hello from Go cron!\" >> /tmp/go_cron.log"
+	//newCronJob := "* * * * * echo \"Hello from Go cron!\" >> /tmp/go_cron.log"
+	newCronJob := fmt.Sprintf("* * * * * python %s >> /tmp/go_cron_output.log 2>&1", filePath)
 
 	// Prevent duplicate entries
 	if strings.Contains(currentCrontab, newCronJob) {
@@ -377,14 +374,10 @@ func addCron() error {
 
 	updatedCrontab := currentCrontab + newCronJob + "\n"
 
-	fmt.Println("yolo3")
-
 	// Write new crontab
 	cmd = exec.Command("crontab", "-")
 	cmd.Stdin = strings.NewReader(updatedCrontab)
 	output, err = cmd.CombinedOutput()
-
-	fmt.Println("yolo4")
 
 	if err != nil {
 		return fmt.Errorf("error updating crontab: %v\n%s", err, output)
@@ -445,7 +438,7 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Save trigger metadata
-	if err := addCron(); err != nil {
+	if err := addCron(fnPath); err != nil {
 		http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
 		return
 	}
