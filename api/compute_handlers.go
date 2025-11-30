@@ -357,9 +357,22 @@ func addCron(filePath string) error {
 
 	currentCrontab := out
 
+	// Resolve file path
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Println("Home dir not grabbed")
+		return nil
+	}
+
+	fnDir := filepath.Join(home, ".opencloud", "logs")
+
+	if err := os.MkdirAll(fnDir, 0755); err != nil {
+		return fmt.Errorf("failed to create logs directory: %v", err)
+	}
+
 	// Cron job to append
 	//newCronJob := "* * * * * echo \"Hello from Go cron!\" >> /tmp/go_cron.log"
-	newCronJob := fmt.Sprintf("* * * * * %s %s >> /tmp/go_cron_output.log 2>&1", detectRuntime(filePath), filePath)
+	newCronJob := fmt.Sprintf("* * * * * %s %s >> %s/go_cron_output.log 2>&1", detectRuntime(filePath), filePath, fnDir)
 
 	// Prevent duplicate entries
 	if strings.Contains(currentCrontab, newCronJob) {
