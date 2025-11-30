@@ -7,7 +7,6 @@ import (
 	"time"
 	"os"
 	"io"
-	//"log"
 	"os/exec"
 	"bytes"
 	"fmt"
@@ -59,50 +58,6 @@ func detectRuntime(filename string) string {
 	}
 }
 
-// getTriggerMetadataPath returns the path to the trigger metadata file for a function
-func getTriggerMetadataPath(functionName string) string {
-	home, _ := os.UserHomeDir()
-	metadataDir := filepath.Join(home, ".opencloud", "triggers")
-	os.MkdirAll(metadataDir, 0755)
-	// Clean the function name to prevent path traversal
-	cleanName := filepath.Base(functionName)
-	return filepath.Join(metadataDir, cleanName+".json")
-}
-
-// loadTrigger loads the trigger metadata for a function
-func loadTrigger(functionName string) *Trigger {
-	path := getTriggerMetadataPath(functionName)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	
-	var trigger Trigger
-	if err := json.Unmarshal(data, &trigger); err != nil {
-		return nil
-	}
-	
-	return &trigger
-}
-
-// saveTrigger saves the trigger metadata for a function
-func saveTrigger(functionName string, trigger *Trigger) error {
-	if trigger == nil {
-		// Delete trigger file if trigger is nil
-		path := getTriggerMetadataPath(functionName)
-		os.Remove(path)
-		return nil
-	}
-	
-	path := getTriggerMetadataPath(functionName)
-	data, err := json.Marshal(trigger)
-	if err != nil {
-		return err
-	}
-	
-	return os.WriteFile(path, data, 0644)
-}
-
 func GetContainers(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -147,6 +102,14 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// This is useless? Dont think its doing anything or displaying anywhere
+		// TODO: Remove it
+		triggered := Trigger{
+			Type:     "cron - Juicy",
+			Schedule: "0 9 * * * - Juicy", // Every day at 9:00 AM
+			Enabled:  true,
+		}
+
 		fn := FunctionItem{
 			ID:           file.Name(),
 			Name:         file.Name(),
@@ -156,7 +119,7 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 			Invocations:  0,
 			MemorySize:   128,
 			Timeout:      30,
-			Trigger:      loadTrigger(file.Name()),
+			Trigger:      &triggered, //loadTrigger(file.Name()),
 		}
 
 		functions = append(functions, fn)
@@ -225,7 +188,6 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 
-
 	err = cmd.Run()
 	if err != nil {
 		http.Error(w, "Execution error: "+stderr.String(), http.StatusInternalServerError)
@@ -269,7 +231,7 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete trigger metadata
-	saveTrigger(fnName, nil)
+	//saveTrigger(fnName, nil)
 
 	resp := map[string]string{
 		"status":  "success",
@@ -320,7 +282,7 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 		"lastModified": info.ModTime().Format(time.RFC3339),
 		"sizeBytes":    info.Size(),
 		"code":         string(code),
-		"trigger":      loadTrigger(fnName),
+		"trigger":      "juicy", //loadTrigger(fnName),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -448,10 +410,6 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
         	return
     	}
 	}
-	//if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
-	//	http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
-	//	return
-	//}
 
 	// Respond with updated function info
 	resp := map[string]interface{}{
