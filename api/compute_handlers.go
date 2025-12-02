@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"github.com/docker/docker/api/types/image"
     "github.com/docker/docker/client"
+	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 type FunctionItem struct {
@@ -393,6 +394,12 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	if err := os.WriteFile(fnPath, []byte(req.Code), 0644); err != nil {
 		http.Error(w, "Failed to update function code", http.StatusInternalServerError)
 		return
+	}
+
+	// Update the service ledger to track this function update
+	if err := service_ledger.UpdateServiceActivity("Functions"); err != nil {
+		// Log the error but don't fail the request
+		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
 	}
 
 	// Save cron metadata only if trigger is enabled
