@@ -14,10 +14,18 @@ import (
 	"time"
 )
 
+// FunctionEntry represents an individual function's metadata in the ledger
+type FunctionEntry struct {
+	Runtime  string `json:"runtime"`
+	Trigger  string `json:"trigger,omitempty"`
+	Schedule string `json:"schedule,omitempty"`
+	Content  string `json:"content"`
+}
+
 // ServiceStatus represents the status of a single service
 type ServiceStatus struct {
-	Enabled     bool   `json:"enabled"`
-	LastUpdated string `json:"lastUpdated,omitempty"`
+	Enabled   bool                     `json:"enabled"`
+	Functions map[string]FunctionEntry `json:"functions,omitempty"`
 }
 
 // ServiceLedger represents the complete service ledger
@@ -163,8 +171,8 @@ func EnableServiceHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// UpdateServiceActivity updates the lastUpdated timestamp for a service in the ledger
-func UpdateServiceActivity(serviceName string) error {
+// UpdateFunctionEntry updates a specific function entry in the Functions service ledger
+func UpdateFunctionEntry(functionName, runtime, trigger, schedule, content string) error {
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
 
@@ -173,13 +181,44 @@ func UpdateServiceActivity(serviceName string) error {
 		return err
 	}
 
-	status, exists := ledger[serviceName]
+	status, exists := ledger["Functions"]
 	if !exists {
-		status = ServiceStatus{Enabled: false}
+		status = ServiceStatus{Enabled: false, Functions: make(map[string]FunctionEntry)}
 	}
 
-	status.LastUpdated = time.Now().Format(time.RFC3339)
-	ledger[serviceName] = status
+	if status.Functions == nil {
+		status.Functions = make(map[string]FunctionEntry)
+	}
+
+	status.Functions[functionName] = FunctionEntry{
+		Runtime:  runtime,
+		Trigger:  trigger,
+		Schedule: schedule,
+		Content:  content,
+	}
+
+	ledger["Functions"] = status
+
+	return WriteServiceLedger(ledger)
+}
+
+// DeleteFunctionEntry removes a function entry from the Functions service ledger
+func DeleteFunctionEntry(functionName string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	status, exists := ledger["Functions"]
+	if !exists || status.Functions == nil {
+		return nil // Nothing to delete
+	}
+
+	delete(status.Functions, functionName)
+	ledger["Functions"] = status
 
 	return WriteServiceLedger(ledger)
 }
