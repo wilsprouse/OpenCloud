@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 )
 
 // ServiceStatus represents the status of a single service
 type ServiceStatus struct {
-	Enabled bool `json:"enabled"`
+	Enabled     bool   `json:"enabled"`
+	LastUpdated string `json:"lastUpdated,omitempty"`
 }
 
 // ServiceLedger represents the complete service ledger
@@ -159,4 +161,25 @@ func EnableServiceHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateServiceActivity updates the lastUpdated timestamp for a service in the ledger
+func UpdateServiceActivity(serviceName string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	status, exists := ledger[serviceName]
+	if !exists {
+		status = ServiceStatus{Enabled: false}
+	}
+
+	status.LastUpdated = time.Now().Format(time.RFC3339)
+	ledger[serviceName] = status
+
+	return WriteServiceLedger(ledger)
 }
