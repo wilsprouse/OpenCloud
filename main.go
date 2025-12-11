@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"github.com/WavexSoftware/OpenCloud/api"
+	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 func withCORS(next http.Handler) http.Handler {
@@ -38,6 +39,8 @@ func main() {
 	mux.HandleFunc("/invoke-function", api.InvokeFunction)
 	mux.HandleFunc("/delete-function", api.DeleteFunction)
 	mux.HandleFunc("/update-function/", api.UpdateFunction)
+	mux.HandleFunc("/get-service-status", service_ledger.GetServiceStatusHandler)
+	mux.HandleFunc("/enable-service", service_ledger.EnableServiceHandler)
 	mux.HandleFunc("/", api.GetFunction)
 	//mux.HandleFunc("/build-image", api.BuildImage)
 

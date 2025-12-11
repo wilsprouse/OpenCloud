@@ -38,7 +38,8 @@ import {
   Edit,
   Trash2,
   Code,
-  Calendar
+  Calendar,
+  Power
 } from "lucide-react"
 
 type FunctionItem = {
@@ -64,10 +65,39 @@ export default function FunctionsPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [isFunctionDialogOpen, setIsFunctionDialogOpen] = useState(false)
   
+  // Service enabled state
+  const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
+  const [enablingService, setEnablingService] = useState(false)
+  
   // Function form state
   const [functionName, setFunctionName] = useState<string>("")
   const [functionRuntime, setFunctionRuntime] = useState<string>("python")
   const [functionCode, setFunctionCode] = useState<string>("")
+
+  // Check if service is enabled
+  const checkServiceStatus = async () => {
+    try {
+      const res = await client.get<{ service: string; enabled: boolean }>("/get-service-status?service=Functions")
+      setServiceEnabled(res.data.enabled)
+    } catch (err) {
+      console.error("Failed to check service status:", err)
+      setServiceEnabled(false)
+    }
+  }
+
+  // Enable the service
+  const handleEnableService = async () => {
+    setEnablingService(true)
+    try {
+      await client.post("/enable-service", { service: "Functions" })
+      setServiceEnabled(true)
+      fetchFunctions()
+    } catch (err) {
+      console.error("Failed to enable service:", err)
+    } finally {
+      setEnablingService(false)
+    }
+  }
 
   // Fetch functions
   const fetchFunctions = async () => {
@@ -85,8 +115,14 @@ export default function FunctionsPage() {
   }
 
   useEffect(() => {
-    fetchFunctions()
+    checkServiceStatus()
   }, [])
+
+  useEffect(() => {
+    if (serviceEnabled) {
+      fetchFunctions()
+    }
+  }, [serviceEnabled])
 
   const handleCreateFunction = async () => {
     // TODO: Implement this in the backend
@@ -153,6 +189,45 @@ export default function FunctionsPage() {
   const totalFunctions = functions.length
   const activeFunctions = functions.filter(fn => fn.status === "active").length
   const totalInvocations = functions.reduce((sum, fn) => sum + fn.invocations, 0)
+
+  // Show loading state while checking service status
+  if (serviceEnabled === null) {
+    return (
+      <DashboardShell>
+        <div className="flex items-center justify-center h-64">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </DashboardShell>
+    )
+  }
+
+  // Show enable prompt if service is not enabled
+  if (!serviceEnabled) {
+    return (
+      <DashboardShell>
+        <DashboardHeader heading="Functions" text="Compute scripts" />
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Card className="max-w-md w-full">
+            <CardHeader className="text-center">
+              <div className="mx-auto p-3 rounded-full bg-green-50 w-fit mb-4">
+                <Zap className="h-8 w-8 text-green-600" />
+              </div>
+              <CardTitle>Enable Functions Service</CardTitle>
+              <CardDescription>
+                The Functions service is not yet enabled. Enable it to start creating and managing serverless functions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex justify-center">
+              <Button onClick={handleEnableService} disabled={enablingService} size="lg">
+                <Power className="mr-2 h-4 w-4" />
+                {enablingService ? "Enabling..." : "Enable Functions"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardShell>
+    )
+  }
 
   return (
     <DashboardShell>
