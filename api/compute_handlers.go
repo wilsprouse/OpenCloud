@@ -91,6 +91,13 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get all function entries from the service ledger
+	ledgerFunctions, err := service_ledger.GetAllFunctionEntries()
+	if err != nil {
+		fmt.Printf("Warning: Failed to read service ledger: %v\n", err)
+		ledgerFunctions = make(map[string]service_ledger.FunctionEntry)
+	}
+
 	var functions []FunctionItem
 
 	for _, file := range files {
@@ -112,7 +119,19 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 			Invocations:  0,
 			MemorySize:   128,
 			Timeout:      30,
-			Trigger:      nil, //loadTrigger(file.Name()),
+			Trigger:      nil,
+		}
+
+		// Check if this function has metadata in the service ledger
+		if ledgerEntry, exists := ledgerFunctions[file.Name()]; exists {
+			// If the function has a trigger and schedule in the ledger, populate it
+			if ledgerEntry.Trigger != "" && ledgerEntry.Schedule != "" {
+				fn.Trigger = &Trigger{
+					Type:     ledgerEntry.Trigger,
+					Schedule: ledgerEntry.Schedule,
+					Enabled:  true,
+				}
+			}
 		}
 
 		functions = append(functions, fn)
@@ -223,8 +242,11 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete trigger metadata
-	//saveTrigger(fnName, nil)
+	// Delete function entry from service ledger
+	if err := service_ledger.DeleteFunctionEntry(fnName); err != nil {
+		// Log the error but don't fail the request
+		fmt.Printf("Warning: Failed to delete function from service ledger: %v\n", err)
+	}
 
 	resp := map[string]string{
 		"status":  "success",
@@ -267,6 +289,18 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get trigger information from service ledger
+	var trigger *Trigger
+	if ledgerEntry, err := service_ledger.GetFunctionEntry(fnName); err == nil && ledgerEntry != nil {
+		if ledgerEntry.Trigger != "" && ledgerEntry.Schedule != "" {
+			trigger = &Trigger{
+				Type:     ledgerEntry.Trigger,
+				Schedule: ledgerEntry.Schedule,
+				Enabled:  true,
+			}
+		}
+	}
+
 	resp := map[string]interface{}{
 		"name":         fnName,
 		"path":         fnPath,
@@ -275,7 +309,7 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 		"lastModified": info.ModTime().Format(time.RFC3339),
 		"sizeBytes":    info.Size(),
 		"code":         string(code),
-		"trigger":      nil, //loadTrigger(fnName),
+		"trigger":      trigger,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -396,18 +430,22 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the service ledger to track this function update
-	if err := service_ledger.UpdateServiceActivity("Functions"); err != nil {
-		// Log the error but don't fail the request
-		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
+	// Update the service ledger with function metadata
+	trigger := ""
+	schedule := ""
+	if req.Trigger != nil && req.Trigger.Enabled {
+		trigger = req.Trigger.Type
+		schedule = req.Trigger.Schedule
+		if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
+			http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
+			return
+		}
 	}
 
-	// Save cron metadata only if trigger is enabled
-	if req.Trigger != nil && req.Trigger.Enabled {
-    	if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
-     	   	http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
-        	return
-    	}
+	// Update service ledger with function entry
+	if err := service_ledger.UpdateFunctionEntry(id, req.Runtime, trigger, schedule, req.Code); err != nil {
+		// Log the error but don't fail the request
+		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
 	}
 
 	// Respond with updated function info
