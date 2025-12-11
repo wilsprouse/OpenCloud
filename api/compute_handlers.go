@@ -124,7 +124,8 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 
 		// Check if this function has metadata in the service ledger
 		if ledgerEntry, exists := ledgerFunctions[file.Name()]; exists {
-			// If the function has a trigger and schedule in the ledger, populate it
+			// If the function has a trigger and schedule in the ledger, populate it.
+			// The presence of trigger and schedule indicates the trigger is enabled.
 			if ledgerEntry.Trigger != "" && ledgerEntry.Schedule != "" {
 				fn.Trigger = &Trigger{
 					Type:     ledgerEntry.Trigger,
@@ -292,6 +293,7 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 	// Get trigger information from service ledger
 	var trigger *Trigger
 	if ledgerEntry, err := service_ledger.GetFunctionEntry(fnName); err == nil && ledgerEntry != nil {
+		// The presence of trigger and schedule in the ledger indicates the trigger is enabled
 		if ledgerEntry.Trigger != "" && ledgerEntry.Schedule != "" {
 			trigger = &Trigger{
 				Type:     ledgerEntry.Trigger,
@@ -436,6 +438,7 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	if req.Trigger != nil && req.Trigger.Enabled {
 		trigger = req.Trigger.Type
 		schedule = req.Trigger.Schedule
+		// Add cron job to system crontab
 		if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
 			http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
 			return
@@ -443,8 +446,10 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update service ledger with function entry
+	// Note: If this fails after addCron succeeds, the cron entry may remain orphaned.
+	// A future improvement would be to implement transaction-like cleanup on failure.
 	if err := service_ledger.UpdateFunctionEntry(id, req.Runtime, trigger, schedule, req.Code); err != nil {
-		// Log the error but don't fail the request
+		// Log the error but don't fail the request since function code was already updated
 		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
 	}
 
