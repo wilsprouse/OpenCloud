@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
-	"time"
 )
 
 // FunctionEntry represents an individual function's metadata in the ledger
@@ -221,4 +220,39 @@ func DeleteFunctionEntry(functionName string) error {
 	ledger["Functions"] = status
 
 	return WriteServiceLedger(ledger)
+}
+
+// GetFunctionEntry retrieves a specific function entry from the Functions service ledger
+func GetFunctionEntry(functionName string) (*FunctionEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	status, exists := ledger["Functions"]
+	if !exists || status.Functions == nil {
+		return nil, nil
+	}
+
+	entry, exists := status.Functions[functionName]
+	if !exists {
+		return nil, nil
+	}
+
+	return &entry, nil
+}
+
+// GetAllFunctionEntries retrieves all function entries from the Functions service ledger
+func GetAllFunctionEntries() (map[string]FunctionEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	status, exists := ledger["Functions"]
+	if !exists || status.Functions == nil {
+		return make(map[string]FunctionEntry), nil
+	}
+
+	return status.Functions, nil
 }
