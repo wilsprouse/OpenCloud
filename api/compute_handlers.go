@@ -382,6 +382,100 @@ func addCron(filePath string, schedule string) error {
 	return nil
 }
 
+func CreateFunction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		Name    string `json:"name"`
+		Runtime string `json:"runtime"`
+		Code    string `json:"code"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.Name == "" || req.Runtime == "" || req.Code == "" {
+		http.Error(w, "Missing required fields: name, runtime, and code", http.StatusBadRequest)
+		return
+	}
+
+	// Determine file extension based on runtime
+	var extension string
+	runtimeLower := strings.ToLower(req.Runtime)
+	if strings.Contains(runtimeLower, "python") {
+		extension = ".py"
+	} else if strings.Contains(runtimeLower, "node") || strings.Contains(runtimeLower, "javascript") {
+		extension = ".js"
+	} else if strings.Contains(runtimeLower, "go") {
+		extension = ".go"
+	} else if strings.Contains(runtimeLower, "ruby") {
+		extension = ".rb"
+	} else {
+		// Default to .txt for unknown runtimes
+		extension = ".txt"
+	}
+
+	// Create function filename
+	functionFileName := req.Name
+	if !strings.HasSuffix(functionFileName, extension) {
+		functionFileName += extension
+	}
+
+	// Resolve file path
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+	fnDir := filepath.Join(home, ".opencloud", "functions")
+	fnPath := filepath.Join(fnDir, functionFileName)
+
+	// Create the functions directory if it doesn't exist
+	if err := os.MkdirAll(fnDir, 0755); err != nil {
+		http.Error(w, "Failed to create functions directory", http.StatusInternalServerError)
+		return
+	}
+
+	// Check if function already exists
+	if _, err := os.Stat(fnPath); err == nil {
+		http.Error(w, "Function already exists", http.StatusConflict)
+		return
+	}
+
+	// Write function code to file
+	if err := os.WriteFile(fnPath, []byte(req.Code), 0644); err != nil {
+		http.Error(w, "Failed to create function file", http.StatusInternalServerError)
+		return
+	}
+
+	// Update service ledger with function entry
+	if err := service_ledger.UpdateFunctionEntry(functionFileName, req.Runtime, "", "", req.Code); err != nil {
+		// Log the error but don't fail the request since function file was already created
+		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
+	}
+
+	// Respond with created function info
+	resp := map[string]interface{}{
+		"id":           functionFileName,
+		"name":         functionFileName,
+		"runtime":      req.Runtime,
+		"lastModified": time.Now().Format(time.RFC3339),
+		"status":       "active",
+		"message":      "Function created successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
+}
+
 func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPut {
