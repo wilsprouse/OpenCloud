@@ -1,8 +1,22 @@
 {
-    "Containers" : {
-        "enabled" : false
+    "Containers": {
+        "enabled": false
     },
-    "Functions" : {
-        "enabled" : false
+    "Functions": {
+        "enabled": false,
+        "functions": {
+            "test_golang.go": {
+                "runtime": "go1.21",
+                "content": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Hello from Go!\")\n}"
+            },
+            "test_hello.py": {
+                "runtime": "python3.9",
+                "content": "print(\"Hello from test function!\")"
+            },
+            "test_node.js": {
+                "runtime": "nodejs20.x",
+                "content": "console.log(\"Hello from Node.js function!\");"
+            }
+        }
     }
 }

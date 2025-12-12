@@ -37,6 +37,7 @@ func main() {
 	mux.HandleFunc("/download-object", api.DownloadObject)
 	mux.HandleFunc("/list-functions", api.ListFunctions)
 	mux.HandleFunc("/invoke-function", api.InvokeFunction)
+	mux.HandleFunc("/create-function", api.CreateFunction)
 	mux.HandleFunc("/delete-function", api.DeleteFunction)
 	mux.HandleFunc("/update-function/", api.UpdateFunction)
 	mux.HandleFunc("/get-service-status", service_ledger.GetServiceStatusHandler)
