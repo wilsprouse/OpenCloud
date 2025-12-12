@@ -413,13 +413,13 @@ func CreateFunction(w http.ResponseWriter, r *http.Request) {
 		extension = ".py"
 	} else if strings.Contains(runtimeLower, "node") || strings.Contains(runtimeLower, "javascript") {
 		extension = ".js"
-	} else if strings.Contains(runtimeLower, "go") {
+	} else if strings.HasPrefix(runtimeLower, "go") || runtimeLower == "golang" {
 		extension = ".go"
 	} else if strings.Contains(runtimeLower, "ruby") {
 		extension = ".rb"
 	} else {
-		// Default to .txt for unknown runtimes
-		extension = ".txt"
+		http.Error(w, "Unsupported runtime: "+req.Runtime, http.StatusBadRequest)
+		return
 	}
 
 	// Create function filename
@@ -443,9 +443,15 @@ func CreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if function already exists
+	// Check if function already exists (both file and ledger)
 	if _, err := os.Stat(fnPath); err == nil {
 		http.Error(w, "Function already exists", http.StatusConflict)
+		return
+	}
+
+	// Also check if function exists in service ledger
+	if existingEntry, err := service_ledger.GetFunctionEntry(functionFileName); err == nil && existingEntry != nil {
+		http.Error(w, "Function already exists in service ledger", http.StatusConflict)
 		return
 	}
 
