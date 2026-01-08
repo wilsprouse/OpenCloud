@@ -3,19 +3,45 @@
         "enabled": false
     },
     "Functions": {
-        "enabled": false,
+        "enabled": true,
         "functions": {
-            "test_golang.go": {
-                "runtime": "go1.21",
-                "content": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Hello from Go!\")\n}"
+            "hello_world.py": {
+                "runtime": "python",
+                "content": "print(\"Hello from OpenCloud Function!\")\nprint(\"This is a test execution.\")\nfor i in range(5):\n    print(f\"Count: {i}\")",
+                "logs": [
+                    {
+                        "timestamp": "2026-01-08T03:36:33Z",
+                        "output": "Hello from OpenCloud Function!\nThis is a test execution.\nCount: 0\nCount: 1\nCount: 2\nCount: 3\nCount: 4\n",
+                        "status": "success"
+                    },
+                    {
+                        "timestamp": "2026-01-08T03:36:48Z",
+                        "output": "Hello from OpenCloud Function!\nThis is a test execution.\nCount: 0\nCount: 1\nCount: 2\nCount: 3\nCount: 4\n",
+                        "status": "success"
+                    },
+                    {
+                        "timestamp": "2026-01-08T03:36:49Z",
+                        "output": "Hello from OpenCloud Function!\nThis is a test execution.\nCount: 0\nCount: 1\nCount: 2\nCount: 3\nCount: 4\n",
+                        "status": "success"
+                    },
+                    {
+                        "timestamp": "2026-01-08T03:39:56Z",
+                        "output": "Hello from OpenCloud Function!\nThis is a test execution.\nCount: 0\nCount: 1\nCount: 2\nCount: 3\nCount: 4\n",
+                        "status": "success"
+                    }
+                ]
             },
-            "test_hello.py": {
-                "runtime": "python3.9",
-                "content": "print(\"Hello from test function!\")"
-            },
-            "test_node.js": {
-                "runtime": "nodejs20.x",
-                "content": "console.log(\"Hello from Node.js function!\");"
+            "test_error.py": {
+                "runtime": "python",
+                "content": "print(\"Starting error test...\")\nraise ValueError(\"This is a test error!\")",
+                "logs": [
+                    {
+                        "timestamp": "2026-01-08T03:37:06Z",
+                        "output": "Starting error test...\n",
+                        "error": "Traceback (most recent call last):\n  File \"/home/runner/.opencloud/functions/test_error.py\", line 2, in \u003cmodule\u003e\n    raise ValueError(\"This is a test error!\")\nValueError: This is a test error!\n",
+                        "status": "error"
+                    }
+                ]
             }
         }
     }

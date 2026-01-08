@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useEffect, useState } from "react"
+import { use, useEffect, useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -192,6 +192,11 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         return "bg-gray-100 text-gray-800"
     }
   }
+
+  // Memoize reversed logs to avoid re-computing on every render
+  const reversedLogs = useMemo(() => {
+    return [...logs].reverse()
+  }, [logs])
 
   if (loading && !functionData) {
     return (
@@ -389,7 +394,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                 <p className="text-xs mt-1">Invoke the function to see output logs here</p>
               </div>
             ) : (
-              logs.slice().reverse().map((log, index) => (
+              reversedLogs.map((log, index) => (
                 <div
                   key={index}
                   className={`border rounded-lg p-4 ${

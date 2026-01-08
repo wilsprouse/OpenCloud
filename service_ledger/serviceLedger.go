@@ -198,11 +198,19 @@ func UpdateFunctionEntry(functionName, runtime, trigger, schedule, content strin
 		status.Functions = make(map[string]FunctionEntry)
 	}
 
+	// Preserve existing logs when updating
+	existingEntry, exists := status.Functions[functionName]
+	var existingLogs []FunctionLog
+	if exists {
+		existingLogs = existingEntry.Logs
+	}
+
 	status.Functions[functionName] = FunctionEntry{
 		Runtime:  runtime,
 		Trigger:  trigger,
 		Schedule: schedule,
 		Content:  content,
+		Logs:     existingLogs, // Preserve existing logs
 	}
 
 	ledger["Functions"] = status
