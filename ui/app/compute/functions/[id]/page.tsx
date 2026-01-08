@@ -302,10 +302,10 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                 <Code className="h-4 w-4" />
                 <span>Runtime: {runtime}</span>
               </div>
-              <div className="flex items-center space-x-2 text-sm text-muted-foreground mt-2">
+              {/*<div className="flex items-center space-x-2 text-sm text-muted-foreground mt-2">
                 <Clock className="h-4 w-4" />
                 <span>Timeout: {timeout}s</span>
-              </div>
+              </div>*/}
             </div>
           </CardContent>
         </Card>
