@@ -202,9 +202,28 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = &stderr
 
 	err = cmd.Run()
+	
+	// Create log entry
+	log := service_ledger.FunctionLog{
+		Timestamp: time.Now().Format(time.RFC3339),
+		Output:    out.String(),
+		Error:     stderr.String(),
+		Status:    "success",
+	}
+	
 	if err != nil {
+		log.Status = "error"
+		// Store the error log
+		if logErr := service_ledger.AddFunctionLog(fnName, log); logErr != nil {
+			fmt.Printf("Warning: Failed to store function log: %v\n", logErr)
+		}
 		http.Error(w, "Execution error: "+stderr.String(), http.StatusInternalServerError)
 		return
+	}
+
+	// Store the success log
+	if logErr := service_ledger.AddFunctionLog(fnName, log); logErr != nil {
+		fmt.Printf("Warning: Failed to store function log: %v\n", logErr)
 	}
 
 	fmt.Println(out.String())
@@ -569,4 +588,35 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// GetFunctionLogs retrieves the logs for a specific function
+func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
+	// Extract function name from path after /get-function-logs/
+	fnName := strings.TrimPrefix(r.URL.Path, "/get-function-logs/")
+	if fnName == "" || fnName == "/get-function-logs" {
+		http.Error(w, "Missing function name", http.StatusBadRequest)
+		return
+	}
+
+	// Get function entry from service ledger
+	entry, err := service_ledger.GetFunctionEntry(fnName)
+	if err != nil {
+		http.Error(w, "Failed to retrieve function logs", http.StatusInternalServerError)
+		return
+	}
+
+	if entry == nil {
+		http.Error(w, "Function not found", http.StatusNotFound)
+		return
+	}
+
+	// Return logs (empty array if no logs)
+	logs := entry.Logs
+	if logs == nil {
+		logs = []service_ledger.FunctionLog{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
 }
