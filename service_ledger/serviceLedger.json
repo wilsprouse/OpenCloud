@@ -3,47 +3,7 @@
         "enabled": false
     },
     "Functions": {
-        "enabled": false,
-        "functions": {
-            "error_test.py": {
-                "runtime": "python",
-                "content": "import sys\nprint(\"Starting function...\")\nraise Exception(\"Intentional error for testing\")\nprint(\"This should not print\")",
-                "logs": [
-                    {
-                        "timestamp": "2026-01-13T23:02:46Z",
-                        "output": "Starting function...\n",
-                        "error": "Traceback (most recent call last):\n  File \"/home/runner/.opencloud/functions/error_test.py\", line 3, in \u003cmodule\u003e\n    raise Exception(\"Intentional error for testing\")\nException: Intentional error for testing\n",
-                        "status": "error"
-                    }
-                ]
-            },
-            "hello.py": {
-                "runtime": "python",
-                "content": "import sys\nimport json\n\ndef main():\n    print(\"Hello from API function!\")\n    print(\"Log message line 2\")\n    return {\"status\": \"success\"}\n\nif __name__ == \"__main__\":\n    result = main()\n    print(json.dumps(result))",
-                "logs": [
-                    {
-                        "timestamp": "2026-01-13T23:02:36Z",
-                        "output": "Hello from API function!\nLog message line 2\n{\"status\": \"success\"}\n",
-                        "status": "success"
-                    },
-                    {
-                        "timestamp": "2026-01-13T23:02:56Z",
-                        "output": "Hello from API function!\nLog message line 2\n{\"status\": \"success\"}\n",
-                        "status": "success"
-                    },
-                    {
-                        "timestamp": "2026-01-13T23:02:57Z",
-                        "output": "Hello from API function!\nLog message line 2\n{\"status\": \"success\"}\n",
-                        "status": "success"
-                    },
-                    {
-                        "timestamp": "2026-01-13T23:02:58Z",
-                        "output": "Hello from API function!\nLog message line 2\n{\"status\": \"success\"}\n",
-                        "status": "success"
-                    }
-                ]
-            }
-        }
+        "enabled": false
     },
     "blog_storage": {
         "enabled": false
