@@ -3,46 +3,12 @@
         "enabled": false
     },
     "Functions": {
-        "enabled": true,
-        "functions": {
-            "hello_world.py": {
-                "runtime": "python",
-                "content": "print(\"Hello from OpenCloud Function!\")\nprint(\"This is a test execution.\")\nfor i in range(5):\n    print(f\"Count: {i}\")",
-                "logs": [
-                    {
-                        "timestamp": "2026-01-08T03:36:33Z",
-                        "output": "Hello from OpenCloud Function!\nThis is a test execution.\nCount: 0\nCount: 1\nCount: 2\nCount: 3\nCount: 4\n",
-                        "status": "success"
-                    },
-                    {
-                        "timestamp": "2026-01-08T03:36:48Z",
-                        "output": "Hello from OpenCloud Function!\nThis is a test execution.\nCount: 0\nCount: 1\nCount: 2\nCount: 3\nCount: 4\n",
-                        "status": "success"
-                    },
-                    {
-                        "timestamp": "2026-01-08T03:36:49Z",
-                        "output": "Hello from OpenCloud Function!\nThis is a test execution.\nCount: 0\nCount: 1\nCount: 2\nCount: 3\nCount: 4\n",
-                        "status": "success"
-                    },
-                    {
-                        "timestamp": "2026-01-08T03:39:56Z",
-                        "output": "Hello from OpenCloud Function!\nThis is a test execution.\nCount: 0\nCount: 1\nCount: 2\nCount: 3\nCount: 4\n",
-                        "status": "success"
-                    }
-                ]
-            },
-            "test_error.py": {
-                "runtime": "python",
-                "content": "print(\"Starting error test...\")\nraise ValueError(\"This is a test error!\")",
-                "logs": [
-                    {
-                        "timestamp": "2026-01-08T03:37:06Z",
-                        "output": "Starting error test...\n",
-                        "error": "Traceback (most recent call last):\n  File \"/home/runner/.opencloud/functions/test_error.py\", line 2, in \u003cmodule\u003e\n    raise ValueError(\"This is a test error!\")\nValueError: This is a test error!\n",
-                        "status": "error"
-                    }
-                ]
-            }
-        }
+        "enabled": false
+    },
+    "blog_storage": {
+        "enabled": false
+    },
+    "pipelines": {
+        "enabled": false
     }
 }
