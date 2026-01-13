@@ -40,6 +40,7 @@ func main() {
 	mux.HandleFunc("/create-function", api.CreateFunction)
 	mux.HandleFunc("/delete-function", api.DeleteFunction)
 	mux.HandleFunc("/update-function/", api.UpdateFunction)
+	mux.HandleFunc("/get-function-logs/", api.GetFunctionLogs)
 	mux.HandleFunc("/get-service-status", service_ledger.GetServiceStatusHandler)
 	mux.HandleFunc("/enable-service", service_ledger.EnableServiceHandler)
 	mux.HandleFunc("/", api.GetFunction)
