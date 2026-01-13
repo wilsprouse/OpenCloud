@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useEffect, useState } from "react"
+import { use, useEffect, useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -30,8 +30,16 @@ import {
   Activity,
   Calendar,
   Settings,
+  FileText,
   Terminal
 } from "lucide-react"
+
+type FunctionLog = {
+  timestamp: string
+  output: string
+  error?: string
+  status: "success" | "error"
+}
 
 type FunctionDetail = {
   id: string
@@ -57,6 +65,8 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const [functionData, setFunctionData] = useState<FunctionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [logs, setLogs] = useState<FunctionLog[]>([])
+  const [loadingLogs, setLoadingLogs] = useState(false)
   
   // Editable form state
   const [name, setName] = useState("")
@@ -68,10 +78,6 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   // Trigger state
   const [triggerEnabled, setTriggerEnabled] = useState(false)
   const [triggerSchedule, setTriggerSchedule] = useState("0 0 * * *")
-  
-  // Output state
-  const [functionOutput, setFunctionOutput] = useState<string>("")
-  const [invoking, setInvoking] = useState(false)
 
   // Fetch function details
   const fetchFunctionDetails = async () => {
@@ -103,8 +109,23 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
     }
   }
 
+  // Fetch function logs
+  const fetchFunctionLogs = async () => {
+    setLoadingLogs(true)
+    try {
+      const res = await client.get<FunctionLog[]>(`/get-function-logs/${encodeURIComponent(functionId)}`)
+      setLogs(res.data || [])
+    } catch (err) {
+      console.error("Failed to fetch function logs:", err)
+      setLogs([])
+    } finally {
+      setLoadingLogs(false)
+    }
+  }
+
   useEffect(() => {
     fetchFunctionDetails()
+    fetchFunctionLogs()
   }, [functionId])
 
   const handleSaveAndDeploy = async () => {
@@ -136,26 +157,15 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   }
 
   const handleInvoke = async () => {
-    setInvoking(true)
-    setFunctionOutput("") // Clear previous output
     try {
-      const res = await client.post(`/invoke-function?name=${encodeURIComponent(functionId)}`)
+      await client.post(`/invoke-function?name=${encodeURIComponent(functionId)}`)
       console.log("Function invoked successfully")
-      
-      // Extract and display the output
-      if (res.data && res.data.output !== undefined) {
-        setFunctionOutput(res.data.output)
-      } else {
-        setFunctionOutput("Function executed successfully with no output")
-      }
-      
       fetchFunctionDetails() // Refresh to update invocation count
-    } catch (err: unknown) {
+      fetchFunctionLogs() // Refresh logs to show new output
+    } catch (err) {
       console.error("Failed to invoke function:", err)
-      // Display error message in output
-      setFunctionOutput(`Error: ${formatErrorMessage(err)}`)
-    } finally {
-      setInvoking(false)
+      // Still fetch logs in case there was an error logged
+      fetchFunctionLogs()
     }
   }
 
@@ -167,24 +177,6 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
     } catch {
       return dateString
     }
-  }
-
-  // Format error message for display
-  const formatErrorMessage = (error: unknown): string => {
-    if (typeof error === 'string') {
-      return error
-    }
-    if (error && typeof error === 'object') {
-      const err = error as any // Type assertion for accessing error properties
-      if (err.response?.data) {
-        const data = err.response.data
-        return typeof data === 'string' ? data : JSON.stringify(data, null, 2)
-      }
-      if (err.message) {
-        return err.message
-      }
-    }
-    return 'An unknown error occurred'
   }
 
   // Get status badge color
@@ -200,6 +192,11 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         return "bg-gray-100 text-gray-800"
     }
   }
+
+  // Memoize reversed logs to avoid re-computing on every render
+  const reversedLogs = useMemo(() => {
+    return [...logs].reverse()
+  }, [logs])
 
   if (loading && !functionData) {
     return (
@@ -252,9 +249,9 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         text="Edit function configuration and code"
       >
         <div className="flex items-center space-x-2">
-          <Button variant="outline" onClick={handleInvoke} disabled={invoking}>
-            <Play className={`mr-2 h-4 w-4 ${invoking ? 'animate-pulse' : ''}`} />
-            {invoking ? "Invoking..." : "Invoke"}
+          <Button variant="outline" onClick={handleInvoke}>
+            <Play className="mr-2 h-4 w-4" />
+            Invoke
           </Button>
           <Button onClick={handleSaveAndDeploy} disabled={saving}>
             <Save className="mr-2 h-4 w-4" />
@@ -371,25 +368,76 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         </Card>
       </div>
 
-      {/* Output Section */}
-      {functionOutput && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Terminal className="h-5 w-5 mr-2" />
-              Function Output
-            </CardTitle>
-            <CardDescription>Latest execution result</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="bg-slate-950 text-slate-50 rounded-md p-4 overflow-x-auto" role="log" aria-live="polite">
-              <pre className="font-mono text-sm whitespace-pre-wrap break-words">
-                {functionOutput}
-              </pre>
+      {/* Logs Section */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center">
+                <Terminal className="h-5 w-5 mr-2" />
+                Execution Logs
+              </CardTitle>
+              <CardDescription>View recent function invocation outputs</CardDescription>
             </div>
-          </CardContent>
-        </Card>
-      )}
+            <Button variant="outline" size="sm" onClick={fetchFunctionLogs} disabled={loadingLogs}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${loadingLogs ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {logs.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">No execution logs yet</p>
+                <p className="text-xs mt-1">Invoke the function to see output logs here</p>
+              </div>
+            ) : (
+              reversedLogs.map((log, index) => (
+                <div
+                  key={index}
+                  className={`border rounded-lg p-4 ${
+                    log.status === "error" ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <Badge
+                      className={
+                        log.status === "error"
+                          ? "bg-red-100 text-red-800"
+                          : "bg-green-100 text-green-800"
+                      }
+                    >
+                      {log.status === "error" ? "Error" : "Success"}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground flex items-center">
+                      <Clock className="h-3 w-3 mr-1" />
+                      {new Date(log.timestamp).toLocaleString()}
+                    </span>
+                  </div>
+                  {log.output && (
+                    <div className="mt-2">
+                      <p className="text-xs font-semibold mb-1 text-muted-foreground">Output:</p>
+                      <pre className="text-xs font-mono bg-white p-2 rounded border overflow-x-auto whitespace-pre-wrap">
+                        {log.output}
+                      </pre>
+                    </div>
+                  )}
+                  {log.error && (
+                    <div className="mt-2">
+                      <p className="text-xs font-semibold mb-1 text-red-600">Error:</p>
+                      <pre className="text-xs font-mono bg-white p-2 rounded border border-red-300 overflow-x-auto whitespace-pre-wrap text-red-600">
+                        {log.error}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </DashboardShell>
   )
 }

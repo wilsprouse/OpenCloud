@@ -4,5 +4,11 @@
     },
     "Functions": {
         "enabled": true
+    },
+    "blog_storage": {
+        "enabled": false
+    },
+    "pipelines": {
+        "enabled": false
     }
 }
