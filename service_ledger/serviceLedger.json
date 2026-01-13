@@ -3,7 +3,7 @@
         "enabled": false
     },
     "Functions": {
-        "enabled": true
+        "enabled": false
     },
     "blog_storage": {
         "enabled": false
