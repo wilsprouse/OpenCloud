@@ -29,7 +29,8 @@ import {
   Clock,
   Activity,
   Calendar,
-  Settings
+  Settings,
+  Terminal
 } from "lucide-react"
 
 type FunctionDetail = {
@@ -67,6 +68,10 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   // Trigger state
   const [triggerEnabled, setTriggerEnabled] = useState(false)
   const [triggerSchedule, setTriggerSchedule] = useState("0 0 * * *")
+  
+  // Output state
+  const [functionOutput, setFunctionOutput] = useState<string>("")
+  const [invoking, setInvoking] = useState(false)
 
   // Fetch function details
   const fetchFunctionDetails = async () => {
@@ -131,12 +136,27 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   }
 
   const handleInvoke = async () => {
+    setInvoking(true)
+    setFunctionOutput("") // Clear previous output
     try {
-      await client.post(`/invoke-function?name=${encodeURIComponent(functionId)}`)
+      const res = await client.post(`/invoke-function?name=${encodeURIComponent(functionId)}`)
       console.log("Function invoked successfully")
+      
+      // Extract and display the output
+      if (res.data && res.data.output !== undefined) {
+        setFunctionOutput(res.data.output)
+      } else {
+        setFunctionOutput("Function executed successfully with no output")
+      }
+      
       fetchFunctionDetails() // Refresh to update invocation count
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to invoke function:", err)
+      // Display error message in output
+      const errorMessage = err.response?.data || err.message || "Failed to invoke function"
+      setFunctionOutput(`Error: ${typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage)}`)
+    } finally {
+      setInvoking(false)
     }
   }
 
@@ -215,9 +235,9 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         text="Edit function configuration and code"
       >
         <div className="flex items-center space-x-2">
-          <Button variant="outline" onClick={handleInvoke}>
-            <Play className="mr-2 h-4 w-4" />
-            Invoke
+          <Button variant="outline" onClick={handleInvoke} disabled={invoking}>
+            <Play className={`mr-2 h-4 w-4 ${invoking ? 'animate-pulse' : ''}`} />
+            {invoking ? "Invoking..." : "Invoke"}
           </Button>
           <Button onClick={handleSaveAndDeploy} disabled={saving}>
             <Save className="mr-2 h-4 w-4" />
@@ -333,6 +353,26 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
           </CardContent>
         </Card>
       </div>
+
+      {/* Output Section */}
+      {functionOutput && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Terminal className="h-5 w-5 mr-2" />
+              Function Output
+            </CardTitle>
+            <CardDescription>Latest execution result</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="bg-slate-950 text-slate-50 rounded-md p-4 overflow-x-auto">
+              <pre className="font-mono text-sm whitespace-pre-wrap break-words">
+                {functionOutput}
+              </pre>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </DashboardShell>
   )
 }
