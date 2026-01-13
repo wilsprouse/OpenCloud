@@ -150,7 +150,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       }
       
       fetchFunctionDetails() // Refresh to update invocation count
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to invoke function:", err)
       // Display error message in output
       setFunctionOutput(`Error: ${formatErrorMessage(err)}`)
@@ -170,15 +170,21 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   }
 
   // Format error message for display
-  const formatErrorMessage = (error: any): string => {
+  const formatErrorMessage = (error: unknown): string => {
     if (typeof error === 'string') {
       return error
     }
-    if (error.response?.data) {
-      const data = error.response.data
-      return typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+    if (error && typeof error === 'object') {
+      const err = error as any // Type assertion for accessing error properties
+      if (err.response?.data) {
+        const data = err.response.data
+        return typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+      }
+      if (err.message) {
+        return err.message
+      }
     }
-    return error.message || 'An unknown error occurred'
+    return 'An unknown error occurred'
   }
 
   // Get status badge color
