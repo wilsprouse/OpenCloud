@@ -1,0 +1,14 @@
+{
+    "Containers": {
+        "enabled": false
+    },
+    "Functions": {
+        "enabled": false
+    },
+    "blog_storage": {
+        "enabled": false
+    },
+    "pipelines": {
+        "enabled": false
+    }
+}
