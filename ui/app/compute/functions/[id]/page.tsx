@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import client from "@/app/utility/post"
 import { 
   ArrowLeft,
@@ -344,100 +345,103 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
           </CardContent>
         </Card>
 
-        {/* Code Editor Section */}
+        {/* Tabs for Code Editor and Logs */}
         <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Code className="h-5 w-5 mr-2" />
-              Function Code
-            </CardTitle>
-            <CardDescription>Edit your function code below</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <Label htmlFor="code">Code</Label>
-              <Textarea
-                id="code"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder="Enter your function code here..."
-                className="font-mono text-sm min-h-[500px] resize-y"
-              />
-            </div>
+          <CardContent className="pt-6">
+            <Tabs defaultValue="code" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="code" className="flex items-center">
+                  <Code className="h-4 w-4 mr-2" />
+                  Code Editor
+                </TabsTrigger>
+                <TabsTrigger value="logs" className="flex items-center">
+                  <Terminal className="h-4 w-4 mr-2" />
+                  Logs
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="code" className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="code">Function Code</Label>
+                  <Textarea
+                    id="code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="Enter your function code here..."
+                    className="font-mono text-sm min-h-[500px] resize-y"
+                  />
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="logs" className="space-y-4">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold flex items-center">
+                      <Terminal className="h-5 w-5 mr-2" />
+                      Execution Logs
+                    </h3>
+                    <p className="text-sm text-muted-foreground">View recent function invocation outputs</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={fetchFunctionLogs} disabled={loadingLogs}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${loadingLogs ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                </div>
+                <div className="space-y-3">
+                  {logs.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No execution logs yet</p>
+                      <p className="text-xs mt-1">Invoke the function to see output logs here</p>
+                    </div>
+                  ) : (
+                    reversedLogs.map((log, index) => (
+                      <div
+                        key={index}
+                        className={`border rounded-lg p-4 ${
+                          log.status === "error" ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <Badge
+                            className={
+                              log.status === "error"
+                                ? "bg-red-100 text-red-800"
+                                : "bg-green-100 text-green-800"
+                            }
+                          >
+                            {log.status === "error" ? "Error" : "Success"}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground flex items-center">
+                            <Clock className="h-3 w-3 mr-1" />
+                            {new Date(log.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+                        {log.output && (
+                          <div className="mt-2">
+                            <p className="text-xs font-semibold mb-1 text-muted-foreground">Output:</p>
+                            <pre className="text-xs font-mono bg-white p-2 rounded border overflow-x-auto whitespace-pre-wrap">
+                              {log.output}
+                            </pre>
+                          </div>
+                        )}
+                        {log.error && (
+                          <div className="mt-2">
+                            <p className="text-xs font-semibold mb-1 text-red-600">Error:</p>
+                            <pre className="text-xs font-mono bg-white p-2 rounded border border-red-300 overflow-x-auto whitespace-pre-wrap text-red-600">
+                              {log.error}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
       </div>
-
-      {/* Logs Section */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center">
-                <Terminal className="h-5 w-5 mr-2" />
-                Execution Logs
-              </CardTitle>
-              <CardDescription>View recent function invocation outputs</CardDescription>
-            </div>
-            <Button variant="outline" size="sm" onClick={fetchFunctionLogs} disabled={loadingLogs}>
-              <RefreshCw className={`h-4 w-4 mr-2 ${loadingLogs ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {logs.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No execution logs yet</p>
-                <p className="text-xs mt-1">Invoke the function to see output logs here</p>
-              </div>
-            ) : (
-              reversedLogs.map((log, index) => (
-                <div
-                  key={index}
-                  className={`border rounded-lg p-4 ${
-                    log.status === "error" ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <Badge
-                      className={
-                        log.status === "error"
-                          ? "bg-red-100 text-red-800"
-                          : "bg-green-100 text-green-800"
-                      }
-                    >
-                      {log.status === "error" ? "Error" : "Success"}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground flex items-center">
-                      <Clock className="h-3 w-3 mr-1" />
-                      {new Date(log.timestamp).toLocaleString()}
-                    </span>
-                  </div>
-                  {log.output && (
-                    <div className="mt-2">
-                      <p className="text-xs font-semibold mb-1 text-muted-foreground">Output:</p>
-                      <pre className="text-xs font-mono bg-white p-2 rounded border overflow-x-auto whitespace-pre-wrap">
-                        {log.output}
-                      </pre>
-                    </div>
-                  )}
-                  {log.error && (
-                    <div className="mt-2">
-                      <p className="text-xs font-semibold mb-1 text-red-600">Error:</p>
-                      <pre className="text-xs font-mono bg-white p-2 rounded border border-red-300 overflow-x-auto whitespace-pre-wrap text-red-600">
-                        {log.error}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </CardContent>
-      </Card>
     </DashboardShell>
   )
 }
