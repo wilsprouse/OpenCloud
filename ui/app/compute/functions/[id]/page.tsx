@@ -153,8 +153,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
     } catch (err: any) {
       console.error("Failed to invoke function:", err)
       // Display error message in output
-      const errorMessage = err.response?.data || err.message || "Failed to invoke function"
-      setFunctionOutput(`Error: ${typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage)}`)
+      setFunctionOutput(`Error: ${formatErrorMessage(err)}`)
     } finally {
       setInvoking(false)
     }
@@ -168,6 +167,18 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
     } catch {
       return dateString
     }
+  }
+
+  // Format error message for display
+  const formatErrorMessage = (error: any): string => {
+    if (typeof error === 'string') {
+      return error
+    }
+    if (error.response?.data) {
+      const data = error.response.data
+      return typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+    }
+    return error.message || 'An unknown error occurred'
   }
 
   // Get status badge color
@@ -365,7 +376,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
             <CardDescription>Latest execution result</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="bg-slate-950 text-slate-50 rounded-md p-4 overflow-x-auto">
+            <div className="bg-slate-950 text-slate-50 rounded-md p-4 overflow-x-auto" role="log" aria-live="polite">
               <pre className="font-mono text-sm whitespace-pre-wrap break-words">
                 {functionOutput}
               </pre>
