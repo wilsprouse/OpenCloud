@@ -618,20 +618,26 @@ func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
 	logContent, err := os.ReadFile(logFilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Return empty logs if file doesn't exist
+			// Return empty array if file doesn't exist (compatible with frontend)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"logs": ""})
+			json.NewEncoder(w).Encode([]service_ledger.FunctionLog{})
 			return
 		}
 		http.Error(w, "Failed to read log file", http.StatusInternalServerError)
 		return
 	}
 
-	// Return logs as a JSON response
-	resp := map[string]string{
-		"logs": string(logContent),
+	// Parse log file and split into individual invocations
+	// Each invocation's output is separated in the log file
+	// For now, return entire log content as a single entry with current timestamp
+	logs := []service_ledger.FunctionLog{
+		{
+			Timestamp: time.Now().Format(time.RFC3339),
+			Output:    string(logContent),
+			Status:    "success",
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(logs)
 }
