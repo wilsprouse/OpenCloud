@@ -602,22 +602,40 @@ func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get function entry from service ledger
-	entry, err := service_ledger.GetFunctionEntry(fnName)
+	// Get home directory
+	home, err := os.UserHomeDir()
 	if err != nil {
-		http.Error(w, "Failed to retrieve function logs", http.StatusInternalServerError)
+		http.Error(w, "Failed to resolve home directory", http.StatusInternalServerError)
 		return
 	}
 
-	if entry == nil {
-		http.Error(w, "Function not found", http.StatusNotFound)
+	// Construct log file path: remove extension from function name and add .log
+	baseName := strings.TrimSuffix(fnName, filepath.Ext(fnName))
+	logFileName := baseName + ".log"
+	logFilePath := filepath.Join(home, ".opencloud", "logs", "functions", logFileName)
+
+	// Read log file
+	logContent, err := os.ReadFile(logFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Return empty array if file doesn't exist (compatible with frontend)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]service_ledger.FunctionLog{})
+			return
+		}
+		http.Error(w, "Failed to read log file", http.StatusInternalServerError)
 		return
 	}
 
-	// Return logs (empty array if no logs)
-	logs := entry.Logs
-	if logs == nil {
-		logs = []service_ledger.FunctionLog{}
+	// Parse log file and split into individual invocations
+	// Each invocation's output is separated in the log file
+	// For now, return entire log content as a single entry with current timestamp
+	logs := []service_ledger.FunctionLog{
+		{
+			Timestamp: time.Now().Format(time.RFC3339),
+			Output:    string(logContent),
+			Status:    "success",
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
