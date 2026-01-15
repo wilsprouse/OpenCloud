@@ -229,7 +229,7 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	
-	fmt.Printf(out.String())
+	fmt.Printf(out.String()+stderr.String())
 
 	// Send JSON response
 	resp := map[string]string{
