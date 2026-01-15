@@ -399,19 +399,15 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                       <div
                         key={index}
                         className={`border rounded-lg p-4 ${
-                          log.status === "error" ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"
+                          log.status === "error" ? "border-red-200 bg-red-50" : "border-black"
                         }`}
                       >
                         <div className="flex items-center justify-between mb-2">
-                          <Badge
-                            className={
-                              log.status === "error"
-                                ? "bg-red-100 text-red-800"
-                                : "bg-green-100 text-green-800"
-                            }
-                          >
-                            {log.status === "error" ? "Error" : "Success"}
-                          </Badge>
+                          {log.status === "error" && (
+                            <Badge className="bg-red-100 text-red-800">
+                              Error
+                            </Badge>
+                          )}
                           <span className="text-xs text-muted-foreground flex items-center">
                             <Clock className="h-3 w-3 mr-1" />
                             {new Date(log.timestamp).toLocaleString()}
