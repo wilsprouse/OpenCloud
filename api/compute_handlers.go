@@ -229,29 +229,6 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	
-	// Create log entry
-	log := service_ledger.FunctionLog{
-		Timestamp: time.Now().Format(time.RFC3339),
-		Output:    out.String(),
-		Error:     stderr.String(),
-		Status:    "success",
-	}
-	
-	if err != nil {
-		log.Status = "error"
-		// Store the error log
-		if logErr := service_ledger.AddFunctionLog(fnName, log); logErr != nil {
-			fmt.Printf("Warning: Failed to store function log: %v\n", logErr)
-		}
-		http.Error(w, "Execution error: "+stderr.String(), http.StatusInternalServerError)
-		return
-	}
-
-	// Store the success log
-	if logErr := service_ledger.AddFunctionLog(fnName, log); logErr != nil {
-		fmt.Printf("Warning: Failed to store function log: %v\n", logErr)
-	}
-
 	fmt.Printf(out.String())
 
 	// Send JSON response
