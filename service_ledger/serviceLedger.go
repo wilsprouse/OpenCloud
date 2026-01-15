@@ -273,38 +273,3 @@ func GetAllFunctionEntries() (map[string]FunctionEntry, error) {
 
 	return status.Functions, nil
 }
-
-// AddFunctionLog appends a log entry to a specific function in the Functions service ledger
-// Keeps only the last 50 logs to prevent ledger from growing too large
-func AddFunctionLog(functionName string, log FunctionLog) error {
-	ledgerMutex.Lock()
-	defer ledgerMutex.Unlock()
-
-	ledger, err := ReadServiceLedger()
-	if err != nil {
-		return err
-	}
-
-	status, exists := ledger["Functions"]
-	if !exists || status.Functions == nil {
-		return nil // Function doesn't exist, skip logging
-	}
-
-	entry, exists := status.Functions[functionName]
-	if !exists {
-		return nil // Function doesn't exist, skip logging
-	}
-
-	// Append new log
-	entry.Logs = append(entry.Logs, log)
-
-	// Keep only the last 50 logs
-	if len(entry.Logs) > 50 {
-		entry.Logs = entry.Logs[len(entry.Logs)-50:]
-	}
-
-	status.Functions[functionName] = entry
-	ledger["Functions"] = status
-
-	return WriteServiceLedger(ledger)
-}
