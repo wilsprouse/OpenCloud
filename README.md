@@ -8,6 +8,7 @@ OpenCloud is meant to be flexible in the sense of where it can be ran, as is the
 2. `$ cd ui`
 3. `$ npm i`
 4. `$ npm run dev`
+5. `cd .. && make run`
 
 ## Contributing
 We welcome all contributions to OpenCloud, but these contributions must follow our [contribution guidelines](CONTRIBUTING.md)
