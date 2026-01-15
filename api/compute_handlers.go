@@ -602,24 +602,36 @@ func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get function entry from service ledger
-	entry, err := service_ledger.GetFunctionEntry(fnName)
+	// Get home directory
+	home, err := os.UserHomeDir()
 	if err != nil {
-		http.Error(w, "Failed to retrieve function logs", http.StatusInternalServerError)
+		http.Error(w, "Failed to resolve home directory", http.StatusInternalServerError)
 		return
 	}
 
-	if entry == nil {
-		http.Error(w, "Function not found", http.StatusNotFound)
+	// Construct log file path: remove extension from function name and add .log
+	baseName := strings.TrimSuffix(fnName, filepath.Ext(fnName))
+	logFileName := baseName + ".log"
+	logFilePath := filepath.Join(home, ".opencloud", "logs", "functions", logFileName)
+
+	// Read log file
+	logContent, err := os.ReadFile(logFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Return empty logs if file doesn't exist
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"logs": ""})
+			return
+		}
+		http.Error(w, "Failed to read log file", http.StatusInternalServerError)
 		return
 	}
 
-	// Return logs (empty array if no logs)
-	logs := entry.Logs
-	if logs == nil {
-		logs = []service_ledger.FunctionLog{}
+	// Return logs as a JSON response
+	resp := map[string]string{
+		"logs": string(logContent),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(logs)
+	json.NewEncoder(w).Encode(resp)
 }
