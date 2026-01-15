@@ -221,7 +221,7 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add log entry to host system
-	logEntry := fmt.Sprintf("%s", out.String())
+	logEntry := fmt.Sprintf("%s%s", out.String(), stderr.String())
 
 	if logFile != nil {
 		if _, writeErr := logFile.WriteString(logEntry); writeErr != nil {
