@@ -202,6 +202,32 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = &stderr
 
 	err = cmd.Run()
+
+	logDir := filepath.Join(home, ".opencloud", "logs", "functions")
+	if mkErr := os.MkdirAll(logDir, 0755); mkErr != nil {
+		fmt.Printf("Warning: failed to create log directory: %v\n", mkErr)
+	}
+
+	// Change function_name.extenesion to function_name.log
+	baseName := strings.TrimSuffix(fnName, filepath.Ext(fnName))
+	logFileName := baseName + ".log"
+	logFilePath := filepath.Join(logDir, logFileName)
+
+	logFile, fileErr := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if fileErr != nil {
+		fmt.Printf("Warning: failed to open log file: %v\n", fileErr)
+	} else {
+		defer logFile.Close()
+	}
+
+	// Add log entry to host system
+	logEntry := fmt.Sprintf("%s", out.String())
+
+	if logFile != nil {
+		if _, writeErr := logFile.WriteString(logEntry); writeErr != nil {
+			fmt.Printf("Warning: failed to write log file: %v\n", writeErr)
+		}
+	}
 	
 	// Create log entry
 	log := service_ledger.FunctionLog{
@@ -226,7 +252,7 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Warning: Failed to store function log: %v\n", logErr)
 	}
 
-	fmt.Println(out.String())
+	fmt.Printf(out.String())
 
 	// Send JSON response
 	resp := map[string]string{
