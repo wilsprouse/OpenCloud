@@ -402,20 +402,22 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                           log.status === "error" ? "border-red-200 bg-red-50" : "border-black"
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-2">
-                          {log.status === "error" && (
+                        {log.status === "error" && (
+                          <div className="mb-2">
                             <Badge className="bg-red-100 text-red-800">
                               Error
                             </Badge>
-                          )}
-                          <span className="text-xs text-muted-foreground flex items-center">
-                            <Clock className="h-3 w-3 mr-1" />
-                            {new Date(log.timestamp).toLocaleString()}
-                          </span>
-                        </div>
+                          </div>
+                        )}
                         {log.output && (
                           <div className="mt-2">
-                            <p className="text-xs font-semibold mb-1 text-muted-foreground">Output:</p>
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="text-xs font-semibold text-muted-foreground">Output:</p>
+                              <span className="text-xs text-muted-foreground flex items-center">
+                                <Clock className="h-3 w-3 mr-1" />
+                                {new Date(log.timestamp).toLocaleString()}
+                              </span>
+                            </div>
                             <pre className="text-xs font-mono bg-white p-2 rounded border overflow-x-auto whitespace-pre-wrap">
                               {log.output}
                             </pre>
