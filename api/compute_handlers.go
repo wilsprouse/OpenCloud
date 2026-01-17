@@ -220,8 +220,14 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		defer logFile.Close()
 	}
 
-	// Add log entry to host system
-	logEntry := fmt.Sprintf("%s%s", out.String(), stderr.String())
+	// Add log entry to host system with timestamp separator
+	timestamp := time.Now().Format(time.RFC3339)
+	hasError := stderr.Len() > 0
+	statusMarker := "SUCCESS"
+	if hasError {
+		statusMarker = "ERROR"
+	}
+	logEntry := fmt.Sprintf("===EXECUTION_START:%s|%s===\n%s%s===EXECUTION_END===\n", timestamp, statusMarker, out.String(), stderr.String())
 
 	if logFile != nil {
 		if _, writeErr := logFile.WriteString(logEntry); writeErr != nil {
@@ -627,15 +633,58 @@ func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse log file and split into individual invocations
-	// Each invocation's output is separated in the log file
-	// For now, return entire log content as a single entry with current timestamp
-	logs := []service_ledger.FunctionLog{
-		{
-			Timestamp: time.Now().Format(time.RFC3339),
-			Output:    string(logContent),
-			Status:    "success",
-		},
+	// Parse log file to extract individual executions
+	// Each execution is wrapped with ===EXECUTION_START:<timestamp>|<status>=== and ===EXECUTION_END===
+	logText := string(logContent)
+	executions := []service_ledger.FunctionLog{}
+	
+	// Split by execution markers
+	parts := strings.Split(logText, "===EXECUTION_START:")
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		
+		// Find the end marker
+		endIdx := strings.Index(part, "===EXECUTION_END===")
+		if endIdx == -1 {
+			continue
+		}
+		
+		// Extract timestamp and status from header: <timestamp>|<status>===\n
+		headerEndMarker := "===\n"
+		timestampEndIdx := strings.Index(part, headerEndMarker)
+		if timestampEndIdx == -1 {
+			continue
+		}
+		
+		// Parse header: "timestamp|status"
+		header := strings.TrimSpace(part[:timestampEndIdx])
+		headerParts := strings.Split(header, "|")
+		if len(headerParts) < 2 {
+			continue
+		}
+		
+		timestamp := headerParts[0]
+		status := strings.ToLower(headerParts[1])
+		
+		// Extract output (everything between header and end marker)
+		output := part[timestampEndIdx+len(headerEndMarker):endIdx]
+		
+		executions = append(executions, service_ledger.FunctionLog{
+			Timestamp: timestamp,
+			Output:    output,
+			Status:    status,
+		})
+	}
+	
+	// Return only the last execution (most recent one)
+	var logs []service_ledger.FunctionLog
+	if len(executions) > 0 {
+		logs = []service_ledger.FunctionLog{executions[len(executions)-1]}
+	} else {
+		// Fallback: if no structured logs found, return empty array
+		logs = []service_ledger.FunctionLog{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

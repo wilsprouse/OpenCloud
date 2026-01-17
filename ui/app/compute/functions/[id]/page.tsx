@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useEffect, useState, useMemo } from "react"
+import { use, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -194,10 +194,8 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
     }
   }
 
-  // Memoize reversed logs to avoid re-computing on every render
-  const reversedLogs = useMemo(() => {
-    return [...logs].reverse()
-  }, [logs])
+  // No need to reverse logs anymore since backend returns only the last execution
+  const displayLogs = logs
 
   if (loading && !functionData) {
     return (
@@ -380,7 +378,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                       <Terminal className="h-5 w-5 mr-2" />
                       Execution Logs
                     </h3>
-                    <p className="text-sm text-muted-foreground">View recent function invocation outputs</p>
+                    <p className="text-sm text-muted-foreground">View the last function invocation output</p>
                   </div>
                   <Button variant="outline" size="sm" onClick={fetchFunctionLogs} disabled={loadingLogs}>
                     <RefreshCw className={`h-4 w-4 mr-2 ${loadingLogs ? 'animate-spin' : ''}`} />
@@ -395,7 +393,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                       <p className="text-xs mt-1">Invoke the function to see output logs here</p>
                     </div>
                   ) : (
-                    reversedLogs.map((log, index) => (
+                    displayLogs.map((log, index) => (
                       <div
                         key={index}
                         className={`border rounded-lg p-4 ${
