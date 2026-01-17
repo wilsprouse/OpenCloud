@@ -222,7 +222,12 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 
 	// Add log entry to host system with timestamp separator
 	timestamp := time.Now().Format(time.RFC3339)
-	logEntry := fmt.Sprintf("===EXECUTION_START:%s===\n%s%s===EXECUTION_END===\n", timestamp, out.String(), stderr.String())
+	hasError := stderr.Len() > 0
+	statusMarker := "SUCCESS"
+	if hasError {
+		statusMarker = "ERROR"
+	}
+	logEntry := fmt.Sprintf("===EXECUTION_START:%s|%s===\n%s%s===EXECUTION_END===\n", timestamp, statusMarker, out.String(), stderr.String())
 
 	if logFile != nil {
 		if _, writeErr := logFile.WriteString(logEntry); writeErr != nil {
@@ -629,7 +634,7 @@ func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse log file to extract individual executions
-	// Each execution is wrapped with ===EXECUTION_START:<timestamp>=== and ===EXECUTION_END===
+	// Each execution is wrapped with ===EXECUTION_START:<timestamp>|<status>=== and ===EXECUTION_END===
 	logText := string(logContent)
 	executions := []service_ledger.FunctionLog{}
 	
@@ -646,20 +651,25 @@ func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		
-		// Extract timestamp and output
-		timestampEndIdx := strings.Index(part, "===\n")
+		// Extract timestamp and status from header: <timestamp>|<status>===\n
+		headerEndMarker := "===\n"
+		timestampEndIdx := strings.Index(part, headerEndMarker)
 		if timestampEndIdx == -1 {
 			continue
 		}
 		
-		timestamp := strings.TrimSpace(part[:timestampEndIdx])
-		output := part[timestampEndIdx+4:endIdx]
-		
-		// Determine status based on whether there's stderr content
-		status := "success"
-		if strings.Contains(output, "Error") || strings.Contains(output, "error") {
-			status = "error"
+		// Parse header: "timestamp|status"
+		header := strings.TrimSpace(part[:timestampEndIdx])
+		headerParts := strings.Split(header, "|")
+		if len(headerParts) < 2 {
+			continue
 		}
+		
+		timestamp := headerParts[0]
+		status := strings.ToLower(headerParts[1])
+		
+		// Extract output (everything between header and end marker)
+		output := part[timestampEndIdx+len(headerEndMarker):endIdx]
 		
 		executions = append(executions, service_ledger.FunctionLog{
 			Timestamp: timestamp,
