@@ -66,6 +66,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const [functionData, setFunctionData] = useState<FunctionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [invoking, setInvoking] = useState(false)
   const [logs, setLogs] = useState<FunctionLog[]>([])
   const [loadingLogs, setLoadingLogs] = useState(false)
   const [activeTab, setActiveTab] = useState("code")
@@ -159,6 +160,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   }
 
   const handleInvoke = async () => {
+    setInvoking(true)
     try {
       await client.post(`/invoke-function?name=${encodeURIComponent(functionId)}`)
       console.log("Function invoked successfully")
@@ -170,6 +172,8 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       // Still fetch logs in case there was an error logged
       fetchFunctionLogs()
       setActiveTab("logs") // Switch to logs tab even on error to see error logs
+    } finally {
+      setInvoking(false)
     }
   }
 
@@ -251,9 +255,10 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         text="Edit function configuration and code"
       >
         <div className="flex items-center space-x-2">
-          <Button variant="outline" onClick={handleInvoke}>
-            <Play className="mr-2 h-4 w-4" />
-            Invoke
+          <Button variant="outline" onClick={handleInvoke} disabled={invoking}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${invoking ? 'animate-spin' : 'hidden'}`} />
+            <Play className={`mr-2 h-4 w-4 ${invoking ? 'hidden' : ''}`} />
+            {invoking ? "Running..." : "Invoke"}
           </Button>
           <Button onClick={handleSaveAndDeploy} disabled={saving}>
             <Save className="mr-2 h-4 w-4" />
