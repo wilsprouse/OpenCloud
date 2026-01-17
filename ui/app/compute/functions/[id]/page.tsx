@@ -68,6 +68,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const [saving, setSaving] = useState(false)
   const [logs, setLogs] = useState<FunctionLog[]>([])
   const [loadingLogs, setLoadingLogs] = useState(false)
+  const [activeTab, setActiveTab] = useState("code")
   
   // Editable form state
   const [name, setName] = useState("")
@@ -163,10 +164,12 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       console.log("Function invoked successfully")
       fetchFunctionDetails() // Refresh to update invocation count
       fetchFunctionLogs() // Refresh logs to show new output
+      setActiveTab("logs") // Switch to logs tab after invocation
     } catch (err) {
       console.error("Failed to invoke function:", err)
       // Still fetch logs in case there was an error logged
       fetchFunctionLogs()
+      setActiveTab("logs") // Switch to logs tab even on error to see error logs
     }
   }
 
@@ -346,7 +349,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         {/* Tabs for Code Editor and Logs */}
         <Card className="lg:col-span-2">
           <CardContent className="pt-6">
-            <Tabs defaultValue="code" className="w-full">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="code" className="flex items-center">
                   <Code className="h-4 w-4 mr-2" />
