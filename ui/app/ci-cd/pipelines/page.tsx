@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "sonner"
 import client from "@/app/utility/post"
 import { 
   RefreshCw, 
@@ -56,7 +57,9 @@ export default function Pipelines() {
   const [searchTerm, setSearchTerm] = useState("")
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null)
+  const [pipelineToDelete, setPipelineToDelete] = useState<string | null>(null)
   
   // Create/Upload form state
   const [pipelineName, setPipelineName] = useState("")
@@ -102,20 +105,29 @@ export default function Pipelines() {
     }
   }
 
-  const handleDeletePipeline = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this pipeline?")) return
+  const openDeleteDialog = (id: string) => {
+    setPipelineToDelete(id)
+    setIsDeleteDialogOpen(true)
+  }
+
+  const handleDeletePipeline = async () => {
+    if (!pipelineToDelete) return
     
     try {
-      await client.delete(`/delete-pipeline/${id}`)
+      await client.delete(`/delete-pipeline/${pipelineToDelete}`)
+      toast.success("Pipeline deleted successfully")
       fetchPipelines()
+      setIsDeleteDialogOpen(false)
+      setPipelineToDelete(null)
     } catch (err) {
       console.error("Failed to delete pipeline:", err)
+      toast.error("Failed to delete pipeline")
     }
   }
 
   const handleCreatePipeline = async () => {
     if (!pipelineName || !pipelineCode) {
-      alert("Please provide both a pipeline name and code")
+      toast.error("Please provide both a pipeline name and code")
       return
     }
 
@@ -136,15 +148,17 @@ export default function Pipelines() {
       
       // Refresh the pipeline list
       await fetchPipelines()
+      
+      toast.success("Pipeline created successfully")
     } catch (err) {
       console.error("Failed to create pipeline:", err)
-      alert("Failed to create pipeline. Please check the console for details.")
+      toast.error("Failed to create pipeline")
     }
   }
 
   const handleEditPipeline = async () => {
     if (!selectedPipeline || !pipelineCode) {
-      alert("Please provide pipeline code")
+      toast.error("Please provide pipeline code")
       return
     }
 
@@ -166,9 +180,11 @@ export default function Pipelines() {
       
       // Refresh the pipeline list
       await fetchPipelines()
+      
+      toast.success("Pipeline updated successfully")
     } catch (err) {
       console.error("Failed to update pipeline:", err)
-      alert("Failed to update pipeline. Please check the console for details.")
+      toast.error("Failed to update pipeline")
     }
   }
 
@@ -184,8 +200,10 @@ export default function Pipelines() {
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text)
+      toast.success("Copied to clipboard")
     } catch (err) {
       console.error("Failed to copy to clipboard:", err)
+      toast.error("Failed to copy to clipboard")
     }
   }
 
@@ -488,7 +506,7 @@ jobs:
                         <Button
                           variant="destructive"
                           size="sm"
-                          onClick={() => handleDeletePipeline(pipeline.id)}
+                          onClick={() => openDeleteDialog(pipeline.id)}
                           title="Delete Pipeline"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -599,7 +617,7 @@ jobs:
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">Total Executions</div>
+                <div className="text-xs font-medium text-muted-foreground mb-1">Total Pipelines</div>
                 <div className="text-2xl font-bold">{totalPipelines}</div>
               </div>
             </CardContent>
@@ -686,6 +704,36 @@ jobs:
             >
               <Edit className="mr-2 h-4 w-4" />
               Update Pipeline
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Pipeline</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this pipeline? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsDeleteDialogOpen(false)
+                setPipelineToDelete(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeletePipeline}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete Pipeline
             </Button>
           </DialogFooter>
         </DialogContent>
