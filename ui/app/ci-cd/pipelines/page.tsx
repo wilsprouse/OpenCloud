@@ -256,7 +256,7 @@ export default function Pipelines() {
               <DialogHeader>
                 <DialogTitle>Create New Pipeline</DialogTitle>
                 <DialogDescription>
-                  Define your CI/CD pipeline with shell/bash scripts.
+                  Define your CI/CD pipeline with bash scripts.
                 </DialogDescription>
               </DialogHeader>
               
@@ -283,7 +283,7 @@ export default function Pipelines() {
                   />
                 </div>
 
-                {/* Branch */}
+                {/* Branch
                 <div className="grid gap-2">
                   <Label htmlFor="pipelineBranch">Branch</Label>
                   <Input
@@ -292,7 +292,7 @@ export default function Pipelines() {
                     value={pipelineBranch}
                     onChange={(e) => setPipelineBranch(e.target.value)}
                   />
-                </div>
+                </div*/}
 
                 {/* Pipeline Code */}
                 <div className="grid gap-2">
@@ -344,7 +344,7 @@ success "Deployment completed successfully!"`}
                     onChange={(e) => setPipelineCode(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Enter your pipeline configuration as a shell/bash script
+                    Enter your pipeline configuration as a bash script
                   </p>
                 </div>
               </div>
@@ -705,7 +705,7 @@ success "Deployment completed successfully!"`}
                 onChange={(e) => setPipelineCode(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Edit your pipeline configuration as a shell/bash script
+                Edit your pipeline configuration as a bash script
               </p>
             </div>
           </div>
