@@ -1,10 +1,14 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -46,6 +50,13 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sanitize pipeline name to prevent directory traversal and invalid filenames
+	sanitizedName := sanitizePipelineName(req.Name)
+	if sanitizedName == "" {
+		http.Error(w, "Invalid pipeline name", http.StatusBadRequest)
+		return
+	}
+
 	// Set default branch if not provided
 	if req.Branch == "" {
 		req.Branch = "main"
@@ -64,8 +75,11 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create shell script filename from pipeline name
-	pipelineFileName := req.Name + ".sh"
+	// Generate unique ID for the pipeline
+	pipelineID := generatePipelineID()
+
+	// Create shell script filename from sanitized name
+	pipelineFileName := sanitizedName + ".sh"
 	pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
 
 	// Check if pipeline already exists
@@ -82,8 +96,8 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 
 	// Create response with pipeline details
 	pipeline := Pipeline{
-		ID:          pipelineFileName,
-		Name:        req.Name,
+		ID:          pipelineID,
+		Name:        sanitizedName,
 		Description: req.Description,
 		Code:        req.Code,
 		Branch:      req.Branch,
@@ -94,4 +108,30 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(pipeline)
+}
+
+// sanitizePipelineName removes potentially dangerous characters from pipeline names
+// to prevent directory traversal and invalid filenames
+func sanitizePipelineName(name string) string {
+	// Remove any path separators and dangerous characters
+	name = strings.ReplaceAll(name, "/", "")
+	name = strings.ReplaceAll(name, "\\", "")
+	name = strings.ReplaceAll(name, "..", "")
+	name = strings.ReplaceAll(name, "~", "")
+
+	// Only allow alphanumeric, hyphens, underscores, and dots
+	reg := regexp.MustCompile(`[^a-zA-Z0-9\-_.]`)
+	sanitized := reg.ReplaceAllString(name, "-")
+
+	// Trim leading/trailing hyphens or dots
+	sanitized = strings.Trim(sanitized, "-.")
+
+	return sanitized
+}
+
+// generatePipelineID creates a unique identifier for the pipeline
+func generatePipelineID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
