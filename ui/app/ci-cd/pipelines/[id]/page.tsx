@@ -570,7 +570,7 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                     ) : (
                       logs.map((log, index) => (
                         <div
-                          key={index}
+                          key={`${log.timestamp}-${index}`}
                           className={`border rounded-lg p-4 ${
                             log.status === "error" ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"
                           }`}
