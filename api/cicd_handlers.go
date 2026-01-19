@@ -117,6 +117,83 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(pipeline)
 }
 
+// GetPipelines retrieves all pipelines from the ~/.opencloud/pipelines directory
+func GetPipelines(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
+
+	// Check if directory exists
+	if _, err := os.Stat(pipelineDir); os.IsNotExist(err) {
+		// Return empty list if directory doesn't exist
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]Pipeline{})
+		return
+	}
+
+	// Read all files in the pipelines directory
+	entries, err := os.ReadDir(pipelineDir)
+	if err != nil {
+		http.Error(w, "Failed to read pipelines directory", http.StatusInternalServerError)
+		return
+	}
+
+	pipelines := []Pipeline{}
+
+	// Process each shell script file
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sh") {
+			continue
+		}
+
+		// Read shell script file
+		scriptPath := filepath.Join(pipelineDir, entry.Name())
+		scriptData, err := os.ReadFile(scriptPath)
+		if err != nil {
+			continue // Skip files that can't be read
+		}
+
+		// Get file info for creation time
+		fileInfo, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		// Derive pipeline name from filename (remove .sh extension)
+		pipelineName := strings.TrimSuffix(entry.Name(), ".sh")
+
+		// Generate a deterministic ID based on the filename
+		pipelineID, err := generatePipelineID()
+		if err != nil {
+			continue
+		}
+
+		// Create pipeline object
+		pipeline := Pipeline{
+			ID:        pipelineID,
+			Name:      pipelineName,
+			Code:      string(scriptData),
+			Status:    "idle",
+			CreatedAt: fileInfo.ModTime(),
+		}
+
+		pipelines = append(pipelines, pipeline)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pipelines)
+}
+
 // sanitizePipelineName removes potentially dangerous characters from pipeline names
 // to prevent directory traversal and invalid filenames
 func sanitizePipelineName(name string) string {
