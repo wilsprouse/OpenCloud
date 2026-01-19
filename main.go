@@ -45,6 +45,7 @@ func main() {
 	mux.HandleFunc("/enable-service", service_ledger.EnableServiceHandler)
 	mux.HandleFunc("/create-pipeline", api.CreatePipeline)
 	mux.HandleFunc("/get-pipelines", api.GetPipelines)
+	mux.HandleFunc("/get-pipeline/", api.GetPipeline)
 	mux.HandleFunc("/", api.GetFunction)
 	//mux.HandleFunc("/build-image", api.BuildImage)
 
