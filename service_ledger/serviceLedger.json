@@ -9,6 +9,6 @@
         "enabled": false
     },
     "pipelines": {
-        "enabled": false
+        "enabled": true
     }
 }
