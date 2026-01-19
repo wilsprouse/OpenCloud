@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 var pipelineNameRegex = regexp.MustCompile(`[^a-zA-Z0-9\-_.]`)
@@ -112,6 +114,20 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now(),
 	}
 
+	// Update service ledger with pipeline entry
+	if err := service_ledger.UpdatePipelineEntry(
+		pipelineID,
+		req.Name,
+		req.Description,
+		req.Code,
+		req.Branch,
+		"idle",
+		pipeline.CreatedAt.Format(time.RFC3339),
+	); err != nil {
+		// Log the error but don't fail the request since pipeline file was already created
+		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(pipeline)
@@ -148,6 +164,13 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get all pipeline entries from the service ledger
+	ledgerPipelines, err := service_ledger.GetAllPipelineEntries()
+	if err != nil {
+		fmt.Printf("Warning: Failed to read service ledger: %v\n", err)
+		ledgerPipelines = make(map[string]service_ledger.PipelineEntry)
+	}
+
 	pipelines := []Pipeline{}
 
 	// Process each shell script file
@@ -172,19 +195,46 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 		// Derive pipeline name from filename (remove .sh extension)
 		pipelineName := strings.TrimSuffix(entry.Name(), ".sh")
 
-		// Generate a deterministic ID based on the filename
-		pipelineID, err := generatePipelineID()
-		if err != nil {
-			continue
+		// Try to find matching pipeline in ledger by iterating through all entries
+		var ledgerEntry *service_ledger.PipelineEntry
+		for _, entry := range ledgerPipelines {
+			// Match by name (since filename is based on sanitized name)
+			sanitizedLedgerName := sanitizePipelineName(entry.Name)
+			if sanitizedLedgerName == pipelineName {
+				ledgerEntry = &entry
+				break
+			}
 		}
 
-		// Create pipeline object
-		pipeline := Pipeline{
-			ID:        pipelineID,
-			Name:      pipelineName,
-			Code:      string(scriptData),
-			Status:    "idle",
-			CreatedAt: fileInfo.ModTime(),
+		// Create pipeline object, preferring ledger data when available
+		var pipeline Pipeline
+		if ledgerEntry != nil {
+			createdAt, _ := time.Parse(time.RFC3339, ledgerEntry.CreatedAt)
+			if createdAt.IsZero() {
+				createdAt = fileInfo.ModTime()
+			}
+			pipeline = Pipeline{
+				ID:          ledgerEntry.ID,
+				Name:        ledgerEntry.Name,
+				Description: ledgerEntry.Description,
+				Code:        string(scriptData),
+				Branch:      ledgerEntry.Branch,
+				Status:      ledgerEntry.Status,
+				CreatedAt:   createdAt,
+			}
+		} else {
+			// Fallback to file-based data if not in ledger
+			pipelineID, err := generatePipelineID()
+			if err != nil {
+				continue
+			}
+			pipeline = Pipeline{
+				ID:        pipelineID,
+				Name:      pipelineName,
+				Code:      string(scriptData),
+				Status:    "idle",
+				CreatedAt: fileInfo.ModTime(),
+			}
 		}
 
 		pipelines = append(pipelines, pipeline)
