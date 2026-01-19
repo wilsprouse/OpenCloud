@@ -301,18 +301,20 @@ export default function Pipelines() {
                     id="pipelineCode"
                     placeholder={`#!/bin/bash
 # Example CI/CD Pipeline Script
+set -e  # Exit on error
 
 # Color output functions
 warning() {
-  echo -e "\\033[1;33m[WARNING]\\033[0m \${1}"
+  echo -e "\\033[1;33m[WARNING]\\033[0m $1"
 }
 
 error() {
-  echo -e "\\033[1;31m[ERROR]\\033[0m \${1}"
+  echo -e "\\033[1;31m[ERROR]\\033[0m $1"
+  exit 1
 }
 
 success() {
-  echo -e "\\033[1;32m[SUCCESS]\\033[0m \${1}"
+  echo -e "\\033[1;32m[SUCCESS]\\033[0m $1"
 }
 
 # Source stage
