@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 )
+
+var pipelineNameRegex = regexp.MustCompile(`[^a-zA-Z0-9\-_.]`)
 
 type Pipeline struct {
 	ID          string    `json:"id"`
@@ -76,7 +79,11 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate unique ID for the pipeline
-	pipelineID := generatePipelineID()
+	pipelineID, err := generatePipelineID()
+	if err != nil {
+		http.Error(w, "Failed to generate pipeline ID", http.StatusInternalServerError)
+		return
+	}
 
 	// Create shell script filename from sanitized name
 	pipelineFileName := sanitizedName + ".sh"
@@ -97,7 +104,7 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 	// Create response with pipeline details
 	pipeline := Pipeline{
 		ID:          pipelineID,
-		Name:        sanitizedName,
+		Name:        req.Name,
 		Description: req.Description,
 		Code:        req.Code,
 		Branch:      req.Branch,
@@ -119,9 +126,8 @@ func sanitizePipelineName(name string) string {
 	name = strings.ReplaceAll(name, "..", "")
 	name = strings.ReplaceAll(name, "~", "")
 
-	// Only allow alphanumeric, hyphens, underscores, and dots
-	reg := regexp.MustCompile(`[^a-zA-Z0-9\-_.]`)
-	sanitized := reg.ReplaceAllString(name, "-")
+	// Only allow alphanumeric, hyphens, underscores, and dots using pre-compiled regex
+	sanitized := pipelineNameRegex.ReplaceAllString(name, "-")
 
 	// Trim leading/trailing hyphens or dots
 	sanitized = strings.Trim(sanitized, "-.")
@@ -130,8 +136,11 @@ func sanitizePipelineName(name string) string {
 }
 
 // generatePipelineID creates a unique identifier for the pipeline
-func generatePipelineID() string {
+func generatePipelineID() (string, error) {
 	b := make([]byte, 8)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate random ID: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
