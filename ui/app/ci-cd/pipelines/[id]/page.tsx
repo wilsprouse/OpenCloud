@@ -123,7 +123,7 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
   const handleRunPipeline = async () => {
     setRunning(true)
     try {
-      await client.post(`/run-pipeline/${pipelineId}`)
+      await client.post(`/run-pipeline/${encodeURIComponent(pipelineId)}`)
       toast.success("Pipeline started successfully")
       fetchPipelineDetails()
       fetchPipelineLogs()
@@ -138,7 +138,7 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
 
   const handleStopPipeline = async () => {
     try {
-      await client.post(`/stop-pipeline/${pipelineId}`)
+      await client.post(`/stop-pipeline/${encodeURIComponent(pipelineId)}`)
       toast.success("Pipeline stopped")
       fetchPipelineDetails()
     } catch (err) {
@@ -155,7 +155,7 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
 
     setSaving(true)
     try {
-      await client.put(`/update-pipeline/${pipelineId}`, {
+      await client.put(`/update-pipeline/${encodeURIComponent(pipelineId)}`, {
         name: pipelineName,
         description: pipelineDescription,
         code: pipelineCode,
@@ -175,7 +175,7 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
 
   const handleDeletePipeline = async () => {
     try {
-      await client.delete(`/delete-pipeline/${pipelineId}`)
+      await client.delete(`/delete-pipeline/${encodeURIComponent(pipelineId)}`)
       toast.success("Pipeline deleted successfully")
       router.push('/ci-cd/pipelines')
     } catch (err) {
