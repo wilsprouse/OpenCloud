@@ -148,8 +148,8 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
   }
 
   const handleSavePipeline = async () => {
-    if (!pipelineCode) {
-      toast.error("Please provide pipeline code")
+    if (!pipelineName || !pipelineCode) {
+      toast.error("Please provide both pipeline name and code")
       return
     }
 
