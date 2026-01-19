@@ -112,18 +112,6 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now(),
 	}
 
-	// Save metadata to JSON file
-	metadataPath := filepath.Join(pipelineDir, sanitizedName+".json")
-	metadataJSON, err := json.Marshal(pipeline)
-	if err != nil {
-		http.Error(w, "Failed to create metadata", http.StatusInternalServerError)
-		return
-	}
-	if err := os.WriteFile(metadataPath, metadataJSON, 0644); err != nil {
-		http.Error(w, "Failed to save metadata", http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(pipeline)
@@ -162,31 +150,41 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 
 	pipelines := []Pipeline{}
 
-	// Process each JSON metadata file
+	// Process each shell script file
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sh") {
 			continue
 		}
 
-		// Read metadata file
-		metadataPath := filepath.Join(pipelineDir, entry.Name())
-		metadataData, err := os.ReadFile(metadataPath)
+		// Read shell script file
+		scriptPath := filepath.Join(pipelineDir, entry.Name())
+		scriptData, err := os.ReadFile(scriptPath)
 		if err != nil {
 			continue // Skip files that can't be read
 		}
 
-		// Parse metadata
-		var pipeline Pipeline
-		if err := json.Unmarshal(metadataData, &pipeline); err != nil {
-			continue // Skip files that can't be parsed
+		// Get file info for creation time
+		fileInfo, err := entry.Info()
+		if err != nil {
+			continue
 		}
 
-		// Read the corresponding shell script to get the latest code
-		scriptName := strings.TrimSuffix(entry.Name(), ".json") + ".sh"
-		scriptPath := filepath.Join(pipelineDir, scriptName)
-		scriptData, err := os.ReadFile(scriptPath)
-		if err == nil {
-			pipeline.Code = string(scriptData)
+		// Derive pipeline name from filename (remove .sh extension)
+		pipelineName := strings.TrimSuffix(entry.Name(), ".sh")
+
+		// Generate a deterministic ID based on the filename
+		pipelineID, err := generatePipelineID()
+		if err != nil {
+			continue
+		}
+
+		// Create pipeline object
+		pipeline := Pipeline{
+			ID:        pipelineID,
+			Name:      pipelineName,
+			Code:      string(scriptData),
+			Status:    "idle",
+			CreatedAt: fileInfo.ModTime(),
 		}
 
 		pipelines = append(pipelines, pipeline)
