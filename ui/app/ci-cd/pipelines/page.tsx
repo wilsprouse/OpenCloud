@@ -256,7 +256,7 @@ export default function Pipelines() {
               <DialogHeader>
                 <DialogTitle>Create New Pipeline</DialogTitle>
                 <DialogDescription>
-                  Define your CI/CD pipeline with YAML configuration or custom code.
+                  Define your CI/CD pipeline with shell/bash scripts.
                 </DialogDescription>
               </DialogHeader>
               
@@ -299,26 +299,50 @@ export default function Pipelines() {
                   <Label htmlFor="pipelineCode">Pipeline Configuration *</Label>
                   <Textarea
                     id="pipelineCode"
-                    placeholder={`# Example YAML pipeline configuration
-name: Build and Test
-on:
-  push:
-    branches: [main]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Build
-        run: npm install && npm run build
-      - name: Test
-        run: npm test`}
+                    placeholder={`#!/bin/bash
+# Example CI/CD Pipeline Script
+
+# Color output functions
+warning() {
+  echo -e "\\033[1;33m[WARNING]\\033[0m \${1}"
+}
+
+error() {
+  echo -e "\\033[1;31m[ERROR]\\033[0m \${1}"
+}
+
+success() {
+  echo -e "\\033[1;32m[SUCCESS]\\033[0m \${1}"
+}
+
+# Source stage
+echo "=== Source Stage ==="
+success "Checking out source code..."
+git clone https://github.com/user/repo.git || error "Failed to clone repository"
+
+# Build stage
+echo "=== Build Stage ==="
+success "Installing dependencies..."
+npm install || error "Failed to install dependencies"
+success "Building application..."
+npm run build || error "Build failed"
+
+# Test stage
+echo "=== Test Stage ==="
+success "Running tests..."
+npm test || error "Tests failed"
+
+# Deploy stage
+echo "=== Deploy Stage ==="
+warning "Starting deployment..."
+# Add your deployment commands here
+success "Deployment completed successfully!"`}
                     className="min-h-[300px] font-mono text-sm"
                     value={pipelineCode}
                     onChange={(e) => setPipelineCode(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Enter your pipeline configuration in YAML format
+                    Enter your pipeline configuration as a shell/bash script
                   </p>
                 </div>
               </div>
@@ -679,7 +703,7 @@ jobs:
                 onChange={(e) => setPipelineCode(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Edit your pipeline configuration in YAML format
+                Edit your pipeline configuration as a shell/bash script
               </p>
             </div>
           </div>
