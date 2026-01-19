@@ -36,7 +36,8 @@ import {
   Plus,
   FileCode,
   Activity,
-  AlertCircle
+  AlertCircle,
+  Power
 } from "lucide-react"
 
 type Pipeline = {
@@ -61,11 +62,40 @@ export default function Pipelines() {
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null)
   const [pipelineToDelete, setPipelineToDelete] = useState<string | null>(null)
   
+  // Service enabled state
+  const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
+  const [enablingService, setEnablingService] = useState(false)
+  
   // Create/Upload form state
   const [pipelineName, setPipelineName] = useState("")
   const [pipelineDescription, setPipelineDescription] = useState("")
   const [pipelineCode, setPipelineCode] = useState("")
   const [pipelineBranch, setPipelineBranch] = useState("main")
+
+  // Check if service is enabled
+  const checkServiceStatus = async () => {
+    try {
+      const res = await client.get<{ service: string; enabled: boolean }>("/get-service-status?service=pipelines")
+      setServiceEnabled(res.data.enabled)
+    } catch (err) {
+      console.error("Failed to check service status:", err)
+      setServiceEnabled(false)
+    }
+  }
+
+  // Enable the service
+  const handleEnableService = async () => {
+    setEnablingService(true)
+    try {
+      await client.post("/enable-service", { service: "pipelines" })
+      setServiceEnabled(true)
+      fetchPipelines()
+    } catch (err) {
+      console.error("Failed to enable service:", err)
+    } finally {
+      setEnablingService(false)
+    }
+  }
 
   // Fetch pipelines
   const fetchPipelines = async () => {
@@ -83,8 +113,14 @@ export default function Pipelines() {
   }
 
   useEffect(() => {
-    fetchPipelines()
+    checkServiceStatus()
   }, [])
+
+  useEffect(() => {
+    if (serviceEnabled) {
+      fetchPipelines()
+    }
+  }, [serviceEnabled])
 
   // Handle pipeline actions
   const handleRunPipeline = async (id: string) => {
@@ -232,6 +268,45 @@ export default function Pipelines() {
       default:
         return { icon: Clock, color: "text-gray-600", bg: "bg-gray-50", badge: "bg-gray-100 text-gray-800" }
     }
+  }
+
+  // Show loading state while checking service status
+  if (serviceEnabled === null) {
+    return (
+      <DashboardShell>
+        <div className="flex items-center justify-center h-64">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </DashboardShell>
+    )
+  }
+
+  // Show enable prompt if service is not enabled
+  if (!serviceEnabled) {
+    return (
+      <DashboardShell>
+        <DashboardHeader heading="Pipelines" text="CI/CD automation" />
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Card className="max-w-md w-full">
+            <CardHeader className="text-center">
+              <div className="mx-auto p-3 rounded-full bg-blue-50 w-fit mb-4">
+                <GitBranch className="h-8 w-8 text-blue-600" />
+              </div>
+              <CardTitle>Enable Pipelines Service</CardTitle>
+              <CardDescription>
+                The Pipelines service is not yet enabled. Enable it to start creating and managing CI/CD pipelines.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex justify-center">
+              <Button onClick={handleEnableService} disabled={enablingService} size="lg">
+                <Power className="mr-2 h-4 w-4" />
+                {enablingService ? "Enabling..." : "Enable Pipelines"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardShell>
+    )
   }
 
   return (
