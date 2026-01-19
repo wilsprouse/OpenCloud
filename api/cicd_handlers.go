@@ -309,27 +309,42 @@ func GetPipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
-	sanitizedName := sanitizePipelineName(ledgerEntry.Name)
-	pipelineFileName := sanitizedName + ".sh"
-	pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
+	// Prefer code from ledger, fall back to file if not available
+	code := ledgerEntry.Code
+	if code == "" {
+		// Read pipeline code from file as fallback
+		pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
+		sanitizedName := sanitizePipelineName(ledgerEntry.Name)
+		pipelineFileName := sanitizedName + ".sh"
+		pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
 
-	// Read pipeline code from file
-	scriptData, err := os.ReadFile(pipelinePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "Pipeline file not found", http.StatusNotFound)
+		scriptData, err := os.ReadFile(pipelinePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				http.Error(w, "Pipeline file not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "Failed to read pipeline file", http.StatusInternalServerError)
 			return
 		}
-		http.Error(w, "Failed to read pipeline file", http.StatusInternalServerError)
-		return
+		code = string(scriptData)
 	}
 
 	// Parse createdAt time
 	createdAt, err := time.Parse(time.RFC3339, ledgerEntry.CreatedAt)
 	if err != nil {
-		// Fallback to current time if parsing fails
-		createdAt = time.Now()
+		// Fallback to file mod time if parsing fails
+		pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
+		sanitizedName := sanitizePipelineName(ledgerEntry.Name)
+		pipelineFileName := sanitizedName + ".sh"
+		pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
+		
+		fileInfo, statErr := os.Stat(pipelinePath)
+		if statErr == nil {
+			createdAt = fileInfo.ModTime()
+		} else {
+			createdAt = time.Now()
+		}
 	}
 
 	// Create pipeline response
@@ -337,7 +352,7 @@ func GetPipeline(w http.ResponseWriter, r *http.Request) {
 		ID:          ledgerEntry.ID,
 		Name:        ledgerEntry.Name,
 		Description: ledgerEntry.Description,
-		Code:        string(scriptData),
+		Code:        code,
 		Branch:      ledgerEntry.Branch,
 		Status:      ledgerEntry.Status,
 		CreatedAt:   createdAt,

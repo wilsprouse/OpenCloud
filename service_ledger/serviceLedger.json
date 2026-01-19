@@ -9,6 +9,35 @@
         "enabled": false
     },
     "pipelines": {
-        "enabled": false
+        "enabled": false,
+        "pipelines": {
+            "76f6ea22ec3c15d0": {
+                "id": "76f6ea22ec3c15d0",
+                "name": "test-pipeline-3",
+                "description": "Third test pipeline",
+                "code": "#!/bin/bash\necho \"Testing updated code\"\nexit 0",
+                "branch": "develop",
+                "status": "idle",
+                "createdAt": "2026-01-19T23:18:17Z"
+            },
+            "97c75fe033afb300": {
+                "id": "97c75fe033afb300",
+                "name": "test-pipeline",
+                "description": "A test pipeline for validation",
+                "code": "#!/bin/bash\necho \"Hello from test pipeline\"\necho \"Running tests...\"\nexit 0",
+                "branch": "main",
+                "status": "idle",
+                "createdAt": "2026-01-19T23:16:11Z"
+            },
+            "a9db1fc28f06f206": {
+                "id": "a9db1fc28f06f206",
+                "name": "test-pipeline-2",
+                "description": "Second test pipeline",
+                "code": "#!/bin/bash\necho \"Testing code from ledger\"\nexit 0",
+                "branch": "develop",
+                "status": "idle",
+                "createdAt": "2026-01-19T23:17:59Z"
+            }
+        }
     }
 }
