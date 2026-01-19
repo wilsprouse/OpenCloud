@@ -112,9 +112,88 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now(),
 	}
 
+	// Save metadata to JSON file
+	metadataPath := filepath.Join(pipelineDir, sanitizedName+".json")
+	metadataJSON, err := json.Marshal(pipeline)
+	if err != nil {
+		http.Error(w, "Failed to create metadata", http.StatusInternalServerError)
+		return
+	}
+	if err := os.WriteFile(metadataPath, metadataJSON, 0644); err != nil {
+		http.Error(w, "Failed to save metadata", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(pipeline)
+}
+
+// GetPipelines retrieves all pipelines from the ~/.opencloud/pipelines directory
+func GetPipelines(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
+
+	// Check if directory exists
+	if _, err := os.Stat(pipelineDir); os.IsNotExist(err) {
+		// Return empty list if directory doesn't exist
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]Pipeline{})
+		return
+	}
+
+	// Read all files in the pipelines directory
+	entries, err := os.ReadDir(pipelineDir)
+	if err != nil {
+		http.Error(w, "Failed to read pipelines directory", http.StatusInternalServerError)
+		return
+	}
+
+	pipelines := []Pipeline{}
+
+	// Process each JSON metadata file
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		// Read metadata file
+		metadataPath := filepath.Join(pipelineDir, entry.Name())
+		metadataData, err := os.ReadFile(metadataPath)
+		if err != nil {
+			continue // Skip files that can't be read
+		}
+
+		// Parse metadata
+		var pipeline Pipeline
+		if err := json.Unmarshal(metadataData, &pipeline); err != nil {
+			continue // Skip files that can't be parsed
+		}
+
+		// Read the corresponding shell script to get the latest code
+		scriptName := strings.TrimSuffix(entry.Name(), ".json") + ".sh"
+		scriptPath := filepath.Join(pipelineDir, scriptName)
+		scriptData, err := os.ReadFile(scriptPath)
+		if err == nil {
+			pipeline.Code = string(scriptData)
+		}
+
+		pipelines = append(pipelines, pipeline)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pipelines)
 }
 
 // sanitizePipelineName removes potentially dangerous characters from pipeline names
