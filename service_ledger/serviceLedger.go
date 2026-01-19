@@ -299,9 +299,7 @@ func UpdatePipelineEntry(pipelineID, name, description, code, branch, status, cr
 	serviceStatus, exists := ledger["pipelines"]
 	if !exists {
 		serviceStatus = ServiceStatus{Enabled: false, Pipelines: make(map[string]PipelineEntry)}
-	}
-
-	if serviceStatus.Pipelines == nil {
+	} else if serviceStatus.Pipelines == nil {
 		serviceStatus.Pipelines = make(map[string]PipelineEntry)
 	}
 

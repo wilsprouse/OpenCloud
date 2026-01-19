@@ -171,6 +171,13 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 		ledgerPipelines = make(map[string]service_ledger.PipelineEntry)
 	}
 
+	// Create a map of sanitized names to ledger entries for O(1) lookups
+	sanitizedNameToEntry := make(map[string]service_ledger.PipelineEntry)
+	for _, entry := range ledgerPipelines {
+		sanitizedName := sanitizePipelineName(entry.Name)
+		sanitizedNameToEntry[sanitizedName] = entry
+	}
+
 	pipelines := []Pipeline{}
 
 	// Process each shell script file
@@ -179,51 +186,47 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Read shell script file
-		scriptPath := filepath.Join(pipelineDir, entry.Name())
-		scriptData, err := os.ReadFile(scriptPath)
-		if err != nil {
-			continue // Skip files that can't be read
-		}
-
-		// Get file info for creation time
-		fileInfo, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
 		// Derive pipeline name from filename (remove .sh extension)
 		pipelineName := strings.TrimSuffix(entry.Name(), ".sh")
 
-		// Try to find matching pipeline in ledger by iterating through all entries
-		var ledgerEntry *service_ledger.PipelineEntry
-		for _, entry := range ledgerPipelines {
-			// Match by name (since filename is based on sanitized name)
-			sanitizedLedgerName := sanitizePipelineName(entry.Name)
-			if sanitizedLedgerName == pipelineName {
-				ledgerEntry = &entry
-				break
-			}
-		}
+		// Try to find matching pipeline in ledger using the sanitized name map
+		ledgerEntry, existsInLedger := sanitizedNameToEntry[pipelineName]
 
 		// Create pipeline object, preferring ledger data when available
 		var pipeline Pipeline
-		if ledgerEntry != nil {
+		if existsInLedger {
 			createdAt, _ := time.Parse(time.RFC3339, ledgerEntry.CreatedAt)
 			if createdAt.IsZero() {
-				createdAt = fileInfo.ModTime()
+				// Fallback to file mod time if parsing fails
+				fileInfo, err := entry.Info()
+				if err == nil {
+					createdAt = fileInfo.ModTime()
+				} else {
+					createdAt = time.Now()
+				}
 			}
 			pipeline = Pipeline{
 				ID:          ledgerEntry.ID,
 				Name:        ledgerEntry.Name,
 				Description: ledgerEntry.Description,
-				Code:        string(scriptData),
+				Code:        ledgerEntry.Code,
 				Branch:      ledgerEntry.Branch,
 				Status:      ledgerEntry.Status,
 				CreatedAt:   createdAt,
 			}
 		} else {
 			// Fallback to file-based data if not in ledger
+			scriptPath := filepath.Join(pipelineDir, entry.Name())
+			scriptData, err := os.ReadFile(scriptPath)
+			if err != nil {
+				continue // Skip files that can't be read
+			}
+
+			fileInfo, err := entry.Info()
+			if err != nil {
+				continue
+			}
+
 			pipelineID, err := generatePipelineID()
 			if err != nil {
 				continue
