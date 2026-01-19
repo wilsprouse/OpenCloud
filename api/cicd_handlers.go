@@ -172,6 +172,8 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a map of sanitized names to ledger entries for O(1) lookups
+	// Note: Ledger stores original names, but filenames use sanitized names,
+	// so we need to sanitize ledger names to match against filenames
 	sanitizedNameToEntry := make(map[string]service_ledger.PipelineEntry)
 	for _, entry := range ledgerPipelines {
 		sanitizedName := sanitizePipelineName(entry.Name)
@@ -187,6 +189,7 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Derive pipeline name from filename (remove .sh extension)
+		// This is already sanitized since the filename was created using sanitizePipelineName
 		pipelineName := strings.TrimSuffix(entry.Name(), ".sh")
 
 		// Try to find matching pipeline in ledger using the sanitized name map
