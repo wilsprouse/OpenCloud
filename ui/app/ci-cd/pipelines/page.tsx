@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -53,6 +54,7 @@ type Pipeline = {
 }
 
 export default function Pipelines() {
+  const router = useRouter()
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -523,7 +525,8 @@ success "Deployment completed successfully!"`}
                   return (
                     <div
                       key={pipeline.id}
-                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                      onClick={() => router.push(`/ci-cd/pipelines/${encodeURIComponent(pipeline.id)}`)}
                     >
                       <div className="flex items-center space-x-4 flex-1">
                         <div className={`p-2 rounded-lg ${statusInfo.bg}`}>
@@ -565,7 +568,7 @@ success "Deployment completed successfully!"`}
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center space-x-2 ml-4">
+                      <div className="flex items-center space-x-2 ml-4" onClick={(e) => e.stopPropagation()}>
                         <Button 
                           variant="ghost" 
                           size="icon"
