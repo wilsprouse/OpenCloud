@@ -30,10 +30,22 @@ type FunctionEntry struct {
 	Logs     []FunctionLog `json:"logs,omitempty"`
 }
 
+// PipelineEntry represents an individual pipeline's metadata in the ledger
+type PipelineEntry struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Code        string `json:"code"`
+	Branch      string `json:"branch"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"createdAt"`
+}
+
 // ServiceStatus represents the status of a single service
 type ServiceStatus struct {
-	Enabled   bool                     `json:"enabled"`
-	Functions map[string]FunctionEntry `json:"functions,omitempty"`
+	Enabled   bool                      `json:"enabled"`
+	Functions map[string]FunctionEntry  `json:"functions,omitempty"`
+	Pipelines map[string]PipelineEntry  `json:"pipelines,omitempty"`
 }
 
 // ServiceLedger represents the complete service ledger
@@ -272,4 +284,92 @@ func GetAllFunctionEntries() (map[string]FunctionEntry, error) {
 	}
 
 	return status.Functions, nil
+}
+
+// UpdatePipelineEntry updates a specific pipeline entry in the pipelines service ledger
+func UpdatePipelineEntry(pipelineID, name, description, code, branch, status, createdAt string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["pipelines"]
+	if !exists {
+		serviceStatus = ServiceStatus{Enabled: false, Pipelines: make(map[string]PipelineEntry)}
+	} else if serviceStatus.Pipelines == nil {
+		serviceStatus.Pipelines = make(map[string]PipelineEntry)
+	}
+
+	serviceStatus.Pipelines[pipelineID] = PipelineEntry{
+		ID:          pipelineID,
+		Name:        name,
+		Description: description,
+		Code:        code,
+		Branch:      branch,
+		Status:      status,
+		CreatedAt:   createdAt,
+	}
+
+	ledger["pipelines"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// DeletePipelineEntry removes a pipeline entry from the pipelines service ledger
+func DeletePipelineEntry(pipelineID string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["pipelines"]
+	if !exists || serviceStatus.Pipelines == nil {
+		return nil // Nothing to delete
+	}
+
+	delete(serviceStatus.Pipelines, pipelineID)
+	ledger["pipelines"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// GetPipelineEntry retrieves a specific pipeline entry from the pipelines service ledger
+func GetPipelineEntry(pipelineID string) (*PipelineEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["pipelines"]
+	if !exists || serviceStatus.Pipelines == nil {
+		return nil, nil
+	}
+
+	entry, exists := serviceStatus.Pipelines[pipelineID]
+	if !exists {
+		return nil, nil
+	}
+
+	return &entry, nil
+}
+
+// GetAllPipelineEntries retrieves all pipeline entries from the pipelines service ledger
+func GetAllPipelineEntries() (map[string]PipelineEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["pipelines"]
+	if !exists || serviceStatus.Pipelines == nil {
+		return make(map[string]PipelineEntry), nil
+	}
+
+	return serviceStatus.Pipelines, nil
 }

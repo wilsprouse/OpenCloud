@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 var pipelineNameRegex = regexp.MustCompile(`[^a-zA-Z0-9\-_.]`)
@@ -112,6 +114,20 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now(),
 	}
 
+	// Update service ledger with pipeline entry
+	if err := service_ledger.UpdatePipelineEntry(
+		pipelineID,
+		req.Name,
+		req.Description,
+		req.Code,
+		req.Branch,
+		"idle",
+		pipeline.CreatedAt.Format(time.RFC3339),
+	); err != nil {
+		// Log the error but don't fail the request since pipeline file was already created
+		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(pipeline)
@@ -148,6 +164,22 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get all pipeline entries from the service ledger
+	ledgerPipelines, err := service_ledger.GetAllPipelineEntries()
+	if err != nil {
+		fmt.Printf("Warning: Failed to read service ledger: %v\n", err)
+		ledgerPipelines = make(map[string]service_ledger.PipelineEntry)
+	}
+
+	// Create a map of sanitized names to ledger entries for O(1) lookups
+	// Note: Ledger stores original names, but filenames use sanitized names,
+	// so we need to sanitize ledger names to match against filenames
+	sanitizedNameToEntry := make(map[string]service_ledger.PipelineEntry)
+	for _, entry := range ledgerPipelines {
+		sanitizedName := sanitizePipelineName(entry.Name)
+		sanitizedNameToEntry[sanitizedName] = entry
+	}
+
 	pipelines := []Pipeline{}
 
 	// Process each shell script file
@@ -156,35 +188,59 @@ func GetPipelines(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Read shell script file
-		scriptPath := filepath.Join(pipelineDir, entry.Name())
-		scriptData, err := os.ReadFile(scriptPath)
-		if err != nil {
-			continue // Skip files that can't be read
-		}
-
-		// Get file info for creation time
-		fileInfo, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
 		// Derive pipeline name from filename (remove .sh extension)
+		// This is already sanitized since the filename was created using sanitizePipelineName
 		pipelineName := strings.TrimSuffix(entry.Name(), ".sh")
 
-		// Generate a deterministic ID based on the filename
-		pipelineID, err := generatePipelineID()
-		if err != nil {
-			continue
-		}
+		// Try to find matching pipeline in ledger using the sanitized name map
+		ledgerEntry, existsInLedger := sanitizedNameToEntry[pipelineName]
 
-		// Create pipeline object
-		pipeline := Pipeline{
-			ID:        pipelineID,
-			Name:      pipelineName,
-			Code:      string(scriptData),
-			Status:    "idle",
-			CreatedAt: fileInfo.ModTime(),
+		// Create pipeline object, preferring ledger data when available
+		var pipeline Pipeline
+		if existsInLedger {
+			createdAt, _ := time.Parse(time.RFC3339, ledgerEntry.CreatedAt)
+			if createdAt.IsZero() {
+				// Fallback to file mod time if parsing fails
+				fileInfo, err := entry.Info()
+				if err == nil {
+					createdAt = fileInfo.ModTime()
+				} else {
+					createdAt = time.Now()
+				}
+			}
+			pipeline = Pipeline{
+				ID:          ledgerEntry.ID,
+				Name:        ledgerEntry.Name,
+				Description: ledgerEntry.Description,
+				Code:        ledgerEntry.Code,
+				Branch:      ledgerEntry.Branch,
+				Status:      ledgerEntry.Status,
+				CreatedAt:   createdAt,
+			}
+		} else {
+			// Fallback to file-based data if not in ledger
+			scriptPath := filepath.Join(pipelineDir, entry.Name())
+			scriptData, err := os.ReadFile(scriptPath)
+			if err != nil {
+				continue // Skip files that can't be read
+			}
+
+			fileInfo, err := entry.Info()
+			if err != nil {
+				continue
+			}
+
+			pipelineID, err := generatePipelineID()
+			if err != nil {
+				continue
+			}
+			pipeline = Pipeline{
+				ID:        pipelineID,
+				Name:      pipelineName,
+				Code:      string(scriptData),
+				Status:    "idle",
+				CreatedAt: fileInfo.ModTime(),
+			}
 		}
 
 		pipelines = append(pipelines, pipeline)
