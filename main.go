@@ -46,6 +46,7 @@ func main() {
 	mux.HandleFunc("/create-pipeline", api.CreatePipeline)
 	mux.HandleFunc("/get-pipelines", api.GetPipelines)
 	mux.HandleFunc("/get-pipeline/", api.GetPipeline)
+	mux.HandleFunc("/get-pipeline-logs/", api.GetPipelineLogs)
 	mux.HandleFunc("/", api.GetFunction)
 	//mux.HandleFunc("/build-image", api.BuildImage)
 

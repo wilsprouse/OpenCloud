@@ -29,6 +29,13 @@ type Pipeline struct {
 	Duration    string    `json:"duration,omitempty"`
 }
 
+type PipelineLog struct {
+	Timestamp string `json:"timestamp"`
+	Output    string `json:"output"`
+	Error     string `json:"error,omitempty"`
+	Status    string `json:"status"` // "success" or "error"
+}
+
 type CreatePipelineRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -360,6 +367,35 @@ func GetPipeline(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pipeline)
+}
+
+// GetPipelineLogs retrieves execution logs for a specific pipeline
+func GetPipelineLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract pipeline ID from URL path
+	// Expected format: /get-pipeline-logs/{pipelineID}
+	path := r.URL.Path
+	prefix := "/get-pipeline-logs/"
+	if !strings.HasPrefix(path, prefix) {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+	pipelineID := strings.TrimPrefix(path, prefix)
+	if pipelineID == "" {
+		http.Error(w, "Missing pipeline ID", http.StatusBadRequest)
+		return
+	}
+
+	// For now, return an empty array since pipeline execution logging
+	// is not yet implemented. This allows the frontend to work without errors.
+	logs := []PipelineLog{}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
 }
 
 // generatePipelineID creates a unique identifier for the pipeline
