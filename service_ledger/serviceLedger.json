@@ -11,6 +11,15 @@
     "pipelines": {
         "enabled": false,
         "pipelines": {
+            "08b0dbeee46cf37f": {
+                "id": "08b0dbeee46cf37f",
+                "name": "test-logs-pipeline",
+                "description": "Test pipeline for logs",
+                "code": "#!/bin/bash\necho test",
+                "branch": "main",
+                "status": "idle",
+                "createdAt": "2026-01-20T23:00:17Z"
+            },
             "76f6ea22ec3c15d0": {
                 "id": "76f6ea22ec3c15d0",
                 "name": "test-pipeline-3",

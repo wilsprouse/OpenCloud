@@ -390,6 +390,17 @@ func GetPipelineLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate that the pipeline exists
+	ledgerEntry, err := service_ledger.GetPipelineEntry(pipelineID)
+	if err != nil {
+		http.Error(w, "Failed to read service ledger", http.StatusInternalServerError)
+		return
+	}
+	if ledgerEntry == nil {
+		http.Error(w, "Pipeline not found", http.StatusNotFound)
+		return
+	}
+
 	// For now, return an empty array since pipeline execution logging
 	// is not yet implemented. This allows the frontend to work without errors.
 	logs := []PipelineLog{}
