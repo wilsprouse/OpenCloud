@@ -103,6 +103,10 @@ export default function Pipelines() {
   const fetchPipelines = async () => {
     setLoading(true)
     try {
+      // Sync pipelines from disk to service ledger first
+      await client.post("/sync-pipelines")
+      
+      // Then fetch the pipelines
       const res = await client.get<Pipeline[]>("/get-pipelines")
       setPipelines(res.data || [])
     } catch (err) {
