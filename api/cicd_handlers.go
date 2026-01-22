@@ -268,6 +268,59 @@ func sanitizePipelineName(name string) string {
 	return sanitized
 }
 
+// GetPipeline retrieves a single pipeline by its ID
+func GetPipeline(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract pipeline ID from URL path
+	// URL format: /get-pipeline/{id}
+	path := r.URL.Path
+	parts := strings.Split(strings.TrimPrefix(path, "/get-pipeline/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "Pipeline ID is required", http.StatusBadRequest)
+		return
+	}
+	
+	pipelineID := parts[0]
+
+	// Get pipeline entry from service ledger
+	ledgerEntry, err := service_ledger.GetPipelineEntry(pipelineID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to retrieve pipeline: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if ledgerEntry == nil {
+		http.Error(w, "Pipeline not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse created date
+	createdAt, err := time.Parse(time.RFC3339, ledgerEntry.CreatedAt)
+	if err != nil {
+		// If parsing fails, use current time as fallback
+		createdAt = time.Now()
+	}
+
+	// Convert ledger entry to API Pipeline format
+	pipeline := Pipeline{
+		ID:          ledgerEntry.ID,
+		Name:        ledgerEntry.Name,
+		Description: ledgerEntry.Description,
+		Code:        ledgerEntry.Code,
+		Branch:      ledgerEntry.Branch,
+		Status:      ledgerEntry.Status,
+		CreatedAt:   createdAt,
+	}
+
+	// Return pipeline as JSON
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pipeline)
+}
+
 // generatePipelineID creates a unique identifier for the pipeline
 func generatePipelineID() (string, error) {
 	b := make([]byte, 8)
