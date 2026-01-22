@@ -278,7 +278,7 @@ func GetPipeline(w http.ResponseWriter, r *http.Request) {
 	// Extract pipeline ID from URL path
 	// URL format: /get-pipeline/{id}
 	pipelineID := strings.TrimPrefix(r.URL.Path, "/get-pipeline/")
-	if pipelineID == "" || pipelineID == "/get-pipeline/" {
+	if pipelineID == "" {
 		http.Error(w, "Pipeline ID is required", http.StatusBadRequest)
 		return
 	}
