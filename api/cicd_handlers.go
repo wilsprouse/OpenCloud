@@ -301,8 +301,9 @@ func GetPipeline(w http.ResponseWriter, r *http.Request) {
 	// Parse created date
 	createdAt, err := time.Parse(time.RFC3339, ledgerEntry.CreatedAt)
 	if err != nil {
-		// If parsing fails, use current time as fallback
-		createdAt = time.Now()
+		// If parsing fails, log the error and use zero time to indicate unknown creation time
+		fmt.Printf("Warning: Failed to parse creation time for pipeline %s: %v\n", pipelineID, err)
+		createdAt = time.Time{}
 	}
 
 	// Convert ledger entry to API Pipeline format
@@ -318,7 +319,11 @@ func GetPipeline(w http.ResponseWriter, r *http.Request) {
 
 	// Return pipeline as JSON
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(pipeline)
+	if err := json.NewEncoder(w).Encode(pipeline); err != nil {
+		fmt.Printf("Error encoding pipeline response: %v\n", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 // generatePipelineID creates a unique identifier for the pipeline
