@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -416,12 +417,6 @@ func SyncPipelines() error {
 		serviceStatus.Pipelines = make(map[string]PipelineEntry)
 	}
 
-	// Create a map of existing pipeline IDs for quick lookup
-	existingIDs := make(map[string]bool)
-	for id := range serviceStatus.Pipelines {
-		existingIDs[id] = true
-	}
-
 	// Process each shell script file
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -437,12 +432,14 @@ func SyncPipelines() error {
 		scriptPath := filepath.Join(pipelineDir, entry.Name())
 		scriptData, err := os.ReadFile(scriptPath)
 		if err != nil {
+			fmt.Printf("Warning: Failed to read pipeline file %s: %v\n", entry.Name(), err)
 			continue // Skip files that can't be read
 		}
 
 		// Get file info for creation time
 		fileInfo, err := entry.Info()
 		if err != nil {
+			fmt.Printf("Warning: Failed to get file info for %s: %v\n", entry.Name(), err)
 			continue
 		}
 
@@ -464,6 +461,7 @@ func SyncPipelines() error {
 			// Generate a unique ID
 			b := make([]byte, 8)
 			if _, err := rand.Read(b); err != nil {
+				fmt.Printf("Warning: Failed to generate pipeline ID for %s: %v\n", entry.Name(), err)
 				continue
 			}
 			pipelineID := hex.EncodeToString(b)
