@@ -277,14 +277,11 @@ func GetPipeline(w http.ResponseWriter, r *http.Request) {
 
 	// Extract pipeline ID from URL path
 	// URL format: /get-pipeline/{id}
-	path := r.URL.Path
-	parts := strings.Split(strings.TrimPrefix(path, "/get-pipeline/"), "/")
-	if len(parts) == 0 || parts[0] == "" {
+	pipelineID := strings.TrimPrefix(r.URL.Path, "/get-pipeline/")
+	if pipelineID == "" || pipelineID == "/get-pipeline/" {
 		http.Error(w, "Pipeline ID is required", http.StatusBadRequest)
 		return
 	}
-	
-	pipelineID := parts[0]
 
 	// Get pipeline entry from service ledger
 	ledgerEntry, err := service_ledger.GetPipelineEntry(pipelineID)
@@ -319,11 +316,7 @@ func GetPipeline(w http.ResponseWriter, r *http.Request) {
 
 	// Return pipeline as JSON
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(pipeline); err != nil {
-		fmt.Printf("Error encoding pipeline response: %v\n", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	json.NewEncoder(w).Encode(pipeline)
 }
 
 // generatePipelineID creates a unique identifier for the pipeline
