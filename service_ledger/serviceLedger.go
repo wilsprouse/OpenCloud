@@ -5,7 +5,10 @@ The Service Ledger
 package service_ledger
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -372,4 +375,132 @@ func GetAllPipelineEntries() (map[string]PipelineEntry, error) {
 	}
 
 	return serviceStatus.Pipelines, nil
+}
+
+// SyncPipelines scans the ~/.opencloud/pipelines/ directory and updates the service ledger
+// with any pipelines that exist on disk but are not yet tracked in the ledger
+func SyncPipelines() error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	// Get home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
+
+	// Check if directory exists
+	if _, err := os.Stat(pipelineDir); os.IsNotExist(err) {
+		// Directory doesn't exist, nothing to sync
+		return nil
+	}
+
+	// Read all files in the pipelines directory
+	entries, err := os.ReadDir(pipelineDir)
+	if err != nil {
+		return err
+	}
+
+	// Read current ledger
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	// Get current pipeline entries
+	serviceStatus, exists := ledger["pipelines"]
+	if !exists {
+		serviceStatus = ServiceStatus{Enabled: false, Pipelines: make(map[string]PipelineEntry)}
+	} else if serviceStatus.Pipelines == nil {
+		serviceStatus.Pipelines = make(map[string]PipelineEntry)
+	}
+
+	// Process each shell script file
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		// Only process .sh files
+		if filepath.Ext(entry.Name()) != ".sh" {
+			continue
+		}
+
+		// Read the file content
+		scriptPath := filepath.Join(pipelineDir, entry.Name())
+		scriptData, err := os.ReadFile(scriptPath)
+		if err != nil {
+			fmt.Printf("Warning: Failed to read pipeline file %s: %v\n", entry.Name(), err)
+			continue // Skip files that can't be read
+		}
+
+		// Get file info for creation time
+		fileInfo, err := entry.Info()
+		if err != nil {
+			fmt.Printf("Warning: Failed to get file info for %s: %v\n", entry.Name(), err)
+			continue
+		}
+
+		// Extract pipeline name (remove .sh extension)
+		pipelineName := entry.Name()[:len(entry.Name())-3]
+
+		// Check if this pipeline already exists in the ledger
+		// We check by comparing the code content to avoid duplicates
+		found := false
+		for _, existing := range serviceStatus.Pipelines {
+			if existing.Code == string(scriptData) {
+				found = true
+				break
+			}
+		}
+
+		// If not found, add it to the ledger
+		if !found {
+			// Generate a unique ID
+			b := make([]byte, 8)
+			if _, err := rand.Read(b); err != nil {
+				fmt.Printf("Warning: Failed to generate pipeline ID for %s: %v\n", entry.Name(), err)
+				continue
+			}
+			pipelineID := hex.EncodeToString(b)
+
+			// Add the pipeline entry
+			serviceStatus.Pipelines[pipelineID] = PipelineEntry{
+				ID:          pipelineID,
+				Name:        pipelineName,
+				Description: "",
+				Code:        string(scriptData),
+				Branch:      "main",
+				Status:      "idle",
+				CreatedAt:   fileInfo.ModTime().Format("2006-01-02T15:04:05Z07:00"),
+			}
+		}
+	}
+
+	// Update the ledger
+	ledger["pipelines"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// SyncPipelinesHandler is an HTTP handler that syncs pipelines from disk to the service ledger
+func SyncPipelinesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := SyncPipelines(); err != nil {
+		http.Error(w, "Failed to sync pipelines: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"message": "Pipelines synced successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
