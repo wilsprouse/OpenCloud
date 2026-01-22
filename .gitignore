@@ -7,4 +7,4 @@ ui/tsconfig.tsbuildinfo
 *.pem
 *.backup
 .env
-serviceLedger.json
+service_ledger/serviceLedger.json
