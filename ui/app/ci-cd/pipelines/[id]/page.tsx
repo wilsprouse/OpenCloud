@@ -73,7 +73,7 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
   const [isEditMode, setIsEditMode] = useState(false)
   const [logs, setLogs] = useState<PipelineLog[]>([])
   const [loadingLogs, setLoadingLogs] = useState(false)
-  const [activeTab, setActiveTab] = useState("overview")
+  const [activeTab, setActiveTab] = useState("code")
   
   // Editable form state
   const [pipelineName, setPipelineName] = useState("")
@@ -422,11 +422,7 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
         <Card className="lg:col-span-2">
           <CardContent className="pt-6">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="overview" className="flex items-center">
-                  <Activity className="h-4 w-4 mr-2" />
-                  Overview
-                </TabsTrigger>
+              <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="code" className="flex items-center">
                   <FileCode className="h-4 w-4 mr-2" />
                   Code
@@ -436,85 +432,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                   Logs
                 </TabsTrigger>
               </TabsList>
-              
-              <TabsContent value="overview" className="space-y-4">
-                <div className="space-y-4 pt-4">
-                  <div>
-                    <h3 className="text-lg font-semibold mb-2">Pipeline Overview</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {pipeline?.description || "No description available"}
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium">Status</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex items-center space-x-2">
-                          <StatusIcon className={`h-5 w-5 ${statusInfo.color}`} />
-                          <span className="text-lg font-bold capitalize">{pipeline?.status}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium">Branch</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex items-center space-x-2">
-                          <GitBranch className="h-5 w-5" />
-                          <span className="text-lg font-bold">{pipeline?.branch || "main"}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  {pipeline?.lastRun && (
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium">Last Execution</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Last Run:</span>
-                          <span className="font-medium">{new Date(pipeline.lastRun).toLocaleString()}</span>
-                        </div>
-                        {pipeline.duration && (
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Duration:</span>
-                            <span className="font-medium">{pipeline.duration}</span>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  <div className="flex items-center space-x-2 pt-4">
-                    {!isRunning ? (
-                      <Button onClick={handleRunPipeline} disabled={running} className="flex-1">
-                        {running ? (
-                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <Play className="mr-2 h-4 w-4" />
-                        )}
-                        {running ? "Starting Pipeline..." : "Run Pipeline"}
-                      </Button>
-                    ) : (
-                      <Button variant="secondary" onClick={handleStopPipeline} className="flex-1">
-                        <Pause className="mr-2 h-4 w-4" />
-                        Stop Pipeline
-                      </Button>
-                    )}
-                    <Button variant="outline" onClick={() => setActiveTab("logs")}>
-                      <Terminal className="mr-2 h-4 w-4" />
-                      View Logs
-                    </Button>
-                  </div>
-                </div>
-              </TabsContent>
               
               <TabsContent value="code" className="space-y-4">
                 <div className="space-y-2 pt-4">
@@ -532,14 +449,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                       <pre className="text-sm font-mono overflow-x-auto whitespace-pre-wrap">
                         {pipeline?.code || "No code available"}
                       </pre>
-                    </div>
-                  )}
-                  {!isEditMode && (
-                    <div className="flex justify-end">
-                      <Button variant="outline" onClick={() => setIsEditMode(true)}>
-                        <Edit className="mr-2 h-4 w-4" />
-                        Edit Code
-                      </Button>
                     </div>
                   )}
                 </div>
@@ -568,40 +477,38 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                         <p className="text-xs mt-1 text-muted-foreground">Run the pipeline to see output logs here</p>
                       </div>
                     ) : (
-                      logs.map((log, index) => (
-                        <div
-                          key={`${log.timestamp}-${index}`}
-                          className={`border rounded-lg p-4 ${
-                            log.status === "error" ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <Badge className={log.status === "error" ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}>
-                              {log.status === "error" ? "Error" : "Success"}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground flex items-center">
-                              <Clock className="h-3 w-3 mr-1" />
-                              {new Date(log.timestamp).toLocaleString()}
-                            </span>
-                          </div>
-                          {log.output && (
-                            <div className="mt-2">
-                              <p className="text-xs font-semibold text-muted-foreground mb-1">Output:</p>
-                              <pre className="text-xs font-mono bg-white p-3 rounded border overflow-x-auto whitespace-pre-wrap">
-                                {log.output}
-                              </pre>
-                            </div>
-                          )}
-                          {log.error && (
-                            <div className="mt-2">
-                              <p className="text-xs font-semibold mb-1 text-red-600">Error:</p>
-                              <pre className="text-xs font-mono bg-white p-3 rounded border border-red-300 overflow-x-auto whitespace-pre-wrap text-red-600">
-                                {log.error}
-                              </pre>
-                            </div>
-                          )}
+                      <div
+                        key={`${logs[logs.length - 1].timestamp}-latest`}
+                        className={`border rounded-lg p-4 ${
+                          logs[logs.length - 1].status === "error" ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <Badge className={logs[logs.length - 1].status === "error" ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}>
+                            {logs[logs.length - 1].status === "error" ? "Error" : "Success"}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground flex items-center">
+                            <Clock className="h-3 w-3 mr-1" />
+                            {new Date(logs[logs.length - 1].timestamp).toLocaleString()}
+                          </span>
                         </div>
-                      ))
+                        {logs[logs.length - 1].output && (
+                          <div className="mt-2">
+                            <p className="text-xs font-semibold text-muted-foreground mb-1">Output:</p>
+                            <pre className="text-xs font-mono bg-white p-3 rounded border overflow-x-auto whitespace-pre-wrap">
+                              {logs[logs.length - 1].output}
+                            </pre>
+                          </div>
+                        )}
+                        {logs[logs.length - 1].error && (
+                          <div className="mt-2">
+                            <p className="text-xs font-semibold mb-1 text-red-600">Error:</p>
+                            <pre className="text-xs font-mono bg-white p-3 rounded border border-red-300 overflow-x-auto whitespace-pre-wrap text-red-600">
+                              {logs[logs.length - 1].error}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
