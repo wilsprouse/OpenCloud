@@ -451,14 +451,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                       </pre>
                     </div>
                   )}
-                  {!isEditMode && (
-                    <div className="flex justify-end">
-                      <Button variant="outline" onClick={() => setIsEditMode(true)}>
-                        <Edit className="mr-2 h-4 w-4" />
-                        Edit Code
-                      </Button>
-                    </div>
-                  )}
                 </div>
               </TabsContent>
               
