@@ -1,21 +1,32 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 var pipelineNameRegex = regexp.MustCompile(`[^a-zA-Z0-9\-_.]`)
+
+// pipelineProcesses keeps track of running pipeline processes
+var (
+	pipelineProcesses = make(map[string]*exec.Cmd)
+	pipelineMutex     sync.Mutex
+)
 
 type Pipeline struct {
 	ID          string    `json:"id"`
@@ -457,4 +468,406 @@ func UpdatePipeline(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pipeline)
+}
+
+// DeletePipeline deletes a pipeline by its ID
+func DeletePipeline(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract pipeline ID from URL path
+	// URL format: /delete-pipeline/{id}
+	pipelineID := strings.TrimPrefix(r.URL.Path, "/delete-pipeline/")
+	if pipelineID == "" {
+		http.Error(w, "Pipeline ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get pipeline entry from service ledger
+	ledgerEntry, err := service_ledger.GetPipelineEntry(pipelineID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to retrieve pipeline: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if ledgerEntry == nil {
+		http.Error(w, "Pipeline not found", http.StatusNotFound)
+		return
+	}
+
+	// Get home directory and pipelines directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
+
+	// Delete pipeline file
+	sanitizedName := sanitizePipelineName(ledgerEntry.Name)
+	pipelineFileName := sanitizedName + ".sh"
+	pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
+
+	if _, err := os.Stat(pipelinePath); err == nil {
+		if err := os.Remove(pipelinePath); err != nil {
+			fmt.Printf("Warning: Failed to remove pipeline file %s: %v\n", pipelinePath, err)
+			http.Error(w, fmt.Sprintf("Failed to remove pipeline file: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Delete from service ledger
+	if err := service_ledger.DeletePipelineEntry(pipelineID); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete pipeline from ledger: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Delete log file if it exists
+	logDir := filepath.Join(home, ".opencloud", "logs", "pipelines")
+	logFileName := sanitizedName + ".log"
+	logFilePath := filepath.Join(logDir, logFileName)
+	if _, err := os.Stat(logFilePath); err == nil {
+		os.Remove(logFilePath) // Best effort, don't fail if log deletion fails
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Pipeline deleted successfully",
+	})
+}
+
+// PipelineLog represents a single pipeline execution log entry
+type PipelineLog struct {
+	Timestamp string `json:"timestamp"`
+	Output    string `json:"output"`
+	Error     string `json:"error,omitempty"`
+	Status    string `json:"status"` // "success" or "error"
+}
+
+// RunPipeline executes a pipeline by its ID
+func RunPipeline(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract pipeline ID from URL path
+	// URL format: /run-pipeline/{id}
+	pipelineID := strings.TrimPrefix(r.URL.Path, "/run-pipeline/")
+	if pipelineID == "" {
+		http.Error(w, "Pipeline ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get pipeline entry from service ledger
+	ledgerEntry, err := service_ledger.GetPipelineEntry(pipelineID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to retrieve pipeline: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if ledgerEntry == nil {
+		http.Error(w, "Pipeline not found", http.StatusNotFound)
+		return
+	}
+
+	// Get home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	// Construct path to pipeline script
+	pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
+	sanitizedName := sanitizePipelineName(ledgerEntry.Name)
+	pipelineFileName := sanitizedName + ".sh"
+	pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
+
+	// Check if pipeline file exists
+	if _, err := os.Stat(pipelinePath); os.IsNotExist(err) {
+		http.Error(w, "Pipeline script file not found", http.StatusNotFound)
+		return
+	}
+
+	// Update status to "running"
+	if err := service_ledger.UpdatePipelineEntry(
+		pipelineID,
+		ledgerEntry.Name,
+		ledgerEntry.Description,
+		ledgerEntry.Code,
+		ledgerEntry.Branch,
+		"running",
+		ledgerEntry.CreatedAt,
+	); err != nil {
+		fmt.Printf("Warning: Failed to update pipeline status: %v\n", err)
+	}
+
+	// Execute pipeline in a goroutine to avoid blocking
+	go func() {
+		ctx := context.Background()
+		cmd := exec.CommandContext(ctx, "/bin/bash", pipelinePath)
+
+		// Capture output
+		var out bytes.Buffer
+		var stderr bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &stderr
+
+		// Store the command in the map so it can be stopped
+		pipelineMutex.Lock()
+		pipelineProcesses[pipelineID] = cmd
+		pipelineMutex.Unlock()
+
+		// Execute the pipeline
+		startTime := time.Now()
+		err := cmd.Run()
+		_ = time.Since(startTime) // Duration could be used for future metrics
+
+		// Remove from running processes
+		pipelineMutex.Lock()
+		delete(pipelineProcesses, pipelineID)
+		pipelineMutex.Unlock()
+
+		// Determine status
+		status := "success"
+		if err != nil {
+			status = "failed"
+		}
+
+		// Create log directory
+		logDir := filepath.Join(home, ".opencloud", "logs", "pipelines")
+		if mkErr := os.MkdirAll(logDir, 0755); mkErr != nil {
+			fmt.Printf("Warning: failed to create log directory: %v\n", mkErr)
+		}
+
+		// Create log file
+		logFileName := sanitizedName + ".log"
+		logFilePath := filepath.Join(logDir, logFileName)
+		logFile, fileErr := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if fileErr != nil {
+			fmt.Printf("Warning: failed to open log file: %v\n", fileErr)
+		} else {
+			defer logFile.Close()
+		}
+
+		// Format log entry with timestamp separator
+		timestamp := time.Now().Format(time.RFC3339)
+		statusMarker := "SUCCESS"
+		if status == "failed" {
+			statusMarker = "ERROR"
+		}
+		logEntry := fmt.Sprintf("===EXECUTION_START:%s|%s===\n%s%s===EXECUTION_END===\n", 
+			timestamp, statusMarker, out.String(), stderr.String())
+
+		// Write to log file
+		if logFile != nil {
+			if _, writeErr := logFile.WriteString(logEntry); writeErr != nil {
+				fmt.Printf("Warning: failed to write log file: %v\n", writeErr)
+			}
+		}
+
+		// Print to stdout
+		fmt.Print(out.String() + stderr.String())
+
+		// Update pipeline status to final status
+		updatedEntry, err := service_ledger.GetPipelineEntry(pipelineID)
+		if err == nil && updatedEntry != nil {
+			if err := service_ledger.UpdatePipelineEntry(
+				pipelineID,
+				updatedEntry.Name,
+				updatedEntry.Description,
+				updatedEntry.Code,
+				updatedEntry.Branch,
+				status,
+				updatedEntry.CreatedAt,
+			); err != nil {
+				fmt.Printf("Warning: Failed to update pipeline status: %v\n", err)
+			}
+		}
+	}()
+
+	// Return success immediately (pipeline runs in background)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Pipeline started successfully",
+		"status":  "running",
+	})
+}
+
+// GetPipelineLogs retrieves execution logs for a pipeline
+func GetPipelineLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract pipeline ID from URL path
+	// URL format: /get-pipeline-logs/{id}
+	pipelineID := strings.TrimPrefix(r.URL.Path, "/get-pipeline-logs/")
+	if pipelineID == "" {
+		http.Error(w, "Pipeline ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get pipeline entry from service ledger
+	ledgerEntry, err := service_ledger.GetPipelineEntry(pipelineID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to retrieve pipeline: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if ledgerEntry == nil {
+		http.Error(w, "Pipeline not found", http.StatusNotFound)
+		return
+	}
+
+	// Get home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	// Construct path to log file
+	logDir := filepath.Join(home, ".opencloud", "logs", "pipelines")
+	sanitizedName := sanitizePipelineName(ledgerEntry.Name)
+	logFileName := sanitizedName + ".log"
+	logFilePath := filepath.Join(logDir, logFileName)
+
+	// Check if log file exists
+	if _, err := os.Stat(logFilePath); os.IsNotExist(err) {
+		// Return empty logs if file doesn't exist
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]PipelineLog{})
+		return
+	}
+
+	// Read and parse log file
+	file, err := os.Open(logFilePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to open log file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	logs := []PipelineLog{}
+	scanner := bufio.NewScanner(file)
+	
+	var currentLog *PipelineLog
+	var outputBuffer strings.Builder
+	
+	for scanner.Scan() {
+		line := scanner.Text()
+		
+		// Check for execution start marker
+		if strings.HasPrefix(line, "===EXECUTION_START:") {
+			// Parse timestamp and status from marker
+			marker := strings.TrimPrefix(line, "===EXECUTION_START:")
+			marker = strings.TrimSuffix(marker, "===")
+			parts := strings.Split(marker, "|")
+			
+			if len(parts) == 2 {
+				timestamp := parts[0]
+				status := strings.ToLower(parts[1])
+				if status == "error" {
+					status = "error"
+				} else {
+					status = "success"
+				}
+				
+				currentLog = &PipelineLog{
+					Timestamp: timestamp,
+					Status:    status,
+				}
+				outputBuffer.Reset()
+			}
+		} else if strings.HasPrefix(line, "===EXECUTION_END===") {
+			// End of log entry
+			if currentLog != nil {
+				output := outputBuffer.String()
+				// Split into output and error based on status
+				if currentLog.Status == "error" {
+					currentLog.Error = output
+				} else {
+					currentLog.Output = output
+				}
+				logs = append(logs, *currentLog)
+				currentLog = nil
+			}
+		} else if currentLog != nil {
+			// Accumulate output lines
+			if outputBuffer.Len() > 0 {
+				outputBuffer.WriteString("\n")
+			}
+			outputBuffer.WriteString(line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read log file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logs)
+}
+
+// StopPipeline stops a running pipeline
+func StopPipeline(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract pipeline ID from URL path
+	// URL format: /stop-pipeline/{id}
+	pipelineID := strings.TrimPrefix(r.URL.Path, "/stop-pipeline/")
+	if pipelineID == "" {
+		http.Error(w, "Pipeline ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the running process
+	pipelineMutex.Lock()
+	cmd, exists := pipelineProcesses[pipelineID]
+	if exists {
+		delete(pipelineProcesses, pipelineID)
+	}
+	pipelineMutex.Unlock()
+
+	if !exists || cmd.Process == nil {
+		http.Error(w, "Pipeline is not running", http.StatusBadRequest)
+		return
+	}
+
+	// Kill the process
+	if err := cmd.Process.Kill(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to stop pipeline: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Update status to "idle"
+	ledgerEntry, err := service_ledger.GetPipelineEntry(pipelineID)
+	if err == nil && ledgerEntry != nil {
+		if err := service_ledger.UpdatePipelineEntry(
+			pipelineID,
+			ledgerEntry.Name,
+			ledgerEntry.Description,
+			ledgerEntry.Code,
+			ledgerEntry.Branch,
+			"idle",
+			ledgerEntry.CreatedAt,
+		); err != nil {
+			fmt.Printf("Warning: Failed to update pipeline status: %v\n", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Pipeline stopped successfully",
+	})
 }
