@@ -422,14 +422,10 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
         <Card className="lg:col-span-2">
           <CardContent className="pt-6">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="overview" className="flex items-center">
                   <Activity className="h-4 w-4 mr-2" />
                   Overview
-                </TabsTrigger>
-                <TabsTrigger value="code" className="flex items-center">
-                  <FileCode className="h-4 w-4 mr-2" />
-                  Code
                 </TabsTrigger>
                 <TabsTrigger value="logs" className="flex items-center">
                   <Terminal className="h-4 w-4 mr-2" />
@@ -513,35 +509,37 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                       View Logs
                     </Button>
                   </div>
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="code" className="space-y-4">
-                <div className="space-y-2 pt-4">
-                  <Label htmlFor="code">Pipeline Code</Label>
-                  {isEditMode ? (
-                    <Textarea
-                      id="code"
-                      value={pipelineCode}
-                      onChange={(e) => setPipelineCode(e.target.value)}
-                      placeholder="Enter your pipeline code here..."
-                      className="font-mono text-sm min-h-[500px] resize-y"
-                    />
-                  ) : (
-                    <div className="border rounded-lg p-4 bg-muted">
-                      <pre className="text-sm font-mono overflow-x-auto whitespace-pre-wrap">
-                        {pipeline?.code || "No code available"}
-                      </pre>
+
+                  {/* Pipeline Code Section */}
+                  <div className="space-y-2 pt-4">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="code" className="text-lg font-semibold flex items-center">
+                        <FileCode className="h-5 w-5 mr-2" />
+                        Pipeline Code
+                      </Label>
+                      {!isEditMode && (
+                        <Button variant="outline" size="sm" onClick={() => setIsEditMode(true)}>
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit Code
+                        </Button>
+                      )}
                     </div>
-                  )}
-                  {!isEditMode && (
-                    <div className="flex justify-end">
-                      <Button variant="outline" onClick={() => setIsEditMode(true)}>
-                        <Edit className="mr-2 h-4 w-4" />
-                        Edit Code
-                      </Button>
-                    </div>
-                  )}
+                    {isEditMode ? (
+                      <Textarea
+                        id="code"
+                        value={pipelineCode}
+                        onChange={(e) => setPipelineCode(e.target.value)}
+                        placeholder="Enter your pipeline code here..."
+                        className="font-mono text-sm min-h-[500px] resize-y"
+                      />
+                    ) : (
+                      <div className="border rounded-lg p-4 bg-muted">
+                        <pre className="text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+                          {pipeline?.code || "No code available"}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </TabsContent>
               
