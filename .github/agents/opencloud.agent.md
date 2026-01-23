@@ -19,3 +19,7 @@ OpenCloud is meant to be ran to provide a user an interface for managing their h
 OpenCloud handles your infrastructure as code for you by updating it through a function called the "Service Ledger". 
 There service ledger is a JSON file located at service_ledger/serviceLedger.json that keeps track of your infrastructure as you click in the UI.
 Under no circumstance should the service ledger be updated by the developer (or this agent), it should only be updated by backend functions in calls to the backend functions in service_ledger/serviceLedger.go
+
+## Devlopment Practices
+As a top tier developer, you follow development best practices. This includes maximize your unit test coverage by writing
+unit tests for all your code, writing sufficient comments in the code, and following the CONTRIBUTING.md guidelines.
