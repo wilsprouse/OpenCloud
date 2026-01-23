@@ -73,7 +73,7 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
   const [isEditMode, setIsEditMode] = useState(false)
   const [logs, setLogs] = useState<PipelineLog[]>([])
   const [loadingLogs, setLoadingLogs] = useState(false)
-  const [activeTab, setActiveTab] = useState("overview")
+  const [activeTab, setActiveTab] = useState("code")
   
   // Editable form state
   const [pipelineName, setPipelineName] = useState("")
@@ -423,9 +423,9 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
           <CardContent className="pt-6">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="overview" className="flex items-center">
-                  <Activity className="h-4 w-4 mr-2" />
-                  Overview
+                <TabsTrigger value="code" className="flex items-center">
+                  <FileCode className="h-4 w-4 mr-2" />
+                  Code
                 </TabsTrigger>
                 <TabsTrigger value="logs" className="flex items-center">
                   <Terminal className="h-4 w-4 mr-2" />
@@ -433,113 +433,32 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                 </TabsTrigger>
               </TabsList>
               
-              <TabsContent value="overview" className="space-y-4">
-                <div className="space-y-4 pt-4">
-                  {/* Pipeline Code Section */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="code" className="text-lg font-semibold flex items-center">
-                        <FileCode className="h-5 w-5 mr-2" />
-                        Pipeline Code
-                      </Label>
-                      {!isEditMode && (
-                        <Button variant="outline" size="sm" onClick={() => setIsEditMode(true)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit Code
-                        </Button>
-                      )}
+              <TabsContent value="code" className="space-y-4">
+                <div className="space-y-2 pt-4">
+                  <Label htmlFor="code">Pipeline Code</Label>
+                  {isEditMode ? (
+                    <Textarea
+                      id="code"
+                      value={pipelineCode}
+                      onChange={(e) => setPipelineCode(e.target.value)}
+                      placeholder="Enter your pipeline code here..."
+                      className="font-mono text-sm min-h-[500px] resize-y"
+                    />
+                  ) : (
+                    <div className="border rounded-lg p-4 bg-muted">
+                      <pre className="text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+                        {pipeline?.code || "No code available"}
+                      </pre>
                     </div>
-                    {isEditMode ? (
-                      <Textarea
-                        id="code"
-                        value={pipelineCode}
-                        onChange={(e) => setPipelineCode(e.target.value)}
-                        placeholder="Enter your pipeline code here..."
-                        className="font-mono text-sm min-h-[500px] resize-y"
-                      />
-                    ) : (
-                      <div className="border rounded-lg p-4 bg-muted">
-                        <pre className="text-sm font-mono overflow-x-auto whitespace-pre-wrap">
-                          {pipeline?.code || "No code available"}
-                        </pre>
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <h3 className="text-lg font-semibold mb-2">Pipeline Overview</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {pipeline?.description || "No description available"}
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium">Status</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex items-center space-x-2">
-                          <StatusIcon className={`h-5 w-5 ${statusInfo.color}`} />
-                          <span className="text-lg font-bold capitalize">{pipeline?.status}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium">Branch</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex items-center space-x-2">
-                          <GitBranch className="h-5 w-5" />
-                          <span className="text-lg font-bold">{pipeline?.branch || "main"}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  {pipeline?.lastRun && (
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm font-medium">Last Execution</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Last Run:</span>
-                          <span className="font-medium">{new Date(pipeline.lastRun).toLocaleString()}</span>
-                        </div>
-                        {pipeline.duration && (
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Duration:</span>
-                            <span className="font-medium">{pipeline.duration}</span>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
                   )}
-
-                  <div className="flex items-center space-x-2 pt-4">
-                    {!isRunning ? (
-                      <Button onClick={handleRunPipeline} disabled={running} className="flex-1">
-                        {running ? (
-                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <Play className="mr-2 h-4 w-4" />
-                        )}
-                        {running ? "Starting Pipeline..." : "Run Pipeline"}
+                  {!isEditMode && (
+                    <div className="flex justify-end">
+                      <Button variant="outline" onClick={() => setIsEditMode(true)}>
+                        <Edit className="mr-2 h-4 w-4" />
+                        Edit Code
                       </Button>
-                    ) : (
-                      <Button variant="secondary" onClick={handleStopPipeline} className="flex-1">
-                        <Pause className="mr-2 h-4 w-4" />
-                        Stop Pipeline
-                      </Button>
-                    )}
-                    <Button variant="outline" onClick={() => setActiveTab("logs")}>
-                      <Terminal className="mr-2 h-4 w-4" />
-                      View Logs
-                    </Button>
-                  </div>
+                    </div>
+                  )}
                 </div>
               </TabsContent>
               
