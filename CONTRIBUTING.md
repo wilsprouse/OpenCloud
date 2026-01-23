@@ -1,6 +1,7 @@
 # Contributions
+This document outlines common dev practices to follow when contributing to this repository
 
-# Branch Strategies
+## Branch Strategies
 For each branch created, it is imperative to use one of the following paradigms:
 - hotfix/hotfix-description
 - bugfix/bugfix-description
