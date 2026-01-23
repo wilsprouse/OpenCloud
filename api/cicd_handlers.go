@@ -328,3 +328,133 @@ func generatePipelineID() (string, error) {
 	}
 	return hex.EncodeToString(b), nil
 }
+
+// UpdatePipelineRequest represents the request body for updating a pipeline
+type UpdatePipelineRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Code        string `json:"code"`
+	Branch      string `json:"branch"`
+}
+
+// UpdatePipeline updates an existing pipeline by its ID
+func UpdatePipeline(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract pipeline ID from URL path
+	// URL format: /update-pipeline/{id}
+	pipelineID := strings.TrimPrefix(r.URL.Path, "/update-pipeline/")
+	if pipelineID == "" {
+		http.Error(w, "Pipeline ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Parse request body
+	var req UpdatePipelineRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.Name == "" || req.Code == "" {
+		http.Error(w, "Missing required fields: name and code", http.StatusBadRequest)
+		return
+	}
+
+	// Set default branch if not provided
+	if req.Branch == "" {
+		req.Branch = "main"
+	}
+
+	// Get existing pipeline entry from service ledger to verify it exists
+	existingEntry, err := service_ledger.GetPipelineEntry(pipelineID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to retrieve pipeline: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if existingEntry == nil {
+		http.Error(w, "Pipeline not found", http.StatusNotFound)
+		return
+	}
+
+	// Get home directory and pipelines directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
+
+	// Update service ledger with the new pipeline data first
+	// This ensures the ledger is updated before filesystem changes to maintain consistency
+	// Preserve the original creation time
+	if err := service_ledger.UpdatePipelineEntry(
+		pipelineID,
+		req.Name,
+		req.Description,
+		req.Code,
+		req.Branch,
+		existingEntry.Status, // Preserve existing status
+		existingEntry.CreatedAt, // Preserve original creation time
+	); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update service ledger: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Delete old pipeline file if the name has changed
+	// Note: Both names are sanitized using the same function to ensure consistent comparison
+	oldSanitizedName := sanitizePipelineName(existingEntry.Name)
+	newSanitizedName := sanitizePipelineName(req.Name)
+	
+	if oldSanitizedName != newSanitizedName {
+		oldPipelineFileName := oldSanitizedName + ".sh"
+		oldPipelinePath := filepath.Join(pipelineDir, oldPipelineFileName)
+		
+		// Remove old file if it exists
+		if _, err := os.Stat(oldPipelinePath); err == nil {
+			if err := os.Remove(oldPipelinePath); err != nil {
+				// Log the specific error for debugging
+				fmt.Printf("Warning: Failed to remove old pipeline file %s: %v\n", oldPipelinePath, err)
+				http.Error(w, fmt.Sprintf("Failed to remove old pipeline file: %v", err), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	// Write updated pipeline code to file
+	pipelineFileName := newSanitizedName + ".sh"
+	pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
+	
+	if err := os.WriteFile(pipelinePath, []byte(req.Code), 0755); err != nil {
+		// Log the specific error for debugging
+		fmt.Printf("Error: Failed to write pipeline file %s: %v\n", pipelinePath, err)
+		http.Error(w, fmt.Sprintf("Failed to update pipeline file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Parse created date for response
+	createdAt, err := time.Parse(time.RFC3339, existingEntry.CreatedAt)
+	if err != nil {
+		createdAt = time.Time{}
+	}
+
+	// Create response with updated pipeline details
+	pipeline := Pipeline{
+		ID:          pipelineID,
+		Name:        req.Name,
+		Description: req.Description,
+		Code:        req.Code,
+		Branch:      req.Branch,
+		Status:      existingEntry.Status,
+		CreatedAt:   createdAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pipeline)
+}
