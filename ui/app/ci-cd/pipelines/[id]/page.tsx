@@ -477,43 +477,38 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                         <p className="text-xs mt-1 text-muted-foreground">Run the pipeline to see output logs here</p>
                       </div>
                     ) : (
-                      (() => {
-                        const mostRecentLog = logs[logs.length - 1];
-                        return (
-                          <div
-                            key={`${mostRecentLog.timestamp}-latest`}
-                            className={`border rounded-lg p-4 ${
-                              mostRecentLog.status === "error" ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between mb-2">
-                              <Badge className={mostRecentLog.status === "error" ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}>
-                                {mostRecentLog.status === "error" ? "Error" : "Success"}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground flex items-center">
-                                <Clock className="h-3 w-3 mr-1" />
-                                {new Date(mostRecentLog.timestamp).toLocaleString()}
-                              </span>
-                            </div>
-                            {mostRecentLog.output && (
-                              <div className="mt-2">
-                                <p className="text-xs font-semibold text-muted-foreground mb-1">Output:</p>
-                                <pre className="text-xs font-mono bg-white p-3 rounded border overflow-x-auto whitespace-pre-wrap">
-                                  {mostRecentLog.output}
-                                </pre>
-                              </div>
-                            )}
-                            {mostRecentLog.error && (
-                              <div className="mt-2">
-                                <p className="text-xs font-semibold mb-1 text-red-600">Error:</p>
-                                <pre className="text-xs font-mono bg-white p-3 rounded border border-red-300 overflow-x-auto whitespace-pre-wrap text-red-600">
-                                  {mostRecentLog.error}
-                                </pre>
-                              </div>
-                            )}
+                      <div
+                        key={`${logs[logs.length - 1].timestamp}-latest`}
+                        className={`border rounded-lg p-4 ${
+                          logs[logs.length - 1].status === "error" ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <Badge className={logs[logs.length - 1].status === "error" ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}>
+                            {logs[logs.length - 1].status === "error" ? "Error" : "Success"}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground flex items-center">
+                            <Clock className="h-3 w-3 mr-1" />
+                            {new Date(logs[logs.length - 1].timestamp).toLocaleString()}
+                          </span>
+                        </div>
+                        {logs[logs.length - 1].output && (
+                          <div className="mt-2">
+                            <p className="text-xs font-semibold text-muted-foreground mb-1">Output:</p>
+                            <pre className="text-xs font-mono bg-white p-3 rounded border overflow-x-auto whitespace-pre-wrap">
+                              {logs[logs.length - 1].output}
+                            </pre>
                           </div>
-                        );
-                      })()
+                        )}
+                        {logs[logs.length - 1].error && (
+                          <div className="mt-2">
+                            <p className="text-xs font-semibold mb-1 text-red-600">Error:</p>
+                            <pre className="text-xs font-mono bg-white p-3 rounded border border-red-300 overflow-x-auto whitespace-pre-wrap text-red-600">
+                              {logs[logs.length - 1].error}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
