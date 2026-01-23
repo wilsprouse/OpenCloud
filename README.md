@@ -10,6 +10,9 @@ OpenCloud is meant to be flexible in the sense of where it can be ran, as is the
 4. `$ npm run dev`
 5. `cd .. && make run`
 
+## History
+OpenCloud was a by-product of the [SnipSave](www.snipsave.com) team wanting the ease, agility and simplicity of the cloud, but their application not being able to afford the costs of the services they wanted to use. Hence, OpenCloud was developed by the SnipSave team to gain access to these services in a generalized way, and it was released to the public under the GPL-3.0 License.
+
 ## Contributing
 We welcome all contributions to OpenCloud, but these contributions must follow our [contribution guidelines](CONTRIBUTING.md)
 
