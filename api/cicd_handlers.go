@@ -391,33 +391,8 @@ func UpdatePipeline(w http.ResponseWriter, r *http.Request) {
 
 	pipelineDir := filepath.Join(home, ".opencloud", "pipelines")
 
-	// Delete old pipeline file if the name has changed
-	oldSanitizedName := sanitizePipelineName(existingEntry.Name)
-	newSanitizedName := sanitizePipelineName(req.Name)
-	
-	if oldSanitizedName != newSanitizedName {
-		oldPipelineFileName := oldSanitizedName + ".sh"
-		oldPipelinePath := filepath.Join(pipelineDir, oldPipelineFileName)
-		
-		// Remove old file if it exists
-		if _, err := os.Stat(oldPipelinePath); err == nil {
-			if err := os.Remove(oldPipelinePath); err != nil {
-				http.Error(w, "Failed to remove old pipeline file", http.StatusInternalServerError)
-				return
-			}
-		}
-	}
-
-	// Write updated pipeline code to file
-	pipelineFileName := newSanitizedName + ".sh"
-	pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
-	
-	if err := os.WriteFile(pipelinePath, []byte(req.Code), 0755); err != nil {
-		http.Error(w, "Failed to update pipeline file", http.StatusInternalServerError)
-		return
-	}
-
-	// Update service ledger with the new pipeline data
+	// Update service ledger with the new pipeline data first
+	// This ensures the ledger is updated before filesystem changes to maintain consistency
 	// Preserve the original creation time
 	if err := service_ledger.UpdatePipelineEntry(
 		pipelineID,
@@ -429,6 +404,37 @@ func UpdatePipeline(w http.ResponseWriter, r *http.Request) {
 		existingEntry.CreatedAt, // Preserve original creation time
 	); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to update service ledger: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Delete old pipeline file if the name has changed
+	// Note: Both names are sanitized using the same function to ensure consistent comparison
+	oldSanitizedName := sanitizePipelineName(existingEntry.Name)
+	newSanitizedName := sanitizePipelineName(req.Name)
+	
+	if oldSanitizedName != newSanitizedName {
+		oldPipelineFileName := oldSanitizedName + ".sh"
+		oldPipelinePath := filepath.Join(pipelineDir, oldPipelineFileName)
+		
+		// Remove old file if it exists
+		if _, err := os.Stat(oldPipelinePath); err == nil {
+			if err := os.Remove(oldPipelinePath); err != nil {
+				// Log the specific error for debugging
+				fmt.Printf("Warning: Failed to remove old pipeline file %s: %v\n", oldPipelinePath, err)
+				http.Error(w, fmt.Sprintf("Failed to remove old pipeline file: %v", err), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	// Write updated pipeline code to file
+	pipelineFileName := newSanitizedName + ".sh"
+	pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
+	
+	if err := os.WriteFile(pipelinePath, []byte(req.Code), 0755); err != nil {
+		// Log the specific error for debugging
+		fmt.Printf("Error: Failed to write pipeline file %s: %v\n", pipelinePath, err)
+		http.Error(w, fmt.Sprintf("Failed to update pipeline file: %v", err), http.StatusInternalServerError)
 		return
 	}
 
