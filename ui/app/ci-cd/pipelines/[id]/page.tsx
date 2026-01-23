@@ -435,6 +435,37 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
               
               <TabsContent value="overview" className="space-y-4">
                 <div className="space-y-4 pt-4">
+                  {/* Pipeline Code Section */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="code" className="text-lg font-semibold flex items-center">
+                        <FileCode className="h-5 w-5 mr-2" />
+                        Pipeline Code
+                      </Label>
+                      {!isEditMode && (
+                        <Button variant="outline" size="sm" onClick={() => setIsEditMode(true)}>
+                          <Edit className="mr-2 h-4 w-4" />
+                          Edit Code
+                        </Button>
+                      )}
+                    </div>
+                    {isEditMode ? (
+                      <Textarea
+                        id="code"
+                        value={pipelineCode}
+                        onChange={(e) => setPipelineCode(e.target.value)}
+                        placeholder="Enter your pipeline code here..."
+                        className="font-mono text-sm min-h-[500px] resize-y"
+                      />
+                    ) : (
+                      <div className="border rounded-lg p-4 bg-muted">
+                        <pre className="text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+                          {pipeline?.code || "No code available"}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+
                   <div>
                     <h3 className="text-lg font-semibold mb-2">Pipeline Overview</h3>
                     <p className="text-sm text-muted-foreground">
@@ -508,37 +539,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                       <Terminal className="mr-2 h-4 w-4" />
                       View Logs
                     </Button>
-                  </div>
-
-                  {/* Pipeline Code Section */}
-                  <div className="space-y-2 pt-4">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="code" className="text-lg font-semibold flex items-center">
-                        <FileCode className="h-5 w-5 mr-2" />
-                        Pipeline Code
-                      </Label>
-                      {!isEditMode && (
-                        <Button variant="outline" size="sm" onClick={() => setIsEditMode(true)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Edit Code
-                        </Button>
-                      )}
-                    </div>
-                    {isEditMode ? (
-                      <Textarea
-                        id="code"
-                        value={pipelineCode}
-                        onChange={(e) => setPipelineCode(e.target.value)}
-                        placeholder="Enter your pipeline code here..."
-                        className="font-mono text-sm min-h-[500px] resize-y"
-                      />
-                    ) : (
-                      <div className="border rounded-lg p-4 bg-muted">
-                        <pre className="text-sm font-mono overflow-x-auto whitespace-pre-wrap">
-                          {pipeline?.code || "No code available"}
-                        </pre>
-                      </div>
-                    )}
                   </div>
                 </div>
               </TabsContent>
