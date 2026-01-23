@@ -623,9 +623,7 @@ func RunPipeline(w http.ResponseWriter, r *http.Request) {
 		pipelineMutex.Unlock()
 
 		// Execute the pipeline
-		startTime := time.Now()
 		err := cmd.Run()
-		_ = time.Since(startTime) // Duration could be used for future metrics
 
 		// Remove from running processes
 		pipelineMutex.Lock()
@@ -669,9 +667,6 @@ func RunPipeline(w http.ResponseWriter, r *http.Request) {
 				fmt.Printf("Warning: failed to write log file: %v\n", writeErr)
 			}
 		}
-
-		// Print to stdout
-		fmt.Print(out.String() + stderr.String())
 
 		// Update pipeline status to final status
 		updatedEntry, err := service_ledger.GetPipelineEntry(pipelineID)
@@ -772,11 +767,9 @@ func GetPipelineLogs(w http.ResponseWriter, r *http.Request) {
 			
 			if len(parts) == 2 {
 				timestamp := parts[0]
-				status := strings.ToLower(parts[1])
-				if status == "error" {
+				status := "success"
+				if strings.ToLower(parts[1]) == "error" {
 					status = "error"
-				} else {
-					status = "success"
 				}
 				
 				currentLog = &PipelineLog{
