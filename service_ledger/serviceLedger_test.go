@@ -71,9 +71,6 @@ func TestSyncFunctionsBasic(t *testing.T) {
 			t.Errorf("Function %s runtime mismatch. Expected %s, got %s", name, expectedRuntime, entry.Runtime)
 		}
 
-		if entry.Logs == nil {
-			entry.Logs = []FunctionLog{}
-		}
 		if len(entry.Logs) != 0 {
 			t.Errorf("Function %s should have empty logs, got %d entries", name, len(entry.Logs))
 		}
