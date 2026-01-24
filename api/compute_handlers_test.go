@@ -1,0 +1,248 @@
+package api
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Helper function to save and restore crontab state for tests
+func setupCrontabTest(t *testing.T) (cleanup func()) {
+	// Save original crontab
+	origCrontabCmd := exec.Command("crontab", "-l")
+	origCrontabOutput, _ := origCrontabCmd.CombinedOutput()
+	origCrontab := string(origCrontabOutput)
+	
+	// Clear crontab for test
+	cmd := exec.Command("crontab", "-r")
+	if err := cmd.Run(); err != nil {
+		// Ignore error if crontab doesn't exist
+		if !strings.Contains(err.Error(), "no crontab") {
+			t.Logf("Warning: Failed to clear crontab: %v", err)
+		}
+	}
+	
+	// Return cleanup function
+	return func() {
+		// Restore original crontab
+		if strings.Contains(origCrontab, "no crontab for") || origCrontab == "" {
+			// Clear crontab
+			cmd := exec.Command("crontab", "-r")
+			if err := cmd.Run(); err != nil {
+				// Ignore error if crontab doesn't exist
+				if !strings.Contains(err.Error(), "no crontab") {
+					t.Logf("Warning: Failed to clear crontab during cleanup: %v", err)
+				}
+			}
+		} else {
+			cmd := exec.Command("crontab", "-")
+			cmd.Stdin = strings.NewReader(origCrontab)
+			if err := cmd.Run(); err != nil {
+				t.Logf("Warning: Failed to restore crontab: %v", err)
+			}
+		}
+	}
+}
+
+func TestAddCron(t *testing.T) {
+	// Skip test if crontab is not available
+	if _, err := exec.LookPath("crontab"); err != nil {
+		t.Skip("crontab command not available")
+	}
+
+	// Setup: Create a temporary directory and function file
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create test functions directory: %v", err)
+	}
+
+	// Create a test function file
+	testFuncPath := filepath.Join(funcDir, "test_function.py")
+	if err := os.WriteFile(testFuncPath, []byte("print('test')"), 0755); err != nil {
+		t.Fatalf("Failed to create test function file: %v", err)
+	}
+
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
+
+	// Test adding a cron job
+	testSchedule := "0 0 * * *"
+	err := addCron(testFuncPath, testSchedule)
+	if err != nil {
+		t.Fatalf("addCron failed: %v", err)
+	}
+
+	// Verify the cron job was added
+	cmd := exec.Command("crontab", "-l")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to read crontab: %v", err)
+	}
+
+	crontabContent := string(output)
+	expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "cron_test_function.py.log")
+
+	// Check that the cron job contains the function-specific log file
+	if !strings.Contains(crontabContent, expectedLogFile) {
+		t.Errorf("Crontab does not contain expected log file path.\nExpected: %s\nGot: %s", expectedLogFile, crontabContent)
+	}
+
+	// Check that the old generic log file name is NOT present
+	if strings.Contains(crontabContent, "go_cron_output.log") {
+		t.Error("Crontab still contains old generic log file name 'go_cron_output.log'")
+	}
+
+	// Verify the cron job contains the schedule and function path
+	if !strings.Contains(crontabContent, testSchedule) {
+		t.Errorf("Crontab does not contain expected schedule: %s", testSchedule)
+	}
+	if !strings.Contains(crontabContent, testFuncPath) {
+		t.Errorf("Crontab does not contain expected function path: %s", testFuncPath)
+	}
+
+	// Verify logs directory was created
+	logsDir := filepath.Join(tmpHome, ".opencloud", "logs")
+	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
+		t.Error("Logs directory was not created")
+	}
+}
+
+func TestAddCronDuplicatePrevention(t *testing.T) {
+	// Skip test if crontab is not available
+	if _, err := exec.LookPath("crontab"); err != nil {
+		t.Skip("crontab command not available")
+	}
+
+	// Setup: Create a temporary directory and function file
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create test functions directory: %v", err)
+	}
+
+	// Create a test function file
+	testFuncPath := filepath.Join(funcDir, "duplicate_test.py")
+	if err := os.WriteFile(testFuncPath, []byte("print('test')"), 0755); err != nil {
+		t.Fatalf("Failed to create test function file: %v", err)
+	}
+
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
+
+	// Add the same cron job twice
+	testSchedule := "0 0 * * *"
+	err := addCron(testFuncPath, testSchedule)
+	if err != nil {
+		t.Fatalf("First addCron failed: %v", err)
+	}
+
+	err = addCron(testFuncPath, testSchedule)
+	if err != nil {
+		t.Fatalf("Second addCron failed: %v", err)
+	}
+
+	// Verify only one entry exists
+	cmd := exec.Command("crontab", "-l")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to read crontab: %v", err)
+	}
+
+	crontabContent := string(output)
+	lines := strings.Split(strings.TrimSpace(crontabContent), "\n")
+	
+	// Filter out empty lines
+	nonEmptyLines := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmptyLines++
+		}
+	}
+
+	if nonEmptyLines != 1 {
+		t.Errorf("Expected exactly 1 cron job entry, got %d. Crontab content:\n%s", nonEmptyLines, crontabContent)
+	}
+}
+
+func TestAddCronMultipleFunctions(t *testing.T) {
+	// Skip test if crontab is not available
+	if _, err := exec.LookPath("crontab"); err != nil {
+		t.Skip("crontab command not available")
+	}
+
+	// Setup: Create a temporary directory and function files
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create test functions directory: %v", err)
+	}
+
+	// Create multiple test function files
+	functions := []struct {
+		name     string
+		schedule string
+	}{
+		{"backup.py", "0 0 * * *"},
+		{"sync.js", "0 * * * *"},
+		{"cleanup.go", "0 0 * * 0"},
+	}
+
+	for _, fn := range functions {
+		testFuncPath := filepath.Join(funcDir, fn.name)
+		if err := os.WriteFile(testFuncPath, []byte("test"), 0755); err != nil {
+			t.Fatalf("Failed to create test function file %s: %v", fn.name, err)
+		}
+	}
+
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
+
+	// Add all cron jobs
+	for _, fn := range functions {
+		testFuncPath := filepath.Join(funcDir, fn.name)
+		err := addCron(testFuncPath, fn.schedule)
+		if err != nil {
+			t.Fatalf("addCron failed for %s: %v", fn.name, err)
+		}
+	}
+
+	// Verify all cron jobs were added with unique log files
+	cmd := exec.Command("crontab", "-l")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to read crontab: %v", err)
+	}
+
+	crontabContent := string(output)
+
+	// Verify each function has its own log file
+	for _, fn := range functions {
+		expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "cron_"+fn.name+".log")
+		if !strings.Contains(crontabContent, expectedLogFile) {
+			t.Errorf("Crontab does not contain expected log file for %s.\nExpected: %s\nCrontab:\n%s", fn.name, expectedLogFile, crontabContent)
+		}
+	}
+
+	// Verify no generic log file is present
+	if strings.Contains(crontabContent, "go_cron_output.log") {
+		t.Error("Crontab contains old generic log file name 'go_cron_output.log'")
+	}
+}
