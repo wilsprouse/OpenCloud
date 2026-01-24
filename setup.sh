@@ -204,12 +204,53 @@ print_info "Next.js UI service configured with PM2"
 
 cd "$SCRIPT_DIR"
 
+# Step 9a: Install and configure nginx
+print_info "Setting up nginx web server..."
+
+# Check for and install nginx if not present
+if ! command -v nginx &> /dev/null; then
+    print_info "nginx not found. Installing nginx..."
+    sudo apt-get update -qq
+    sudo apt-get install -y nginx
+    print_info "nginx installed successfully"
+else
+    print_info "nginx is already installed"
+fi
+
+# Copy nginx configuration
+print_info "Configuring nginx for OpenCloud..."
+sudo cp "${SCRIPT_DIR}/utils/opencloud.nginx.conf" /etc/nginx/sites-available/opencloud
+
+# Remove default nginx site if it exists
+if [ -f /etc/nginx/sites-enabled/default ]; then
+    sudo rm /etc/nginx/sites-enabled/default
+    print_info "Removed default nginx site"
+fi
+
+# Create symbolic link to enable the site
+sudo ln -sf /etc/nginx/sites-available/opencloud /etc/nginx/sites-enabled/opencloud
+
+# Test nginx configuration
+print_info "Testing nginx configuration..."
+if sudo nginx -t; then
+    print_info "nginx configuration is valid"
+else
+    print_error "nginx configuration test failed"
+    exit 1
+fi
+
+print_info "nginx configured successfully"
+
 # Step 10: Start the services
 print_info "Starting OpenCloud services..."
 
 # Start the Go backend
 sudo systemctl enable opencloud.service
 sudo systemctl start opencloud.service
+
+# Start nginx
+sudo systemctl enable nginx
+sudo systemctl restart nginx
 
 # Wait a moment for services to start
 sleep 2
@@ -232,20 +273,34 @@ else
     exit 1
 fi
 
+if sudo systemctl is-active --quiet nginx; then
+    print_info "nginx web server is running"
+else
+    print_error "nginx service failed to start"
+    sudo systemctl status nginx
+    exit 1
+fi
+
 # Print success message
 echo ""
 print_info "========================================="
 print_info "OpenCloud setup completed successfully!"
 print_info "========================================="
 print_info ""
-print_info "Backend API: http://localhost:3030"
-print_info "Frontend UI: http://localhost:3000"
+print_info "Access OpenCloud via nginx:"
+print_info "  Web Interface: http://123.123.123.123"
+print_info ""
+print_info "Direct service access (for debugging):"
+print_info "  Backend API: http://localhost:3030"
+print_info "  Frontend UI: http://localhost:3000"
 print_info ""
 print_info "Service Management Commands:"
 print_info "  Backend: sudo systemctl {start|stop|restart|status} opencloud.service"
 print_info "  Frontend: pm2 {start|stop|restart|logs} opencloud-ui"
+print_info "  Nginx: sudo systemctl {start|stop|restart|status} nginx"
 print_info ""
 print_info "To view logs:"
 print_info "  Backend: sudo journalctl -u opencloud.service -f"
 print_info "  Frontend: pm2 logs opencloud-ui"
+print_info "  Nginx: sudo tail -f /var/log/nginx/opencloud_access.log"
 print_info "========================================="
