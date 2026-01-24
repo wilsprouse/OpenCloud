@@ -127,7 +127,14 @@ else
     print_info "make not found. Installing make..."
     sudo apt-get update -qq
     sudo apt-get install -y build-essential
-    print_info "make installed successfully"
+    
+    # Verify installation
+    if command -v make &> /dev/null; then
+        print_info "make installed successfully"
+    else
+        print_error "Failed to install make. Please install it manually."
+        exit 1
+    fi
 fi
 
 # Step 4: Install TypeScript dependencies for the UI
