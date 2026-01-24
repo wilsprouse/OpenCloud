@@ -65,7 +65,7 @@ if command -v go &> /dev/null; then
         print_warning "Please update Go manually to version $REQUIRED_VERSION or higher"
     fi
 else
-    print_info "Go not found. Installing Go 1.24.0..."
+    print_info "Go not found. Installing Go 1.24.12..."
     
     # Detect architecture
     ARCH=$(uname -m)
@@ -83,9 +83,13 @@ else
     esac
     
     # Download and install Go
-    GO_VERSION="1.24.0"
+    GO_VERSION="1.24.12"
     GO_TARBALL="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-    wget -q "https://go.dev/dl/${GO_TARBALL}" -O "/tmp/${GO_TARBALL}"
+    print_info "Downloading Go ${GO_VERSION}..."
+    if ! wget "https://go.dev/dl/${GO_TARBALL}" -O "/tmp/${GO_TARBALL}"; then
+        print_error "Failed to download Go. Please check your internet connection."
+        exit 1
+    fi
     
     # Remove old Go installation if exists
     sudo rm -rf /usr/local/go
