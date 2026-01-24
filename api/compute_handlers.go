@@ -381,8 +381,10 @@ func addCron(filePath string, schedule string) error {
 	}
 
 	// Cron job to append
-	//newCronJob := "* * * * * echo \"Hello from Go cron!\" >> /tmp/go_cron.log"
-	newCronJob := fmt.Sprintf("%s %s %s >> %s/go_cron_output.log 2>&1", schedule, detectRuntime(filePath), filePath, fnDir)
+	// Use function-specific log file based on the base filename
+	functionName := filepath.Base(filePath)
+	logFile := filepath.Join(fnDir, fmt.Sprintf("cron_%s.log", functionName))
+	newCronJob := fmt.Sprintf("%s %s %s >> %s 2>&1", schedule, detectRuntime(filePath), filePath, logFile)
 
 	// Prevent duplicate entries
 	if strings.Contains(currentCrontab, newCronJob) {
