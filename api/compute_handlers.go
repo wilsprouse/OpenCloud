@@ -382,8 +382,8 @@ func addCron(filePath string, schedule string) error {
 
 	// Cron job to append
 	// Use function-specific log file based on the base filename
-	functionName := filepath.Base(filePath)
-	logFile := filepath.Join(fnDir, fmt.Sprintf("cron_%s.log", functionName))
+	fileName := filepath.Base(filePath)
+	logFile := filepath.Join(fnDir, fmt.Sprintf("cron_%s.log", fileName))
 	newCronJob := fmt.Sprintf("%s %s %s >> %s 2>&1", schedule, detectRuntime(filePath), filePath, logFile)
 
 	// Prevent duplicate entries

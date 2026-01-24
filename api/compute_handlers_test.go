@@ -8,6 +8,44 @@ import (
 	"testing"
 )
 
+// Helper function to save and restore crontab state for tests
+func setupCrontabTest(t *testing.T) (cleanup func()) {
+	// Save original crontab
+	origCrontabCmd := exec.Command("crontab", "-l")
+	origCrontabOutput, _ := origCrontabCmd.CombinedOutput()
+	origCrontab := string(origCrontabOutput)
+	
+	// Clear crontab for test
+	cmd := exec.Command("crontab", "-r")
+	if err := cmd.Run(); err != nil {
+		// Ignore error if crontab doesn't exist
+		if !strings.Contains(err.Error(), "no crontab") {
+			t.Logf("Warning: Failed to clear crontab: %v", err)
+		}
+	}
+	
+	// Return cleanup function
+	return func() {
+		// Restore original crontab
+		if strings.Contains(origCrontab, "no crontab for") || origCrontab == "" {
+			// Clear crontab
+			cmd := exec.Command("crontab", "-r")
+			if err := cmd.Run(); err != nil {
+				// Ignore error if crontab doesn't exist
+				if !strings.Contains(err.Error(), "no crontab") {
+					t.Logf("Warning: Failed to clear crontab during cleanup: %v", err)
+				}
+			}
+		} else {
+			cmd := exec.Command("crontab", "-")
+			cmd.Stdin = strings.NewReader(origCrontab)
+			if err := cmd.Run(); err != nil {
+				t.Logf("Warning: Failed to restore crontab: %v", err)
+			}
+		}
+	}
+}
+
 func TestAddCron(t *testing.T) {
 	// Skip test if crontab is not available
 	if _, err := exec.LookPath("crontab"); err != nil {
@@ -31,24 +69,9 @@ func TestAddCron(t *testing.T) {
 		t.Fatalf("Failed to create test function file: %v", err)
 	}
 
-	// Save original crontab
-	origCrontabCmd := exec.Command("crontab", "-l")
-	origCrontabOutput, _ := origCrontabCmd.CombinedOutput()
-	origCrontab := string(origCrontabOutput)
-	defer func() {
-		// Restore original crontab
-		if strings.Contains(origCrontab, "no crontab for") || origCrontab == "" {
-			// Clear crontab
-			exec.Command("crontab", "-r").Run()
-		} else {
-			cmd := exec.Command("crontab", "-")
-			cmd.Stdin = strings.NewReader(origCrontab)
-			cmd.Run()
-		}
-	}()
-
-	// Clear crontab for test
-	exec.Command("crontab", "-r").Run()
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
 
 	// Test adding a cron job
 	testSchedule := "0 0 * * *"
@@ -115,23 +138,9 @@ func TestAddCronDuplicatePrevention(t *testing.T) {
 		t.Fatalf("Failed to create test function file: %v", err)
 	}
 
-	// Save original crontab
-	origCrontabCmd := exec.Command("crontab", "-l")
-	origCrontabOutput, _ := origCrontabCmd.CombinedOutput()
-	origCrontab := string(origCrontabOutput)
-	defer func() {
-		// Restore original crontab
-		if strings.Contains(origCrontab, "no crontab for") || origCrontab == "" {
-			exec.Command("crontab", "-r").Run()
-		} else {
-			cmd := exec.Command("crontab", "-")
-			cmd.Stdin = strings.NewReader(origCrontab)
-			cmd.Run()
-		}
-	}()
-
-	// Clear crontab for test
-	exec.Command("crontab", "-r").Run()
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
 
 	// Add the same cron job twice
 	testSchedule := "0 0 * * *"
@@ -202,23 +211,9 @@ func TestAddCronMultipleFunctions(t *testing.T) {
 		}
 	}
 
-	// Save original crontab
-	origCrontabCmd := exec.Command("crontab", "-l")
-	origCrontabOutput, _ := origCrontabCmd.CombinedOutput()
-	origCrontab := string(origCrontabOutput)
-	defer func() {
-		// Restore original crontab
-		if strings.Contains(origCrontab, "no crontab for") || origCrontab == "" {
-			exec.Command("crontab", "-r").Run()
-		} else {
-			cmd := exec.Command("crontab", "-")
-			cmd.Stdin = strings.NewReader(origCrontab)
-			cmd.Run()
-		}
-	}()
-
-	// Clear crontab for test
-	exec.Command("crontab", "-r").Run()
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
 
 	// Add all cron jobs
 	for _, fn := range functions {
