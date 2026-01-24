@@ -119,26 +119,44 @@ else
     print_info "Node.js installed successfully"
 fi
 
-# Step 3: Install TypeScript dependencies for the UI
+# Step 3: Check for and install make if not present
+print_info "Checking for make installation..."
+if command -v make &> /dev/null; then
+    print_info "make is already installed"
+else
+    print_info "make not found. Installing make..."
+    sudo apt-get update -qq
+    sudo apt-get install -y build-essential
+    
+    # Verify installation
+    if command -v make &> /dev/null; then
+        print_info "make installed successfully"
+    else
+        print_error "Failed to install make. Please install it manually."
+        exit 1
+    fi
+fi
+
+# Step 4: Install TypeScript dependencies for the UI
 print_info "Installing TypeScript dependencies in ui/ directory..."
 cd "${SCRIPT_DIR}/ui"
 npm install
 print_info "TypeScript dependencies installed successfully"
 
-# Step 4: Compile the Go app into a binary
+# Step 5: Compile the Go app into a binary
 print_info "Building Go backend..."
 cd "$SCRIPT_DIR"
 make build
 print_info "Go backend built successfully"
 
-# Step 5: Build the Next.js UI for production
+# Step 6: Build the Next.js UI for production
 print_info "Building Next.js UI for production..."
 cd "${SCRIPT_DIR}/ui"
 npm run build
 print_info "Next.js UI built successfully"
 cd "$SCRIPT_DIR"
 
-# Step 6: Move Go binary to systemd service location
+# Step 7: Move Go binary to systemd service location
 print_info "Setting up Go backend binary..."
 # Determine installation directory - use /opt for system-wide install or user's home for user install
 INSTALL_DIR="${OPENCLOUD_INSTALL_DIR:-/home/$USER/OpenCloud}"
@@ -149,7 +167,7 @@ sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
 sudo chmod +x "$INSTALL_DIR/bin/opencloud"
 print_info "Go binary copied to $INSTALL_DIR/bin/opencloud"
 
-# Step 7: Setup systemd service for the Go backend
+# Step 8: Setup systemd service for the Go backend
 print_info "Setting up systemd service for OpenCloud backend..."
 # Create a temporary service file with updated paths
 TEMP_SERVICE=$(mktemp)
@@ -166,7 +184,7 @@ print_info "Systemd service configured for $INSTALL_DIR"
 sudo systemctl daemon-reload
 print_info "Systemd service configured"
 
-# Step 8: Setup PM2 for Next.js UI (production mode)
+# Step 9: Setup PM2 for Next.js UI (production mode)
 print_info "Setting up Next.js UI service..."
 cd "${SCRIPT_DIR}/ui"
 
@@ -186,7 +204,7 @@ print_info "Next.js UI service configured with PM2"
 
 cd "$SCRIPT_DIR"
 
-# Step 9: Start the services
+# Step 10: Start the services
 print_info "Starting OpenCloud services..."
 
 # Start the Go backend
