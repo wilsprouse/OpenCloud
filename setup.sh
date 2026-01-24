@@ -2,6 +2,14 @@
 
 # This Script installs the necessary software to host the bare minimum of OpenCloud: The User Interface.
 # Consistent with OpenCloud's ideals, the subdependencies for each service are installed when a user enables the service on their cluster
+#
+# Requirements:
+# - Ubuntu/Debian-based Linux distribution
+# - sudo access
+# - Internet connection
+#
+# Optional Environment Variables:
+# - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/$USER/OpenCloud)
 
 set -e  # Exit on any error
 
@@ -29,6 +37,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 print_info "Starting OpenCloud setup..."
+
+# Check OS compatibility
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    if [[ "$ID" != "ubuntu" && "$ID" != "debian" && "$ID_LIKE" != *"ubuntu"* && "$ID_LIKE" != *"debian"* ]]; then
+        print_warning "This script is designed for Ubuntu/Debian systems."
+        print_warning "Detected OS: $ID. Installation may fail or require modifications."
+        read -p "Continue anyway? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+fi
 
 # Step 1: Check for and install Go if not present
 print_info "Checking for Go installation..."
@@ -128,21 +150,27 @@ cd "$SCRIPT_DIR"
 
 # Step 7: Move Go binary to systemd service location
 print_info "Setting up Go backend binary..."
+# Determine installation directory - use /opt for system-wide install or user's home for user install
+INSTALL_DIR="${OPENCLOUD_INSTALL_DIR:-/home/$USER/OpenCloud}"
+print_info "Installing to: $INSTALL_DIR"
 # Create the target directory structure
-sudo mkdir -p /home/ubuntu/OpenCloud/bin
-sudo cp "${SCRIPT_DIR}/bin/app" /home/ubuntu/OpenCloud/bin/opencloud
-sudo chmod +x /home/ubuntu/OpenCloud/bin/opencloud
-print_info "Go binary copied to /home/ubuntu/OpenCloud/bin/opencloud"
+sudo mkdir -p "$INSTALL_DIR/bin"
+sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
+sudo chmod +x "$INSTALL_DIR/bin/opencloud"
+print_info "Go binary copied to $INSTALL_DIR/bin/opencloud"
 
 # Step 8: Setup systemd service for the Go backend
 print_info "Setting up systemd service for OpenCloud backend..."
-sudo cp "${SCRIPT_DIR}/utils/opencloud.service" /etc/systemd/system/opencloud.service
+# Create a temporary service file with updated paths
+TEMP_SERVICE=$(mktemp)
+sed "s|/home/ubuntu/OpenCloud|$INSTALL_DIR|g" "${SCRIPT_DIR}/utils/opencloud.service" | \
+sed "s|User=ubuntu|User=$USER|g" | \
+sed "s|Group=ubuntu|Group=$USER|g" > "$TEMP_SERVICE"
 
-# Update the service file to use correct paths if running from different location
-if [ "$SCRIPT_DIR" != "/home/ubuntu/OpenCloud" ]; then
-    print_warning "Script running from $SCRIPT_DIR instead of /home/ubuntu/OpenCloud"
-    print_warning "Service files may need manual adjustment"
-fi
+sudo cp "$TEMP_SERVICE" /etc/systemd/system/opencloud.service
+rm "$TEMP_SERVICE"
+
+print_info "Systemd service configured for $INSTALL_DIR"
 
 # Reload systemd to recognize the new service
 sudo systemctl daemon-reload
@@ -163,7 +191,7 @@ pm2 stop opencloud-ui 2>/dev/null || true
 pm2 delete opencloud-ui 2>/dev/null || true
 pm2 start npm --name "opencloud-ui" -- start
 pm2 save
-sudo pm2 startup systemd -u $USER --hp $HOME
+sudo pm2 startup systemd -u "$USER" --hp "$HOME"
 print_info "Next.js UI service configured with PM2"
 
 cd "$SCRIPT_DIR"
