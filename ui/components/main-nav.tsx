@@ -30,7 +30,7 @@ export function MainNav() {
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 className="min-w-[180px] rounded-md bg-white p-1 shadow-lg ring-1 ring-black/5 dark:bg-neutral-900"
-                sideOffset={8}
+                sideOffset={17}
               >
                 <DropdownMenu.Item asChild>
                   <Link
@@ -64,7 +64,7 @@ export function MainNav() {
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 className="min-w-[180px] rounded-md bg-white p-1 shadow-lg ring-1 ring-black/5 dark:bg-neutral-900"
-                sideOffset={8}
+                sideOffset={17}
               >
                 <DropdownMenu.Item asChild>
                   <Link
@@ -75,10 +75,6 @@ export function MainNav() {
                     Blob Storage
                   </Link>
                 </DropdownMenu.Item>
-                <DropdownMenu.Item className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                  <HardDrive className="h-4 w-4" />
-                  Databases (Coming Soon)
-                </DropdownMenu.Item>
                 <DropdownMenu.Item asChild>
                   <Link
                     href="/storage/containers"
@@ -87,6 +83,10 @@ export function MainNav() {
                     <HardDrive className="h-4 w-4" />
                     Container Storage
                   </Link>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                  <HardDrive className="h-4 w-4" />
+                  Databases (Coming Soon)
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
@@ -102,7 +102,7 @@ export function MainNav() {
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 className="min-w-[180px] rounded-md bg-white p-1 shadow-lg ring-1 ring-black/5 dark:bg-neutral-900"
-                sideOffset={8}
+                sideOffset={17}
               >
                 <DropdownMenu.Item asChild>
                   <Link

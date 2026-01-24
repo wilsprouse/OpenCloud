@@ -113,7 +113,7 @@ export default function BlobStorage() {
 
   return (
     <DashboardShell>
-      <DashboardHeader heading="Blob Storage" text="Manage your containers and objects in cloud storage">
+      <DashboardHeader heading="Blob Storage" text="Manage your containers and objects">
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={fetchContainers} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
