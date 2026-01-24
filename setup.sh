@@ -128,7 +128,8 @@ print_info "TypeScript dependencies installed successfully"
 # Step 4: Compile the Go app into a binary
 print_info "Building Go backend..."
 cd "$SCRIPT_DIR"
-make build
+mkdir -p bin
+go build -o bin/app
 print_info "Go backend built successfully"
 
 # Step 5: Build the Next.js UI for production
