@@ -125,7 +125,7 @@ if command -v pnpm &> /dev/null; then
     print_info "pnpm is already installed (version: $PNPM_VERSION)"
 else
     print_info "pnpm not found. Installing pnpm..."
-    npm install -g pnpm
+    sudo npm install -g pnpm
     print_info "pnpm installed successfully"
 fi
 
