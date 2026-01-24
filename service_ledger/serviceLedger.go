@@ -504,3 +504,124 @@ func SyncPipelinesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
+
+// detectRuntime determines the runtime based on the file extension
+func detectRuntime(filename string) string {
+	switch filepath.Ext(filename) {
+	case ".py":
+		return "python"
+	case ".js":
+		return "nodejs"
+	case ".go":
+		return "go"
+	case ".rb":
+		return "ruby"
+	default:
+		return "unknown"
+	}
+}
+
+// SyncFunctions scans the ~/.opencloud/functions/ directory and updates the service ledger
+// with any functions that exist on disk but are not yet tracked in the ledger
+func SyncFunctions() error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	// Get home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	functionDir := filepath.Join(home, ".opencloud", "functions")
+
+	// Check if directory exists
+	if _, err := os.Stat(functionDir); os.IsNotExist(err) {
+		// Directory doesn't exist, nothing to sync
+		return nil
+	}
+
+	// Read all files in the functions directory
+	entries, err := os.ReadDir(functionDir)
+	if err != nil {
+		return err
+	}
+
+	// Read current ledger
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	// Get current function entries
+	status, exists := ledger["Functions"]
+	if !exists {
+		status = ServiceStatus{Enabled: false, Functions: make(map[string]FunctionEntry)}
+	} else if status.Functions == nil {
+		status.Functions = make(map[string]FunctionEntry)
+	}
+
+	// Process each function file
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		functionName := entry.Name()
+
+		// Read the file content
+		functionPath := filepath.Join(functionDir, functionName)
+		functionData, err := os.ReadFile(functionPath)
+		if err != nil {
+			fmt.Printf("Warning: Failed to read function file %s: %v\n", functionName, err)
+			continue // Skip files that can't be read
+		}
+
+		// Check if this function already exists in the ledger
+		existingEntry, exists := status.Functions[functionName]
+
+		// If it exists, preserve its existing metadata and only update content if changed
+		if exists {
+			// Only update if content has changed
+			if existingEntry.Content != string(functionData) {
+				existingEntry.Content = string(functionData)
+				status.Functions[functionName] = existingEntry
+			}
+			// If content is the same, don't update anything to preserve logs and metadata
+		} else {
+			// New function - add it to the ledger
+			status.Functions[functionName] = FunctionEntry{
+				Runtime:  detectRuntime(functionName),
+				Trigger:  "",
+				Schedule: "",
+				Content:  string(functionData),
+				Logs:     []FunctionLog{},
+			}
+		}
+	}
+
+	// Update the ledger
+	ledger["Functions"] = status
+
+	return WriteServiceLedger(ledger)
+}
+
+// SyncFunctionsHandler is an HTTP handler that syncs functions from disk to the service ledger
+func SyncFunctionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := SyncFunctions(); err != nil {
+		http.Error(w, "Failed to sync functions: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"message": "Functions synced successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}

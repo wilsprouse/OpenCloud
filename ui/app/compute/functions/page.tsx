@@ -103,6 +103,10 @@ export default function FunctionsPage() {
   const fetchFunctions = async () => {
     setLoading(true)
     try {
+      // Sync functions from disk to service ledger first
+      await client.post("/sync-functions")
+      
+      // Then fetch the functions
       const res = await client.get<FunctionItem[]>("/list-functions")
       setFunctions(res.data || [])
     } catch (err) {
