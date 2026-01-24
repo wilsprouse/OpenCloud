@@ -57,16 +57,16 @@ print_info "Checking for Go installation..."
 if command -v go &> /dev/null; then
     GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
     print_info "Go is already installed (version: $GO_VERSION)"
-    
+
     # Check if Go version meets minimum requirement (1.24.0)
-    REQUIRED_VERSION="1.24.0"
+    REQUIRED_VERSION="1.24.12"
     if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$GO_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
         print_warning "Go version $GO_VERSION is older than required version $REQUIRED_VERSION"
         print_warning "Please update Go manually to version $REQUIRED_VERSION or higher"
     fi
 else
     print_info "Go not found. Installing Go 1.24.12..."
-    
+
     # Detect architecture
     ARCH=$(uname -m)
     case $ARCH in
@@ -81,29 +81,26 @@ else
             exit 1
             ;;
     esac
-    
+
     # Download and install Go
     GO_VERSION="1.24.12"
     GO_TARBALL="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-    print_info "Downloading Go ${GO_VERSION}..."
-    if ! wget "https://go.dev/dl/${GO_TARBALL}" -O "/tmp/${GO_TARBALL}"; then
-        print_error "Failed to download Go. Please check your internet connection."
-        exit 1
-    fi
-    
+    wget -q "https://go.dev/dl/${GO_TARBALL}" -O "/tmp/${GO_TARBALL}"
+
     # Remove old Go installation if exists
     sudo rm -rf /usr/local/go
-    
+
     # Extract new Go
     sudo tar -C /usr/local -xzf "/tmp/${GO_TARBALL}"
     rm "/tmp/${GO_TARBALL}"
-    
+
     # Add Go to PATH if not already there
     if ! grep -q "/usr/local/go/bin" ~/.bashrc; then
         echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
     fi
     export PATH=$PATH:/usr/local/go/bin
-    
+    source ~/.bashrc
+
     print_info "Go ${GO_VERSION} installed successfully"
 fi
 
