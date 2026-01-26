@@ -272,17 +272,17 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Warning: Failed to retrieve function entry from service ledger: %v\n", err)
 	}
 
-	// Remove cron job if the function has a cron trigger
+	// Remove the function file first
+	if err := os.Remove(fnPath); err != nil {
+		http.Error(w, "Failed to delete function: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// After successful file deletion, remove cron job if the function has a cron trigger
 	if functionEntry != nil && functionEntry.Trigger == "cron" {
 		if err := removeCron(fnPath); err != nil {
 			fmt.Printf("Warning: Failed to remove cron job: %v\n", err)
 		}
-	}
-
-	// Remove the function file
-	if err := os.Remove(fnPath); err != nil {
-		http.Error(w, "Failed to delete function: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	// Remove log files
@@ -468,8 +468,11 @@ func removeCron(filePath string) error {
 	removed := false
 
 	for _, line := range lines {
-		// Skip lines that contain the filePath (these are the cron jobs for this function)
-		if strings.Contains(line, filePath) {
+		// Skip lines that contain the filePath as a command to execute
+		// Check both " {filePath} " (with spaces) and " {filePath} >>" (followed by output redirection)
+		// to ensure we're matching the actual command, not just a substring
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine != "" && (strings.Contains(line, " "+filePath+" ") || strings.Contains(line, " "+filePath+" >>")) {
 			removed = true
 			fmt.Printf("Removing cron job: %s\n", line)
 			continue
