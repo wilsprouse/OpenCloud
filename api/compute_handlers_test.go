@@ -246,3 +246,182 @@ func TestAddCronMultipleFunctions(t *testing.T) {
 		t.Error("Crontab contains old generic log file name 'go_cron_output.log'")
 	}
 }
+
+func TestRemoveCron(t *testing.T) {
+	// Skip test if crontab is not available
+	if _, err := exec.LookPath("crontab"); err != nil {
+		t.Skip("crontab command not available")
+	}
+
+	// Setup: Create a temporary directory and function file
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create test functions directory: %v", err)
+	}
+
+	// Create a test function file
+	testFuncPath := filepath.Join(funcDir, "test_function.py")
+	if err := os.WriteFile(testFuncPath, []byte("print('test')"), 0755); err != nil {
+		t.Fatalf("Failed to create test function file: %v", err)
+	}
+
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
+
+	// First add a cron job
+	testSchedule := "0 0 * * *"
+	err := addCron(testFuncPath, testSchedule)
+	if err != nil {
+		t.Fatalf("addCron failed: %v", err)
+	}
+
+	// Verify the cron job was added
+	cmd := exec.Command("crontab", "-l")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to read crontab: %v", err)
+	}
+	if !strings.Contains(string(output), testFuncPath) {
+		t.Fatal("Cron job was not added successfully")
+	}
+
+	// Now remove the cron job
+	err = removeCron(testFuncPath)
+	if err != nil {
+		t.Fatalf("removeCron failed: %v", err)
+	}
+
+	// Verify the cron job was removed
+	cmd = exec.Command("crontab", "-l")
+	output, err = cmd.CombinedOutput()
+	crontabContent := string(output)
+	
+	// Check if crontab is empty or doesn't contain the function
+	if err == nil && strings.Contains(crontabContent, testFuncPath) {
+		t.Errorf("Cron job was not removed. Crontab content:\n%s", crontabContent)
+	}
+}
+
+func TestRemoveCronMultipleFunctions(t *testing.T) {
+	// Skip test if crontab is not available
+	if _, err := exec.LookPath("crontab"); err != nil {
+		t.Skip("crontab command not available")
+	}
+
+	// Setup: Create a temporary directory and function files
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create test functions directory: %v", err)
+	}
+
+	// Create multiple test function files
+	functions := []struct {
+		name     string
+		schedule string
+	}{
+		{"backup.py", "0 0 * * *"},
+		{"sync.js", "0 * * * *"},
+		{"cleanup.go", "0 0 * * 0"},
+	}
+
+	funcPaths := make([]string, len(functions))
+	for i, fn := range functions {
+		testFuncPath := filepath.Join(funcDir, fn.name)
+		funcPaths[i] = testFuncPath
+		if err := os.WriteFile(testFuncPath, []byte("test"), 0755); err != nil {
+			t.Fatalf("Failed to create test function file %s: %v", fn.name, err)
+		}
+	}
+
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
+
+	// Add all cron jobs
+	for i, fn := range functions {
+		err := addCron(funcPaths[i], fn.schedule)
+		if err != nil {
+			t.Fatalf("addCron failed for %s: %v", fn.name, err)
+		}
+	}
+
+	// Verify all cron jobs were added
+	cmd := exec.Command("crontab", "-l")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to read crontab: %v", err)
+	}
+	for _, path := range funcPaths {
+		if !strings.Contains(string(output), path) {
+			t.Fatalf("Cron job for %s was not added", path)
+		}
+	}
+
+	// Remove one cron job (the middle one)
+	err = removeCron(funcPaths[1])
+	if err != nil {
+		t.Fatalf("removeCron failed: %v", err)
+	}
+
+	// Verify only the second function's cron job was removed
+	cmd = exec.Command("crontab", "-l")
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to read crontab: %v", err)
+	}
+	crontabContent := string(output)
+
+	// First and third should still exist
+	if !strings.Contains(crontabContent, funcPaths[0]) {
+		t.Errorf("Cron job for %s was incorrectly removed", funcPaths[0])
+	}
+	if !strings.Contains(crontabContent, funcPaths[2]) {
+		t.Errorf("Cron job for %s was incorrectly removed", funcPaths[2])
+	}
+
+	// Second should be removed
+	if strings.Contains(crontabContent, funcPaths[1]) {
+		t.Errorf("Cron job for %s was not removed. Crontab content:\n%s", funcPaths[1], crontabContent)
+	}
+}
+
+func TestRemoveCronNonExistent(t *testing.T) {
+	// Skip test if crontab is not available
+	if _, err := exec.LookPath("crontab"); err != nil {
+		t.Skip("crontab command not available")
+	}
+
+	// Setup: Create a temporary directory
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create test functions directory: %v", err)
+	}
+
+	testFuncPath := filepath.Join(funcDir, "nonexistent.py")
+
+	// Setup and cleanup crontab
+	cleanup := setupCrontabTest(t)
+	defer cleanup()
+
+	// Try to remove a cron job that doesn't exist
+	err := removeCron(testFuncPath)
+	if err != nil {
+		t.Fatalf("removeCron should not fail for non-existent cron job: %v", err)
+	}
+}
