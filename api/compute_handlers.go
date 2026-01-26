@@ -272,8 +272,8 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Warning: Failed to retrieve function entry from service ledger: %v\n", err)
 	}
 
-	// Remove cron job if the function has a trigger
-	if functionEntry != nil && functionEntry.Trigger != "" {
+	// Remove cron job if the function has a cron trigger
+	if functionEntry != nil && functionEntry.Trigger == "cron" {
 		if err := removeCron(fnPath); err != nil {
 			fmt.Printf("Warning: Failed to remove cron job: %v\n", err)
 		}
@@ -474,8 +474,8 @@ func removeCron(filePath string) error {
 			fmt.Printf("Removing cron job: %s\n", line)
 			continue
 		}
-		// Keep all other lines (including empty lines for proper formatting)
-		if line != "" || len(updatedLines) > 0 {
+		// Keep all other non-empty lines
+		if line != "" {
 			updatedLines = append(updatedLines, line)
 		}
 	}
