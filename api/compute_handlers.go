@@ -455,7 +455,7 @@ func removeCron(filePath string) error {
 			return nil // No crontab means nothing to remove
 		} else {
 			// Real error → stop
-			return fmt.Errorf("unexpected crontab error: %v\n%s", err, output)
+			return fmt.Errorf("Unexpected crontab error: %v\n%s", err, output)
 		}
 	}
 
