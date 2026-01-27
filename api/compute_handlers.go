@@ -288,8 +288,10 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 	// Remove log files
 	logsDir := filepath.Join(home, ".opencloud", "logs")
 	
-	// Remove execution log file (~/.opencloud/logs/functions/{functionName}.log)
-	executionLogPath := filepath.Join(logsDir, "functions", fnName+".log")
+	// Remove execution log file (~/.opencloud/logs/functions/{baseName}.log)
+	// Strip extension from function name to match how logs are created
+	baseName := strings.TrimSuffix(fnName, filepath.Ext(fnName))
+	executionLogPath := filepath.Join(logsDir, "functions", baseName+".log")
 	if err := os.Remove(executionLogPath); err != nil && !os.IsNotExist(err) {
 		fmt.Printf("Warning: Failed to remove execution log file: %v\n", err)
 	}

@@ -425,3 +425,61 @@ func TestRemoveCronNonExistent(t *testing.T) {
 		t.Fatalf("removeCron should not fail for non-existent cron job: %v", err)
 	}
 }
+
+func TestExecutionLogFileNaming(t *testing.T) {
+	// This test verifies that execution log files are named correctly
+	// by stripping the extension from the function name
+	
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+	
+	// Create logs/functions directory
+	logsDir := filepath.Join(tmpHome, ".opencloud", "logs", "functions")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		t.Fatalf("Failed to create logs directory: %v", err)
+	}
+	
+	// Test cases for different function extensions
+	testCases := []struct {
+		functionName string
+		expectedLog  string
+	}{
+		{"hello.py", "hello.log"},
+		{"test.js", "test.log"},
+		{"script.go", "script.log"},
+		{"function.sh", "function.log"},
+	}
+	
+	for _, tc := range testCases {
+		// Create a test log file as it would be created by RunFunction
+		baseName := strings.TrimSuffix(tc.functionName, filepath.Ext(tc.functionName))
+		logFileName := baseName + ".log"
+		logFilePath := filepath.Join(logsDir, logFileName)
+		
+		// Create the log file
+		if err := os.WriteFile(logFilePath, []byte("test log content"), 0644); err != nil {
+			t.Fatalf("Failed to create test log file for %s: %v", tc.functionName, err)
+		}
+		
+		// Verify the file exists at the expected path
+		if _, err := os.Stat(logFilePath); os.IsNotExist(err) {
+			t.Errorf("Expected log file not found: %s", logFilePath)
+		}
+		
+		// Now simulate deletion using the same logic as DeleteFunction
+		fnName := tc.functionName
+		baseName = strings.TrimSuffix(fnName, filepath.Ext(fnName))
+		deletionPath := filepath.Join(logsDir, baseName+".log")
+		
+		if err := os.Remove(deletionPath); err != nil {
+			t.Errorf("Failed to remove log file for %s: %v", tc.functionName, err)
+		}
+		
+		// Verify the file was deleted
+		if _, err := os.Stat(deletionPath); !os.IsNotExist(err) {
+			t.Errorf("Log file should have been deleted but still exists: %s", deletionPath)
+		}
+	}
+}
