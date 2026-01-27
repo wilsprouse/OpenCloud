@@ -266,9 +266,40 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get function entry from service ledger to check if it has a cron trigger
+	functionEntry, err := service_ledger.GetFunctionEntry(fnName)
+	if err != nil {
+		fmt.Printf("Warning: Failed to retrieve function entry from service ledger: %v\n", err)
+	}
+
+	// Remove the function file first
 	if err := os.Remove(fnPath); err != nil {
 		http.Error(w, "Failed to delete function: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// After successful file deletion, remove cron job if the function has a cron trigger
+	if functionEntry != nil && functionEntry.Trigger == "cron" {
+		if err := removeCron(fnPath); err != nil {
+			fmt.Printf("Warning: Failed to remove cron job: %v\n", err)
+		}
+	}
+
+	// Remove log files
+	logsDir := filepath.Join(home, ".opencloud", "logs")
+	
+	// Remove execution log file (~/.opencloud/logs/functions/{baseName}.log)
+	// Strip extension from function name to match how logs are created
+	baseName := strings.TrimSuffix(fnName, filepath.Ext(fnName))
+	executionLogPath := filepath.Join(logsDir, "functions", baseName+".log")
+	if err := os.Remove(executionLogPath); err != nil && !os.IsNotExist(err) {
+		fmt.Printf("Warning: Failed to remove execution log file: %v\n", err)
+	}
+
+	// Remove cron log file (~/.opencloud/logs/functions/{functionName}.log)
+	cronLogPath := filepath.Join(logsDir, "functions", fmt.Sprintf("%s.log", fnName))
+	if err := os.Remove(cronLogPath); err != nil && !os.IsNotExist(err) {
+		fmt.Printf("Warning: Failed to remove cron log file: %v\n", err)
 	}
 
 	// Delete function entry from service ledger
@@ -374,7 +405,7 @@ func addCron(filePath string, schedule string) error {
 		return nil
 	}
 
-	fnDir := filepath.Join(home, ".opencloud", "logs")
+	fnDir := filepath.Join(home, ".opencloud", "logs", "functions")
 
 	if err := os.MkdirAll(fnDir, 0755); err != nil {
 		return fmt.Errorf("failed to create logs directory: %v", err)
@@ -382,8 +413,15 @@ func addCron(filePath string, schedule string) error {
 
 	// Cron job to append
 	// Use function-specific log file based on the base filename
-	fileName := filepath.Base(filePath)
-	logFile := filepath.Join(fnDir, fmt.Sprintf("cron_%s.log", fileName))
+	//fileName := filepath.Base(filePath)
+	//logFile := filepath.Join(fnDir, fmt.Sprintf("%s.log", fileName))
+	//baseName := strings.TrimSuffix(fileName, logFile.Ext(fileName))
+	//fmt.Sprint("%s", baseName)
+
+	fileName := filepath.Base(filePath)                 // hello.py
+	baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName)) // hello
+	logFile := filepath.Join(fnDir, baseName + ".log")  // hello.log
+
 	newCronJob := fmt.Sprintf("%s %s %s >> %s 2>&1", schedule, detectRuntime(filePath), filePath, logFile)
 
 	// Prevent duplicate entries
@@ -409,6 +447,73 @@ func addCron(filePath string, schedule string) error {
 	}
 
 	fmt.Println("Crontab updated successfully.")
+	return nil
+}
+
+// removeCron removes a cron job entry for the given file path from the user's crontab
+func removeCron(filePath string) error {
+	// Get current crontab
+	cmd := exec.Command("crontab", "-l")
+	output, err := cmd.CombinedOutput()
+	out := string(output)
+
+	// Handle case where user has no crontab
+	if err != nil {
+		if strings.Contains(out, "no crontab for") {
+			fmt.Println("No crontab found — nothing to remove.")
+			return nil // No crontab means nothing to remove
+		} else {
+			// Real error → stop
+			return fmt.Errorf("Unexpected crontab error: %v\n%s", err, output)
+		}
+	}
+
+	currentCrontab := out
+
+	// Build the expected cron job pattern to remove
+	// We need to match any line that contains the filePath
+	lines := strings.Split(currentCrontab, "\n")
+	var updatedLines []string
+	removed := false
+
+	for _, line := range lines {
+		// Skip lines that contain the filePath as a command to execute
+		// Check both " {filePath} " (with spaces) and " {filePath} >>" (followed by output redirection)
+		// to ensure we're matching the actual command, not just a substring
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine != "" && (strings.Contains(line, " "+filePath+" ") || strings.Contains(line, " "+filePath+" >>")) {
+			removed = true
+			fmt.Printf("Removing cron job: %s\n", line)
+			continue
+		}
+		// Keep all other non-empty lines
+		if line != "" {
+			updatedLines = append(updatedLines, line)
+		}
+	}
+
+	if !removed {
+		fmt.Println("No matching cron job found — nothing to remove.")
+		return nil
+	}
+
+	// Build updated crontab
+	updatedCrontab := strings.Join(updatedLines, "\n")
+	// Ensure there's a trailing newline if content exists
+	if len(updatedLines) > 0 && !strings.HasSuffix(updatedCrontab, "\n") {
+		updatedCrontab += "\n"
+	}
+
+	// Write updated crontab
+	cmd = exec.Command("crontab", "-")
+	cmd.Stdin = strings.NewReader(updatedCrontab)
+	output, err = cmd.CombinedOutput()
+
+	if err != nil {
+		return fmt.Errorf("error updating crontab: %v\n%s", err, output)
+	}
+
+	fmt.Println("Cron job removed successfully.")
 	return nil
 }
 
