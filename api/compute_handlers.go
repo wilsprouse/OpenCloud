@@ -296,8 +296,8 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Warning: Failed to remove execution log file: %v\n", err)
 	}
 
-	// Remove cron log file (~/.opencloud/logs/functions/cron_{functionName}.log)
-	cronLogPath := filepath.Join(logsDir, "functions", fmt.Sprintf("cron_%s.log", fnName))
+	// Remove cron log file (~/.opencloud/logs/functions/{functionName}.log)
+	cronLogPath := filepath.Join(logsDir, "functions", fmt.Sprintf("%s.log", fnName))
 	if err := os.Remove(cronLogPath); err != nil && !os.IsNotExist(err) {
 		fmt.Printf("Warning: Failed to remove cron log file: %v\n", err)
 	}
@@ -414,7 +414,7 @@ func addCron(filePath string, schedule string) error {
 	// Cron job to append
 	// Use function-specific log file based on the base filename
 	fileName := filepath.Base(filePath)
-	logFile := filepath.Join(fnDir, fmt.Sprintf("cron_%s.log", fileName))
+	logFile := filepath.Join(fnDir, fmt.Sprintf("%s.log", fileName))
 	newCronJob := fmt.Sprintf("%s %s %s >> %s 2>&1", schedule, detectRuntime(filePath), filePath, logFile)
 
 	// Prevent duplicate entries
