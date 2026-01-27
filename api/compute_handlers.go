@@ -413,8 +413,15 @@ func addCron(filePath string, schedule string) error {
 
 	// Cron job to append
 	// Use function-specific log file based on the base filename
-	fileName := filepath.Base(filePath)
-	logFile := filepath.Join(fnDir, fmt.Sprintf("%s.log", fileName))
+	//fileName := filepath.Base(filePath)
+	//logFile := filepath.Join(fnDir, fmt.Sprintf("%s.log", fileName))
+	//baseName := strings.TrimSuffix(fileName, logFile.Ext(fileName))
+	//fmt.Sprint("%s", baseName)
+
+	fileName := filepath.Base(filePath)                 // hello.py
+	baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName)) // hello
+	logFile := filepath.Join(fnDir, baseName + ".log")  // hello.log
+
 	newCronJob := fmt.Sprintf("%s %s %s >> %s 2>&1", schedule, detectRuntime(filePath), filePath, logFile)
 
 	// Prevent duplicate entries
