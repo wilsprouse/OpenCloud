@@ -296,8 +296,8 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Warning: Failed to remove execution log file: %v\n", err)
 	}
 
-	// Remove cron log file (~/.opencloud/logs/cron_{functionName}.log)
-	cronLogPath := filepath.Join(logsDir, fmt.Sprintf("cron_%s.log", fnName))
+	// Remove cron log file (~/.opencloud/logs/functions/cron_{functionName}.log)
+	cronLogPath := filepath.Join(logsDir, "functions", fmt.Sprintf("cron_%s.log", fnName))
 	if err := os.Remove(cronLogPath); err != nil && !os.IsNotExist(err) {
 		fmt.Printf("Warning: Failed to remove cron log file: %v\n", err)
 	}
@@ -405,7 +405,7 @@ func addCron(filePath string, schedule string) error {
 		return nil
 	}
 
-	fnDir := filepath.Join(home, ".opencloud", "logs")
+	fnDir := filepath.Join(home, ".opencloud", "logs", "functions")
 
 	if err := os.MkdirAll(fnDir, 0755); err != nil {
 		return fmt.Errorf("failed to create logs directory: %v", err)

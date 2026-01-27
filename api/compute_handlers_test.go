@@ -88,7 +88,7 @@ func TestAddCron(t *testing.T) {
 	}
 
 	crontabContent := string(output)
-	expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "cron_test_function.py.log")
+	expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "functions", "cron_test_function.py.log")
 
 	// Check that the cron job contains the function-specific log file
 	if !strings.Contains(crontabContent, expectedLogFile) {
@@ -235,7 +235,7 @@ func TestAddCronMultipleFunctions(t *testing.T) {
 
 	// Verify each function has its own log file
 	for _, fn := range functions {
-		expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "cron_"+fn.name+".log")
+		expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "functions", "cron_"+fn.name+".log")
 		if !strings.Contains(crontabContent, expectedLogFile) {
 			t.Errorf("Crontab does not contain expected log file for %s.\nExpected: %s\nCrontab:\n%s", fn.name, expectedLogFile, crontabContent)
 		}
