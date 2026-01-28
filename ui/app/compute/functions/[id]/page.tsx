@@ -201,10 +201,6 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       setSaving(false)
     }
   }
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const handleInvoke = async () => {
     setInvoking(true)
