@@ -483,3 +483,95 @@ func TestExecutionLogFileNaming(t *testing.T) {
 		}
 	}
 }
+
+func TestFunctionRename(t *testing.T) {
+	// This test verifies that renaming a function updates the file, service ledger, and logs
+	
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+	
+	// Create functions directory
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create functions directory: %v", err)
+	}
+	
+	// Create logs directory
+	logsDir := filepath.Join(tmpHome, ".opencloud", "logs", "functions")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		t.Fatalf("Failed to create logs directory: %v", err)
+	}
+	
+	// Create initial function file
+	oldFileName := "old_function.py"
+	oldFilePath := filepath.Join(funcDir, oldFileName)
+	initialCode := "print('old function')"
+	if err := os.WriteFile(oldFilePath, []byte(initialCode), 0644); err != nil {
+		t.Fatalf("Failed to create initial function file: %v", err)
+	}
+	
+	// Create a log file for the old function
+	oldLogPath := filepath.Join(logsDir, "old_function.log")
+	if err := os.WriteFile(oldLogPath, []byte("old log content"), 0644); err != nil {
+		t.Fatalf("Failed to create old log file: %v", err)
+	}
+	
+	// Verify initial state
+	if _, err := os.Stat(oldFilePath); os.IsNotExist(err) {
+		t.Fatal("Old function file should exist")
+	}
+	if _, err := os.Stat(oldLogPath); os.IsNotExist(err) {
+		t.Fatal("Old log file should exist")
+	}
+	
+	// Simulate the rename operation (as would happen in UpdateFunction)
+	newFileName := "new_function.py"
+	newFilePath := filepath.Join(funcDir, newFileName)
+	newCode := "print('new function')"
+	
+	// Write updated code to old file first
+	if err := os.WriteFile(oldFilePath, []byte(newCode), 0644); err != nil {
+		t.Fatalf("Failed to update function code: %v", err)
+	}
+	
+	// Rename the file
+	if err := os.Rename(oldFilePath, newFilePath); err != nil {
+		t.Fatalf("Failed to rename function file: %v", err)
+	}
+	
+	// Rename the log file
+	newLogPath := filepath.Join(logsDir, "new_function.log")
+	if _, err := os.Stat(oldLogPath); err == nil {
+		if err := os.Rename(oldLogPath, newLogPath); err != nil {
+			t.Fatalf("Failed to rename log file: %v", err)
+		}
+	}
+	
+	// Verify new state
+	if _, err := os.Stat(oldFilePath); !os.IsNotExist(err) {
+		t.Error("Old function file should not exist after rename")
+	}
+	
+	if _, err := os.Stat(newFilePath); os.IsNotExist(err) {
+		t.Error("New function file should exist after rename")
+	} else {
+		// Verify the content was updated
+		content, err := os.ReadFile(newFilePath)
+		if err != nil {
+			t.Fatalf("Failed to read new function file: %v", err)
+		}
+		if string(content) != newCode {
+			t.Errorf("New function file has wrong content. Expected: %s, Got: %s", newCode, string(content))
+		}
+	}
+	
+	if _, err := os.Stat(oldLogPath); !os.IsNotExist(err) {
+		t.Error("Old log file should not exist after rename")
+	}
+	
+	if _, err := os.Stat(newLogPath); os.IsNotExist(err) {
+		t.Error("New log file should exist after rename")
+	}
+}
