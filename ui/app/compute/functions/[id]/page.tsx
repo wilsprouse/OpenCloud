@@ -90,8 +90,15 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       const data = res.data
       setFunctionData(data)
       
-      // Populate form fields - strip extension from display name
-      const nameWithoutExt = data.name.replace(/\.[^/.]+$/, "")
+      // Populate form fields - strip known file extensions from display name
+      const knownExtensions = ['.py', '.js', '.go', '.rb', '.java', '.cs']
+      let nameWithoutExt = data.name
+      for (const ext of knownExtensions) {
+        if (nameWithoutExt.endsWith(ext)) {
+          nameWithoutExt = nameWithoutExt.slice(0, -ext.length)
+          break
+        }
+      }
       setName(nameWithoutExt)
       setRuntime(data.runtime)
       setCode(data.code || "")
@@ -135,7 +142,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const handleSaveAndDeploy = async () => {
     setSaving(true)
     try {
-      // Add file extension back based on runtime
+      // Determine file extension based on runtime
       let extension = ""
       const runtimeLower = runtime.toLowerCase()
       if (runtimeLower.includes("python")) {
@@ -152,11 +159,18 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         extension = ".cs"
       }
       
-      // Ensure the name doesn't already have the extension
-      let fullName = name
-      if (!fullName.endsWith(extension) && extension) {
-        fullName = name + extension
+      // Strip any existing extension (known extensions only) and add the correct one
+      const knownExtensions = ['.py', '.js', '.go', '.rb', '.java', '.cs']
+      let baseName = name
+      for (const ext of knownExtensions) {
+        if (baseName.endsWith(ext)) {
+          baseName = baseName.slice(0, -ext.length)
+          break
+        }
       }
+      
+      // Add the correct extension
+      const fullName = extension ? baseName + extension : baseName
       
       console.log(`Updating function: ${fullName}`)
       const res = await client.put(`/update-function/${encodeURIComponent(functionId)}`, {
@@ -183,6 +197,10 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       }
     } catch (err) {
       console.error("Failed to update function:", err)
+    } finally {
+      setSaving(false)
+    }
+  }
     } finally {
       setSaving(false)
     }
@@ -273,7 +291,18 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <span>{name || functionId.replace(/\.[^/.]+$/, "")}</span>
+            <span>{name || (() => {
+              // Strip known extensions from functionId for display
+              const knownExtensions = ['.py', '.js', '.go', '.rb', '.java', '.cs']
+              let displayName = functionId
+              for (const ext of knownExtensions) {
+                if (displayName.endsWith(ext)) {
+                  displayName = displayName.slice(0, -ext.length)
+                  break
+                }
+              }
+              return displayName
+            })()}</span>
             {functionData && (
               <Badge className={getStatusColor(functionData.status)}>
                 {functionData.status}

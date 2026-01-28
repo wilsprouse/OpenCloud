@@ -643,6 +643,16 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate required fields
+	if req.Name == "" {
+		http.Error(w, "Function name is required", http.StatusBadRequest)
+		return
+	}
+	if req.Runtime == "" {
+		http.Error(w, "Runtime is required", http.StatusBadRequest)
+		return
+	}
+
 	// Resolve file path
 	home, err := os.UserHomeDir()
 	if err != nil {
