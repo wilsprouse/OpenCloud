@@ -90,8 +90,9 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       const data = res.data
       setFunctionData(data)
       
-      // Populate form fields
-      setName(data.name)
+      // Populate form fields - strip extension from display name
+      const nameWithoutExt = data.name.replace(/\.[^/.]+$/, "")
+      setName(nameWithoutExt)
       setRuntime(data.runtime)
       setCode(data.code || "")
       setMemorySize(data.memorySize?.toString() || "128")
@@ -134,9 +135,32 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const handleSaveAndDeploy = async () => {
     setSaving(true)
     try {
-      console.log(`Updating function: ${name}`)
+      // Add file extension back based on runtime
+      let extension = ""
+      const runtimeLower = runtime.toLowerCase()
+      if (runtimeLower.includes("python")) {
+        extension = ".py"
+      } else if (runtimeLower.includes("node") || runtimeLower.includes("javascript")) {
+        extension = ".js"
+      } else if (runtimeLower.includes("go")) {
+        extension = ".go"
+      } else if (runtimeLower.includes("ruby")) {
+        extension = ".rb"
+      } else if (runtimeLower.includes("java")) {
+        extension = ".java"
+      } else if (runtimeLower.includes("dotnet") || runtimeLower.includes(".net")) {
+        extension = ".cs"
+      }
+      
+      // Ensure the name doesn't already have the extension
+      let fullName = name
+      if (!fullName.endsWith(extension) && extension) {
+        fullName = name + extension
+      }
+      
+      console.log(`Updating function: ${fullName}`)
       const res = await client.put(`/update-function/${encodeURIComponent(functionId)}`, {
-        name,
+        name: fullName,
         runtime,
         code,
         memorySize: parseInt(memorySize),
@@ -150,7 +174,12 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
 
       if (res.status === 200 || res.status === 201) {
         console.log("Function updated successfully")
-        fetchFunctionDetails() // Refresh to get latest data
+        // If the name changed, redirect to the new URL
+        if (fullName !== functionId) {
+          router.push(`/compute/functions/${encodeURIComponent(fullName)}`)
+        } else {
+          fetchFunctionDetails() // Refresh to get latest data
+        }
       }
     } catch (err) {
       console.error("Failed to update function:", err)
@@ -244,7 +273,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <span>{name || functionId}</span>
+            <span>{name || functionId.replace(/\.[^/.]+$/, "")}</span>
             {functionData && (
               <Badge className={getStatusColor(functionData.status)}>
                 {functionData.status}

@@ -661,10 +661,65 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update function code
+	// Determine if we need to rename the file
+	// req.Name should be the new name with extension already included
+	newFileName := req.Name
+	needsRename := (id != newFileName)
+	newFnPath := filepath.Join(fnDir, newFileName)
+
+	// If renaming, check that the new file doesn't already exist
+	if needsRename {
+		if _, err := os.Stat(newFnPath); err == nil {
+			http.Error(w, "A function with the new name already exists", http.StatusConflict)
+			return
+		}
+	}
+
+	// Get old cron trigger status before making changes
+	oldFunctionEntry, _ := service_ledger.GetFunctionEntry(id)
+	hadCronTrigger := oldFunctionEntry != nil && oldFunctionEntry.Trigger == "cron"
+
+	// Remove old cron job if it existed
+	if hadCronTrigger {
+		if err := removeCron(fnPath); err != nil {
+			fmt.Printf("Warning: Failed to remove old cron job: %v\n", err)
+		}
+	}
+
+	// Update function code (write to the current path first)
 	if err := os.WriteFile(fnPath, []byte(req.Code), 0644); err != nil {
 		http.Error(w, "Failed to update function code", http.StatusInternalServerError)
 		return
+	}
+
+	// If renaming the function, rename the file
+	if needsRename {
+		if err := os.Rename(fnPath, newFnPath); err != nil {
+			http.Error(w, "Failed to rename function file", http.StatusInternalServerError)
+			return
+		}
+
+		// Delete old entry from service ledger
+		if err := service_ledger.DeleteFunctionEntry(id); err != nil {
+			fmt.Printf("Warning: Failed to delete old service ledger entry: %v\n", err)
+		}
+
+		// Rename log file if it exists
+		logsDir := filepath.Join(home, ".opencloud", "logs", "functions")
+		oldBaseName := strings.TrimSuffix(id, filepath.Ext(id))
+		newBaseName := strings.TrimSuffix(newFileName, filepath.Ext(newFileName))
+		oldLogPath := filepath.Join(logsDir, oldBaseName+".log")
+		newLogPath := filepath.Join(logsDir, newBaseName+".log")
+		
+		if _, err := os.Stat(oldLogPath); err == nil {
+			if err := os.Rename(oldLogPath, newLogPath); err != nil {
+				fmt.Printf("Warning: Failed to rename log file: %v\n", err)
+			}
+		}
+
+		// Update path references to use new file name
+		fnPath = newFnPath
+		id = newFileName
 	}
 
 	// Update the service ledger with function metadata
@@ -673,16 +728,14 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	if req.Trigger != nil && req.Trigger.Enabled {
 		trigger = req.Trigger.Type
 		schedule = req.Trigger.Schedule
-		// Add cron job to system crontab
+		// Add cron job to system crontab with the new file path
 		if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
 			http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// Update service ledger with function entry
-	// Note: If this fails after addCron succeeds, the cron entry may remain orphaned.
-	// A future improvement would be to implement transaction-like cleanup on failure.
+	// Update service ledger with function entry using the new filename
 	if err := service_ledger.UpdateFunctionEntry(id, req.Runtime, trigger, schedule, req.Code); err != nil {
 		// Log the error but don't fail the request since function code was already updated
 		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
@@ -691,7 +744,7 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	// Respond with updated function info
 	resp := map[string]interface{}{
 		"id":           id,
-		"name":         req.Name,
+		"name":         id,
 		"runtime":      req.Runtime,
 		"memorySize":   req.MemorySize,
 		"timeout":      req.Timeout,
