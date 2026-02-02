@@ -161,6 +161,13 @@ print_info "Setting up Go backend binary..."
 # Determine installation directory - use /opt for system-wide install or user's home for user install
 INSTALL_DIR="${OPENCLOUD_INSTALL_DIR:-/home/$USER/OpenCloud}"
 print_info "Installing to: $INSTALL_DIR"
+
+# Stop the service if it's running to avoid "Text file busy" error
+if sudo systemctl is-active --quiet opencloud.service; then
+    print_info "Stopping running OpenCloud service..."
+    sudo systemctl stop opencloud.service
+fi
+
 # Create the target directory structure
 sudo mkdir -p "$INSTALL_DIR/bin"
 sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
@@ -186,6 +193,12 @@ print_info "Systemd service configured"
 
 # Step 9: Setup systemd service for the Next.js frontend
 print_info "Setting up systemd service for OpenCloud frontend..."
+
+# Stop the frontend service if it's running to avoid conflicts
+if sudo systemctl is-active --quiet opencloud-ui.service; then
+    print_info "Stopping running OpenCloud frontend service..."
+    sudo systemctl stop opencloud-ui.service
+fi
 
 # Copy UI build to installation directory
 sudo mkdir -p "$INSTALL_DIR/ui"
