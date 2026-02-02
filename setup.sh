@@ -186,6 +186,20 @@ print_info "Systemd service configured"
 
 # Step 9: Copy static frontend files to nginx web root
 print_info "Deploying frontend static files..."
+
+# Verify build output exists
+if [ ! -d "${SCRIPT_DIR}/ui/out" ]; then
+    print_error "Build output not found at ${SCRIPT_DIR}/ui/out"
+    print_error "The Next.js build may have failed. Please check the build output above."
+    exit 1
+fi
+
+if [ -z "$(ls -A ${SCRIPT_DIR}/ui/out)" ]; then
+    print_error "Build output directory is empty at ${SCRIPT_DIR}/ui/out"
+    print_error "The Next.js build may have failed. Please check the build output above."
+    exit 1
+fi
+
 sudo mkdir -p /var/www/opencloud
 sudo cp -r "${SCRIPT_DIR}/ui/out/"* /var/www/opencloud/
 sudo chown -R www-data:www-data /var/www/opencloud
