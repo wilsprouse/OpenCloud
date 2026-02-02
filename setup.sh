@@ -184,27 +184,14 @@ print_info "Systemd service configured for $INSTALL_DIR"
 sudo systemctl daemon-reload
 print_info "Systemd service configured"
 
-# Step 9: Setup PM2 for Next.js UI (production mode)
-print_info "Setting up Next.js UI service..."
-cd "${SCRIPT_DIR}/ui"
+# Step 9: Copy static frontend files to nginx web root
+print_info "Deploying frontend static files..."
+sudo mkdir -p /var/www/opencloud
+sudo cp -r "${SCRIPT_DIR}/ui/out/"* /var/www/opencloud/
+sudo chown -R www-data:www-data /var/www/opencloud
+print_info "Frontend files deployed to /var/www/opencloud"
 
-# Check for PM2, install if not present
-if ! command -v pm2 &> /dev/null; then
-    print_info "PM2 not found. Installing PM2..."
-    sudo npm install -g pm2
-fi
-
-# Start the Next.js app with PM2
-pm2 stop opencloud-ui 2>/dev/null || true
-pm2 delete opencloud-ui 2>/dev/null || true
-pm2 start npm --name "opencloud-ui" -- start
-pm2 save
-sudo pm2 startup systemd -u "$USER" --hp "$HOME"
-print_info "Next.js UI service configured with PM2"
-
-cd "$SCRIPT_DIR"
-
-# Step 9a: Install and configure nginx
+# Step 10: Install and configure nginx
 print_info "Setting up nginx web server..."
 
 # Check for and install nginx if not present
@@ -241,7 +228,7 @@ fi
 
 print_info "nginx configured successfully"
 
-# Step 10: Start the services
+# Step 11: Start the services
 print_info "Starting OpenCloud services..."
 
 # Start the Go backend
@@ -265,14 +252,6 @@ else
     exit 1
 fi
 
-if pm2 describe opencloud-ui &> /dev/null; then
-    print_info "OpenCloud UI service is running"
-else
-    print_error "OpenCloud UI service failed to start"
-    pm2 logs opencloud-ui --lines 50
-    exit 1
-fi
-
 if sudo systemctl is-active --quiet nginx; then
     print_info "nginx web server is running"
 else
@@ -293,19 +272,20 @@ print_info "  (Replace 123.123.123.123 with your actual server IP)"
 print_info ""
 print_info "Direct service access (for debugging):"
 print_info "  Backend API: http://localhost:3030"
-print_info "  Frontend UI: http://localhost:3000"
 print_info ""
 print_info "Service Management Commands:"
 print_info "  Backend: sudo systemctl {start|stop|restart|status} opencloud.service"
-print_info "  Frontend: pm2 {start|stop|restart|logs} opencloud-ui"
 print_info "  Nginx: sudo systemctl {start|stop|restart|status} nginx"
 print_info ""
 print_info "To view logs:"
 print_info "  Backend: sudo journalctl -u opencloud.service -f"
-print_info "  Frontend: pm2 logs opencloud-ui"
 print_info "  Nginx: sudo tail -f /var/log/nginx/opencloud_access.log"
 print_info ""
 print_info "To update the server IP address:"
 print_info "  Edit /etc/nginx/sites-available/opencloud and change server_name"
 print_info "  Then run: sudo nginx -t && sudo systemctl restart nginx"
+print_info ""
+print_info "To update frontend files:"
+print_info "  1. cd ${SCRIPT_DIR}/ui && npm run build"
+print_info "  2. sudo cp -r ${SCRIPT_DIR}/ui/out/* /var/www/opencloud/"
 print_info "========================================="
