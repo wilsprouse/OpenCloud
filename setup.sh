@@ -168,11 +168,16 @@ if sudo systemctl is-active --quiet opencloud.service; then
     sudo systemctl stop opencloud.service
 fi
 
-# Create the target directory structure
+# Create the target directory structure and copy binary
 sudo mkdir -p "$INSTALL_DIR/bin"
-sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
-sudo chmod +x "$INSTALL_DIR/bin/opencloud"
-print_info "Go binary copied to $INSTALL_DIR/bin/opencloud"
+if [ "${SCRIPT_DIR}/bin/app" != "$INSTALL_DIR/bin/opencloud" ]; then
+    sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
+    sudo chmod +x "$INSTALL_DIR/bin/opencloud"
+    print_info "Go binary copied to $INSTALL_DIR/bin/opencloud"
+else
+    sudo chmod +x "$INSTALL_DIR/bin/opencloud"
+    print_info "Binary already in place at $INSTALL_DIR/bin/opencloud"
+fi
 
 # Step 8: Setup systemd service for the Go backend
 print_info "Setting up systemd service for OpenCloud backend..."
@@ -200,12 +205,17 @@ if sudo systemctl is-active --quiet opencloud-ui.service; then
     sudo systemctl stop opencloud-ui.service
 fi
 
-# Copy UI build to installation directory
-sudo mkdir -p "$INSTALL_DIR/ui"
-sudo cp -r "${SCRIPT_DIR}/ui/.next" "$INSTALL_DIR/ui/"
-sudo cp -r "${SCRIPT_DIR}/ui/node_modules" "$INSTALL_DIR/ui/"
-sudo cp "${SCRIPT_DIR}/ui/package.json" "$INSTALL_DIR/ui/"
-sudo cp "${SCRIPT_DIR}/ui/next.config.mjs" "$INSTALL_DIR/ui/" 2>/dev/null || true
+# Copy UI build to installation directory (only if source != destination)
+if [ "${SCRIPT_DIR}" != "$INSTALL_DIR" ]; then
+    print_info "Copying UI build to $INSTALL_DIR/ui..."
+    sudo mkdir -p "$INSTALL_DIR/ui"
+    sudo cp -r "${SCRIPT_DIR}/ui/.next" "$INSTALL_DIR/ui/"
+    sudo cp -r "${SCRIPT_DIR}/ui/node_modules" "$INSTALL_DIR/ui/"
+    sudo cp "${SCRIPT_DIR}/ui/package.json" "$INSTALL_DIR/ui/"
+    sudo cp "${SCRIPT_DIR}/ui/next.config.mjs" "$INSTALL_DIR/ui/" 2>/dev/null || true
+else
+    print_info "Source and destination are the same, skipping file copy"
+fi
 
 # Create a temporary service file with updated paths for frontend
 TEMP_UI_SERVICE=$(mktemp)
