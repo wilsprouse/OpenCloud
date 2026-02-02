@@ -184,26 +184,26 @@ print_info "Systemd service configured for $INSTALL_DIR"
 sudo systemctl daemon-reload
 print_info "Systemd service configured"
 
-# Step 9: Copy static frontend files to nginx web root
-print_info "Deploying frontend static files..."
+# Step 9: Setup systemd service for the Next.js frontend
+print_info "Setting up systemd service for OpenCloud frontend..."
 
-# Verify build output exists
-if [ ! -d "${SCRIPT_DIR}/ui/out" ]; then
-    print_error "Build output not found at ${SCRIPT_DIR}/ui/out"
-    print_error "The Next.js build may have failed. Please check the build output above."
-    exit 1
-fi
+# Copy UI build to installation directory
+sudo mkdir -p "$INSTALL_DIR/ui"
+sudo cp -r "${SCRIPT_DIR}/ui/.next" "$INSTALL_DIR/ui/"
+sudo cp -r "${SCRIPT_DIR}/ui/node_modules" "$INSTALL_DIR/ui/"
+sudo cp "${SCRIPT_DIR}/ui/package.json" "$INSTALL_DIR/ui/"
+sudo cp "${SCRIPT_DIR}/ui/next.config.mjs" "$INSTALL_DIR/ui/" 2>/dev/null || true
 
-if [ -z "$(ls -A ${SCRIPT_DIR}/ui/out)" ]; then
-    print_error "Build output directory is empty at ${SCRIPT_DIR}/ui/out"
-    print_error "The Next.js build may have failed. Please check the build output above."
-    exit 1
-fi
+# Create a temporary service file with updated paths for frontend
+TEMP_UI_SERVICE=$(mktemp)
+sed "s|/home/ubuntu/OpenCloud|$INSTALL_DIR|g" "${SCRIPT_DIR}/utils/opencloud-ui.service" | \
+sed "s|User=ubuntu|User=$USER|g" | \
+sed "s|Group=ubuntu|Group=$USER|g" > "$TEMP_UI_SERVICE"
 
-sudo mkdir -p /var/www/opencloud
-sudo cp -r "${SCRIPT_DIR}/ui/out/"* /var/www/opencloud/
-sudo chown -R www-data:www-data /var/www/opencloud
-print_info "Frontend files deployed to /var/www/opencloud"
+sudo cp "$TEMP_UI_SERVICE" /etc/systemd/system/opencloud-ui.service
+rm "$TEMP_UI_SERVICE"
+
+print_info "Frontend systemd service configured"
 
 # Step 10: Install and configure nginx
 print_info "Setting up nginx web server..."
@@ -245,16 +245,23 @@ print_info "nginx configured successfully"
 # Step 11: Start the services
 print_info "Starting OpenCloud services..."
 
+# Reload systemd daemon to pick up new service
+sudo systemctl daemon-reload
+
 # Start the Go backend
 sudo systemctl enable opencloud.service
 sudo systemctl start opencloud.service
+
+# Start the Next.js frontend
+sudo systemctl enable opencloud-ui.service
+sudo systemctl start opencloud-ui.service
 
 # Start nginx
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
 # Wait a moment for services to start
-sleep 2
+sleep 3
 
 # Check service status
 print_info "Checking service status..."
@@ -263,6 +270,14 @@ if sudo systemctl is-active --quiet opencloud.service; then
 else
     print_error "OpenCloud backend service failed to start"
     sudo systemctl status opencloud.service
+    exit 1
+fi
+
+if sudo systemctl is-active --quiet opencloud-ui.service; then
+    print_info "OpenCloud frontend service is running"
+else
+    print_error "OpenCloud frontend service failed to start"
+    sudo systemctl status opencloud-ui.service
     exit 1
 fi
 
@@ -286,20 +301,19 @@ print_info "  (Replace 123.123.123.123 with your actual server IP)"
 print_info ""
 print_info "Direct service access (for debugging):"
 print_info "  Backend API: http://localhost:3030"
+print_info "  Frontend UI: http://localhost:3000"
 print_info ""
 print_info "Service Management Commands:"
 print_info "  Backend: sudo systemctl {start|stop|restart|status} opencloud.service"
+print_info "  Frontend: sudo systemctl {start|stop|restart|status} opencloud-ui.service"
 print_info "  Nginx: sudo systemctl {start|stop|restart|status} nginx"
 print_info ""
 print_info "To view logs:"
 print_info "  Backend: sudo journalctl -u opencloud.service -f"
+print_info "  Frontend: sudo journalctl -u opencloud-ui.service -f"
 print_info "  Nginx: sudo tail -f /var/log/nginx/opencloud_access.log"
 print_info ""
 print_info "To update the server IP address:"
 print_info "  Edit /etc/nginx/sites-available/opencloud and change server_name"
 print_info "  Then run: sudo nginx -t && sudo systemctl restart nginx"
-print_info ""
-print_info "To update frontend files:"
-print_info "  1. cd ${SCRIPT_DIR}/ui && npm run build"
-print_info "  2. sudo cp -r ${SCRIPT_DIR}/ui/out/* /var/www/opencloud/"
 print_info "========================================="
