@@ -161,11 +161,23 @@ print_info "Setting up Go backend binary..."
 # Determine installation directory - use /opt for system-wide install or user's home for user install
 INSTALL_DIR="${OPENCLOUD_INSTALL_DIR:-/home/$USER/OpenCloud}"
 print_info "Installing to: $INSTALL_DIR"
-# Create the target directory structure
+
+# Stop the service if it's running to avoid "Text file busy" error
+if sudo systemctl is-active --quiet opencloud.service; then
+    print_info "Stopping running OpenCloud service..."
+    sudo systemctl stop opencloud.service
+fi
+
+# Create the target directory structure and copy binary
 sudo mkdir -p "$INSTALL_DIR/bin"
-sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
-sudo chmod +x "$INSTALL_DIR/bin/opencloud"
-print_info "Go binary copied to $INSTALL_DIR/bin/opencloud"
+if [ "${SCRIPT_DIR}/bin/app" != "$INSTALL_DIR/bin/opencloud" ]; then
+    sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
+    sudo chmod +x "$INSTALL_DIR/bin/opencloud"
+    print_info "Go binary copied to $INSTALL_DIR/bin/opencloud"
+else
+    sudo chmod +x "$INSTALL_DIR/bin/opencloud"
+    print_info "Binary already in place at $INSTALL_DIR/bin/opencloud"
+fi
 
 # Step 8: Setup systemd service for the Go backend
 print_info "Setting up systemd service for OpenCloud backend..."
@@ -184,27 +196,39 @@ print_info "Systemd service configured for $INSTALL_DIR"
 sudo systemctl daemon-reload
 print_info "Systemd service configured"
 
-# Step 9: Setup PM2 for Next.js UI (production mode)
-print_info "Setting up Next.js UI service..."
-cd "${SCRIPT_DIR}/ui"
+# Step 9: Setup systemd service for the Next.js frontend
+print_info "Setting up systemd service for OpenCloud frontend..."
 
-# Check for PM2, install if not present
-if ! command -v pm2 &> /dev/null; then
-    print_info "PM2 not found. Installing PM2..."
-    sudo npm install -g pm2
+# Stop the frontend service if it's running to avoid conflicts
+if sudo systemctl is-active --quiet opencloud-ui.service; then
+    print_info "Stopping running OpenCloud frontend service..."
+    sudo systemctl stop opencloud-ui.service
 fi
 
-# Start the Next.js app with PM2
-pm2 stop opencloud-ui 2>/dev/null || true
-pm2 delete opencloud-ui 2>/dev/null || true
-pm2 start npm --name "opencloud-ui" -- start
-pm2 save
-sudo pm2 startup systemd -u "$USER" --hp "$HOME"
-print_info "Next.js UI service configured with PM2"
+# Copy UI build to installation directory (only if source != destination)
+if [ "${SCRIPT_DIR}" != "$INSTALL_DIR" ]; then
+    print_info "Copying UI build to $INSTALL_DIR/ui..."
+    sudo mkdir -p "$INSTALL_DIR/ui"
+    sudo cp -r "${SCRIPT_DIR}/ui/.next" "$INSTALL_DIR/ui/"
+    sudo cp -r "${SCRIPT_DIR}/ui/node_modules" "$INSTALL_DIR/ui/"
+    sudo cp "${SCRIPT_DIR}/ui/package.json" "$INSTALL_DIR/ui/"
+    sudo cp "${SCRIPT_DIR}/ui/next.config.mjs" "$INSTALL_DIR/ui/" 2>/dev/null || true
+else
+    print_info "Source and destination are the same, skipping file copy"
+fi
 
-cd "$SCRIPT_DIR"
+# Create a temporary service file with updated paths for frontend
+TEMP_UI_SERVICE=$(mktemp)
+sed "s|/home/ubuntu/OpenCloud|$INSTALL_DIR|g" "${SCRIPT_DIR}/utils/opencloud-ui.service" | \
+sed "s|User=ubuntu|User=$USER|g" | \
+sed "s|Group=ubuntu|Group=$USER|g" > "$TEMP_UI_SERVICE"
 
-# Step 9a: Install and configure nginx
+sudo cp "$TEMP_UI_SERVICE" /etc/systemd/system/opencloud-ui.service
+rm "$TEMP_UI_SERVICE"
+
+print_info "Frontend systemd service configured"
+
+# Step 10: Install and configure nginx
 print_info "Setting up nginx web server..."
 
 # Check for and install nginx if not present
@@ -241,19 +265,26 @@ fi
 
 print_info "nginx configured successfully"
 
-# Step 10: Start the services
+# Step 11: Start the services
 print_info "Starting OpenCloud services..."
+
+# Reload systemd daemon to pick up new service
+sudo systemctl daemon-reload
 
 # Start the Go backend
 sudo systemctl enable opencloud.service
 sudo systemctl start opencloud.service
+
+# Start the Next.js frontend
+sudo systemctl enable opencloud-ui.service
+sudo systemctl start opencloud-ui.service
 
 # Start nginx
 sudo systemctl enable nginx
 sudo systemctl restart nginx
 
 # Wait a moment for services to start
-sleep 2
+sleep 3
 
 # Check service status
 print_info "Checking service status..."
@@ -265,11 +296,11 @@ else
     exit 1
 fi
 
-if pm2 describe opencloud-ui &> /dev/null; then
-    print_info "OpenCloud UI service is running"
+if sudo systemctl is-active --quiet opencloud-ui.service; then
+    print_info "OpenCloud frontend service is running"
 else
-    print_error "OpenCloud UI service failed to start"
-    pm2 logs opencloud-ui --lines 50
+    print_error "OpenCloud frontend service failed to start"
+    sudo systemctl status opencloud-ui.service
     exit 1
 fi
 
@@ -297,12 +328,12 @@ print_info "  Frontend UI: http://localhost:3000"
 print_info ""
 print_info "Service Management Commands:"
 print_info "  Backend: sudo systemctl {start|stop|restart|status} opencloud.service"
-print_info "  Frontend: pm2 {start|stop|restart|logs} opencloud-ui"
+print_info "  Frontend: sudo systemctl {start|stop|restart|status} opencloud-ui.service"
 print_info "  Nginx: sudo systemctl {start|stop|restart|status} nginx"
 print_info ""
 print_info "To view logs:"
 print_info "  Backend: sudo journalctl -u opencloud.service -f"
-print_info "  Frontend: pm2 logs opencloud-ui"
+print_info "  Frontend: sudo journalctl -u opencloud-ui.service -f"
 print_info "  Nginx: sudo tail -f /var/log/nginx/opencloud_access.log"
 print_info ""
 print_info "To update the server IP address:"
