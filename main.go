@@ -14,20 +14,27 @@ func withCORS(next http.Handler) http.Handler {
 		// Get the origin from the request
 		origin := r.Header.Get("Origin")
 		
-		// Allow requests from localhost (development) and same-origin requests (production via nginx)
-		// In production, nginx proxies requests so they come without an Origin header (same-origin)
+		// Browsers only send the Origin header for cross-origin requests.
+		// When nginx serves both the frontend and proxies API requests on the same host:port,
+		// browsers treat these as same-origin requests and don't include the Origin header.
+		// Therefore, requests without an Origin header are from nginx (production) or same-origin.
+		
 		if origin == "" {
-			// No origin header means same-origin request (from nginx proxy) - allow all origins for this case
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			// Same-origin request (from nginx proxy in production)
+			// No CORS headers needed - browser already allows same-origin requests
+			// Don't set any CORS headers
 		} else if origin == "http://localhost:3000" {
-			// Development environment - allow localhost
+			// Development environment - allow localhost with credentials
 			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		} else {
-			// For other origins, do not set CORS headers - will be blocked by browser
-			// This prevents arbitrary sites from making requests to the API
+			// Unauthorized origin - reject the request
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte("CORS policy: origin not allowed"))
+			return
 		}
 		
+		// Set allowed methods and headers for CORS requests
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
