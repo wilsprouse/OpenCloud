@@ -89,10 +89,13 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 	// 1. The backend ONLY listens on localhost:3030 (not on external interfaces)
 	// 2. Only local processes (nginx, Next.js) can reach localhost:3030
 	// 3. External attackers cannot directly access localhost:3030
-	// 4. Port validation (80, 3000, 443) still applies to prevent arbitrary ports
+	// 4. Port validation (80, 3000, 443) still applies (see lines 104-113 below)
+	//
+	// Note: In containerized environments, ensure proper network configuration
+	// to maintain localhost isolation
 	if isRequestLocalhost {
-		// Request is to localhost (via Next.js rewrite or direct) - allow any origin on valid ports
-		// Port validation happens below
+		// Request is to localhost (via Next.js rewrite or nginx proxy)
+		// Allow any origin on valid ports (validated below)
 	} else if originHost == requestHostname {
 		// Exact hostname match (e.g., both are the same IP or domain) - allow
 	} else {
