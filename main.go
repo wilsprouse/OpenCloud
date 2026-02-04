@@ -82,12 +82,9 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 	isOriginLocalhost := isLocalhost(originHost)
 	isRequestLocalhost := isLocalhost(requestHostname)
 	
-	if isOriginLocalhost && isRequestLocalhost {
-		// Both are localhost variants - allow
-	} else if originHost == requestHostname {
-		// Exact hostname match - allow
-	} else {
-		// Hostname mismatch - reject
+	// Allow if: both are localhost variants OR exact hostname match
+	isValidHostname := (isOriginLocalhost && isRequestLocalhost) || (originHost == requestHostname)
+	if !isValidHostname {
 		return false
 	}
 	
