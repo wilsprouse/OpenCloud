@@ -77,9 +77,9 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 	// Verify the origin is from the same host
 	// This ensures only requests from frontends served by this server are allowed
 	if originHost != requestHostname {
-		// Special case: allow localhost/127.0.0.1 only if request is also to localhost
-		isOriginLocalhost := originHost == "localhost" || originHost == "127.0.0.1"
-		isRequestLocalhost := requestHostname == "localhost" || requestHostname == "127.0.0.1"
+		// Special case: allow localhost/127.0.0.1/::1 only if request is also to localhost
+		isOriginLocalhost := isLocalhost(originHost)
+		isRequestLocalhost := isLocalhost(requestHostname)
 		
 		if !(isOriginLocalhost && isRequestLocalhost) {
 			return false
@@ -96,8 +96,31 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 		}
 	}
 	
-	// Allow port 80 (nginx), 3000 (direct frontend access), or 443 (https nginx)
+	// Allow specific ports where the frontend is accessible:
+	// - 80: nginx reverse proxy (production)
+	// - 3000: direct Next.js frontend access (development/fallback)
+	// - 443: nginx with HTTPS (production with SSL)
 	return port == "80" || port == "3000" || port == "443"
+}
+
+// isLocalhost checks if a hostname is a localhost variant
+func isLocalhost(hostname string) bool {
+	// Normalize to lowercase for comparison
+	h := hostname
+	if len(h) > 0 {
+		// Simple lowercase conversion for ASCII
+		lower := make([]byte, len(h))
+		for i := 0; i < len(h); i++ {
+			if h[i] >= 'A' && h[i] <= 'Z' {
+				lower[i] = h[i] + 32
+			} else {
+				lower[i] = h[i]
+			}
+		}
+		h = string(lower)
+	}
+	
+	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]"
 }
 
 func main() {
