@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"github.com/WavexSoftware/OpenCloud/api"
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 	"github.com/WavexSoftware/OpenCloud/utils"
@@ -105,21 +106,8 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 
 // isLocalhost checks if a hostname is a localhost variant
 func isLocalhost(hostname string) bool {
-	// Normalize to lowercase for comparison
-	h := hostname
-	if len(h) > 0 {
-		// Simple lowercase conversion for ASCII
-		lower := make([]byte, len(h))
-		for i := 0; i < len(h); i++ {
-			if h[i] >= 'A' && h[i] <= 'Z' {
-				lower[i] = h[i] + 32
-			} else {
-				lower[i] = h[i]
-			}
-		}
-		h = string(lower)
-	}
-	
+	// Normalize to lowercase for case-insensitive comparison
+	h := strings.ToLower(hostname)
 	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]"
 }
 
