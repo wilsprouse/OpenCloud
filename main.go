@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"github.com/WavexSoftware/OpenCloud/api"
@@ -25,7 +26,7 @@ func withCORS(next http.Handler) http.Handler {
 			// No CORS headers needed - browser already allows same-origin requests
 		} else {
 			// For requests with an Origin header, we need to validate and set CORS headers
-			// We allow requests from the same host on ports 80 (nginx) or 3000 (direct frontend)
+			// We allow requests from the same host on ports 80 (nginx), 3000 (direct frontend), or 443 (https)
 			// This prevents arbitrary external sites from making requests while allowing
 			// legitimate access from the frontend served by this server
 			
@@ -55,7 +56,7 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-// isAllowedOrigin checks if the origin is from the same host on an allowed port (80 or 3000)
+// isAllowedOrigin checks if the origin is from the same host on an allowed port (80, 3000, or 443)
 func isAllowedOrigin(origin string, requestHost string) bool {
 	// Parse the origin URL
 	originURL, err := url.Parse(origin)
@@ -66,21 +67,23 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 	// Extract host from origin (without port)
 	originHost := originURL.Hostname()
 	
-	// Extract host from request (without port)
-	requestHostname := requestHost
-	if colonIdx := len(requestHost) - 1; colonIdx >= 0 {
-		for i := len(requestHost) - 1; i >= 0; i-- {
-			if requestHost[i] == ':' {
-				requestHostname = requestHost[:i]
-				break
-			}
-		}
+	// Extract host from request using standard library (handles IPv6 correctly)
+	requestHostname, _, err := net.SplitHostPort(requestHost)
+	if err != nil {
+		// If there's no port, use the whole string as hostname
+		requestHostname = requestHost
 	}
 	
 	// Verify the origin is from the same host
 	// This ensures only requests from frontends served by this server are allowed
-	if originHost != requestHostname && originHost != "localhost" && originHost != "127.0.0.1" {
-		return false
+	if originHost != requestHostname {
+		// Special case: allow localhost/127.0.0.1 only if request is also to localhost
+		isOriginLocalhost := originHost == "localhost" || originHost == "127.0.0.1"
+		isRequestLocalhost := requestHostname == "localhost" || requestHostname == "127.0.0.1"
+		
+		if !(isOriginLocalhost && isRequestLocalhost) {
+			return false
+		}
 	}
 	
 	// Get the port from origin (defaults to 80 for http, 443 for https)
