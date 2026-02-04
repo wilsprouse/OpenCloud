@@ -105,6 +105,38 @@ func WriteServiceLedger(ledger ServiceLedger) error {
 	return os.WriteFile(ledgerPath, data, 0600)
 }
 
+// InitializeServiceLedger ensures the service ledger file exists with default services
+func InitializeServiceLedger() error {
+	ledgerPath, err := getLedgerPath()
+	if err != nil {
+		return err
+	}
+
+	// Check if file already exists
+	if _, err := os.Stat(ledgerPath); err == nil {
+		// File exists, no need to initialize
+		return nil
+	}
+
+	// Create initial ledger with default services
+	initialLedger := ServiceLedger{
+		"Containers": ServiceStatus{
+			Enabled: false,
+		},
+		"Functions": ServiceStatus{
+			Enabled: false,
+		},
+		"blob_storage": ServiceStatus{
+			Enabled: false,
+		},
+		"pipelines": ServiceStatus{
+			Enabled: false,
+		},
+	}
+
+	return WriteServiceLedger(initialLedger)
+}
+
 // IsServiceEnabled checks if a specific service is enabled
 func IsServiceEnabled(serviceName string) (bool, error) {
 	ledger, err := ReadServiceLedger()

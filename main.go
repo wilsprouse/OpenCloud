@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"github.com/WavexSoftware/OpenCloud/api"
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
+	"github.com/WavexSoftware/OpenCloud/utils"
 )
 
 func withCORS(next http.Handler) http.Handler {
@@ -25,6 +27,18 @@ func withCORS(next http.Handler) http.Handler {
 }
 
 func main() {
+	// Initialize .opencloud directory structure
+	if err := utils.InitializeOpenCloudDirectories(); err != nil {
+		log.Fatalf("Failed to initialize OpenCloud directories: %v", err)
+	}
+	fmt.Println("OpenCloud directories initialized successfully")
+
+	// Initialize service ledger with default services
+	if err := service_ledger.InitializeServiceLedger(); err != nil {
+		log.Fatalf("Failed to initialize service ledger: %v", err)
+	}
+	fmt.Println("Service ledger initialized successfully")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/get-server-metrics", api.GetSystemMetrics)
 	mux.HandleFunc("/get-containers", api.GetContainers)
