@@ -11,10 +11,21 @@ import (
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Always set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000") // TODO: Pull from .env file
+		// Get the origin from the request
+		origin := r.Header.Get("Origin")
+		
+		// Allow requests from localhost (development) and same-origin requests (production via nginx)
+		// In production, nginx proxies requests so they appear to come from localhost
+		if origin == "http://localhost:3000" || origin == "" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else {
+			// Allow the requesting origin for cross-origin requests
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+		
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		// Handle preflight request
 		if r.Method == http.MethodOptions {
