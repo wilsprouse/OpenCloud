@@ -11,7 +11,7 @@ import { useRouter } from 'next/navigation';
         });*/
 
 const client = axios.create({
-  baseURL: process.env.REACT_APP_BACKEND || "http://localhost:3030",
+  baseURL: process.env.REACT_APP_BACKEND || "/api",
   headers: {
     "Content-Type": "application/json",
     //'Access-Control-Allow-Origin' : '*',
