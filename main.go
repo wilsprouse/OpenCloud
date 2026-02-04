@@ -25,12 +25,11 @@ func withCORS(next http.Handler) http.Handler {
 			// No CORS headers needed - browser already allows same-origin requests
 		} else {
 			// For requests with an Origin header, we need to validate and set CORS headers
-			// Allow requests from:
-			// 1. localhost:3000 (development)
-			// 2. Any host on port 3000 or port 80 (frontend access)
-			// This is safe because we only allow requests from our own frontend
+			// We allow requests from the same host on ports 80 (nginx) or 3000 (direct frontend)
+			// This prevents arbitrary external sites from making requests while allowing
+			// legitimate access from the frontend served by this server
 			
-			allowed := isAllowedOrigin(origin)
+			allowed := isAllowedOrigin(origin, r.Host)
 			
 			if allowed {
 				// Allow the request with CORS headers
@@ -56,27 +55,46 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-// isAllowedOrigin checks if the origin is from an allowed port (80 or 3000)
-func isAllowedOrigin(origin string) bool {
+// isAllowedOrigin checks if the origin is from the same host on an allowed port (80 or 3000)
+func isAllowedOrigin(origin string, requestHost string) bool {
 	// Parse the origin URL
-	u, err := url.Parse(origin)
+	originURL, err := url.Parse(origin)
 	if err != nil {
 		return false
 	}
 	
-	// Only allow HTTP (not HTTPS for now, to keep it simple)
-	if u.Scheme != "http" {
+	// Extract host from origin (without port)
+	originHost := originURL.Hostname()
+	
+	// Extract host from request (without port)
+	requestHostname := requestHost
+	if colonIdx := len(requestHost) - 1; colonIdx >= 0 {
+		for i := len(requestHost) - 1; i >= 0; i-- {
+			if requestHost[i] == ':' {
+				requestHostname = requestHost[:i]
+				break
+			}
+		}
+	}
+	
+	// Verify the origin is from the same host
+	// This ensures only requests from frontends served by this server are allowed
+	if originHost != requestHostname && originHost != "localhost" && originHost != "127.0.0.1" {
 		return false
 	}
 	
-	// Get the port (defaults to 80 for http)
-	port := u.Port()
+	// Get the port from origin (defaults to 80 for http, 443 for https)
+	port := originURL.Port()
 	if port == "" {
-		port = "80"
+		if originURL.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
 	}
 	
-	// Allow port 80 (nginx) or 3000 (direct frontend access)
-	return port == "80" || port == "3000"
+	// Allow port 80 (nginx), 3000 (direct frontend access), or 443 (https nginx)
+	return port == "80" || port == "3000" || port == "443"
 }
 
 func main() {
