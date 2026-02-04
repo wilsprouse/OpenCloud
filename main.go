@@ -75,16 +75,23 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 		requestHostname = requestHost
 	}
 	
-	// Verify the origin is from the same host
+	// Verify the origin is from the same host or is trusted
 	// This ensures only requests from frontends served by this server are allowed
 	
-	// Check if both are localhost variants (allows cross-localhost origins like localhost -> 127.0.0.1)
-	isOriginLocalhost := isLocalhost(originHost)
+	// Extract host from request to check if it's localhost
 	isRequestLocalhost := isLocalhost(requestHostname)
 	
-	// Allow if: both are localhost variants OR exact hostname match
-	isValidHostname := (isOriginLocalhost && isRequestLocalhost) || (originHost == requestHostname)
-	if !isValidHostname {
+	// IMPORTANT: If the request comes TO localhost, trust it
+	// This handles Next.js rewrites where the frontend at http://IP:3000 rewrites
+	// API requests to http://localhost:3030, causing Origin != Host mismatch
+	// This is safe because the backend only listens on localhost and is not externally accessible
+	if isRequestLocalhost {
+		// Request is to localhost (via Next.js rewrite or direct) - allow any origin on valid ports
+		// Port validation happens below
+	} else if originHost == requestHostname {
+		// Exact hostname match (e.g., both are the same IP or domain) - allow
+	} else {
+		// Hostname mismatch and not to localhost - reject
 		return false
 	}
 	
