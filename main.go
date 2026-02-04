@@ -77,14 +77,18 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 	
 	// Verify the origin is from the same host
 	// This ensures only requests from frontends served by this server are allowed
-	if originHost != requestHostname {
-		// Special case: allow localhost/127.0.0.1/::1 only if request is also to localhost
-		isOriginLocalhost := isLocalhost(originHost)
-		isRequestLocalhost := isLocalhost(requestHostname)
-		
-		if !(isOriginLocalhost && isRequestLocalhost) {
-			return false
-		}
+	
+	// Check if both are localhost variants (allows cross-localhost origins like localhost -> 127.0.0.1)
+	isOriginLocalhost := isLocalhost(originHost)
+	isRequestLocalhost := isLocalhost(requestHostname)
+	
+	if isOriginLocalhost && isRequestLocalhost {
+		// Both are localhost variants - allow
+	} else if originHost == requestHostname {
+		// Exact hostname match - allow
+	} else {
+		// Hostname mismatch - reject
+		return false
 	}
 	
 	// Get the port from origin (defaults to 80 for http, 443 for https)
@@ -99,16 +103,19 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 	
 	// Allow specific ports where the frontend is accessible:
 	// - 80: nginx reverse proxy (production)
+	//       Note: If using HTTPS, configure nginx to redirect HTTP to HTTPS
 	// - 3000: direct Next.js frontend access (development/fallback)
 	// - 443: nginx with HTTPS (production with SSL)
 	return port == "80" || port == "3000" || port == "443"
 }
 
 // isLocalhost checks if a hostname is a localhost variant
+// Note: url.URL.Hostname() automatically strips brackets from IPv6 addresses,
+// so we only need to check '::1' without brackets
 func isLocalhost(hostname string) bool {
 	// Normalize to lowercase for case-insensitive comparison
 	h := strings.ToLower(hostname)
-	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]"
+	return h == "localhost" || h == "127.0.0.1" || h == "::1"
 }
 
 func main() {
