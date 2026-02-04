@@ -13,6 +13,14 @@ const nextConfig = {
     env: {
       REACT_APP_BACKEND: process.env.REACT_APP_BACKEND,
     },
+    async rewrites() {
+      return [
+        {
+          source: '/api/:path*',
+          destination: 'http://localhost:3030/:path*',
+        },
+      ]
+    },
   }
   
   export default nextConfig
