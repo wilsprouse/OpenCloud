@@ -84,7 +84,12 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 	// IMPORTANT: If the request comes TO localhost, trust it
 	// This handles Next.js rewrites where the frontend at http://IP:3000 rewrites
 	// API requests to http://localhost:3030, causing Origin != Host mismatch
-	// This is safe because the backend only listens on localhost and is not externally accessible
+	// 
+	// Security: This is safe because:
+	// 1. The backend ONLY listens on localhost:3030 (not on external interfaces)
+	// 2. Only local processes (nginx, Next.js) can reach localhost:3030
+	// 3. External attackers cannot directly access localhost:3030
+	// 4. Port validation (80, 3000, 443) still applies to prevent arbitrary ports
 	if isRequestLocalhost {
 		// Request is to localhost (via Next.js rewrite or direct) - allow any origin on valid ports
 		// Port validation happens below
@@ -169,6 +174,8 @@ func main() {
 	// Wrap all routes with CORS middleware
 	handler := withCORS(mux)
 
-	fmt.Println("Server running on :3030")
-	http.ListenAndServe(":3030", handler)
+	fmt.Println("Server running on localhost:3030")
+	// IMPORTANT: Only listen on localhost for security
+	// External access should go through nginx (port 80/443) or Next.js (port 3000)
+	http.ListenAndServe("localhost:3030", handler)
 }
