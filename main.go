@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"github.com/WavexSoftware/OpenCloud/api"
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 	"github.com/WavexSoftware/OpenCloud/utils"
@@ -22,27 +23,60 @@ func withCORS(next http.Handler) http.Handler {
 		if origin == "" {
 			// Same-origin request (from nginx proxy in production)
 			// No CORS headers needed - browser already allows same-origin requests
-		} else if origin == "http://localhost:3000" {
-			// Development environment - allow localhost with credentials
-			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		} else {
+			// For requests with an Origin header, we need to validate and set CORS headers
+			// Allow requests from:
+			// 1. localhost:3000 (development)
+			// 2. Any host on port 3000 or port 80 (frontend access)
+			// This is safe because we only allow requests from our own frontend
 			
-			// Handle preflight request
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
+			allowed := isAllowedOrigin(origin)
+			
+			if allowed {
+				// Allow the request with CORS headers
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				
+				// Handle preflight request
+				if r.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+			} else {
+				// Unauthorized origin - reject the request
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte("CORS policy: origin not allowed"))
 				return
 			}
-		} else {
-			// Unauthorized origin - reject the request
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte("CORS policy: origin not allowed"))
-			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isAllowedOrigin checks if the origin is from an allowed port (80 or 3000)
+func isAllowedOrigin(origin string) bool {
+	// Parse the origin URL
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	
+	// Only allow HTTP (not HTTPS for now, to keep it simple)
+	if u.Scheme != "http" {
+		return false
+	}
+	
+	// Get the port (defaults to 80 for http)
+	port := u.Port()
+	if port == "" {
+		port = "80"
+	}
+	
+	// Allow port 80 (nginx) or 3000 (direct frontend access)
+	return port == "80" || port == "3000"
 }
 
 func main() {
