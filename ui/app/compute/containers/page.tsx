@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DashboardHeader } from "@/components/dashboard-header"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import client from "@/app/utility/post"
 import { 
   RefreshCw, 
@@ -67,8 +68,8 @@ export default function ContainersPage() {
   // Filter containers based on search
   const filteredContainers = containers.filter(container => 
     container.Names?.[0]?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    container.Image.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    container.Id.toLowerCase().includes(searchTerm.toLowerCase())
+    container.Image?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    container.Id?.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   // Calculate statistics
@@ -134,10 +135,10 @@ export default function ContainersPage() {
           </div>
           <div className="relative mt-4">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <input
+            <Input
               type="text"
               placeholder="Search containers by name, image, or ID..."
-              className="w-full pl-8 pr-4 py-2 border rounded-md bg-background"
+              className="pl-8"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
