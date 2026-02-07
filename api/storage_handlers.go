@@ -441,6 +441,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("Here in func ln8.5")
 
 	// Connect to buildkit daemon
 	// NOTE: This requires a separate buildkit daemon to be running.
