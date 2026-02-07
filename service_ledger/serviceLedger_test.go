@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+// getInstallerDir is a helper function that returns the path to the service_installers directory.
+// This is used by multiple test functions to avoid code duplication.
+func getInstallerDir(t *testing.T) string {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("Failed to get current file path")
+	}
+	dir := filepath.Dir(currentFile)
+	return filepath.Join(dir, "service_installers")
+}
+
 func TestSyncFunctionsBasic(t *testing.T) {
 	// Setup: Create a temporary directory for test functions
 	tmpHome := t.TempDir()
@@ -211,12 +222,7 @@ func TestExecuteServiceInstallerNonExistent(t *testing.T) {
 
 func TestExecuteServiceInstallerSuccess(t *testing.T) {
 	// Get the actual service_installers directory path
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("Failed to get current file path")
-	}
-	dir := filepath.Dir(currentFile)
-	installerDir := filepath.Join(dir, "service_installers")
+	installerDir := getInstallerDir(t)
 	
 	// Create a test service installer that will succeed
 	testServiceName := "test_service_success"
@@ -238,12 +244,7 @@ func TestExecuteServiceInstallerSuccess(t *testing.T) {
 
 func TestExecuteServiceInstallerFailure(t *testing.T) {
 	// Get the actual service_installers directory path
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("Failed to get current file path")
-	}
-	dir := filepath.Dir(currentFile)
-	installerDir := filepath.Join(dir, "service_installers")
+	installerDir := getInstallerDir(t)
 	
 	// Create a test service installer that will fail
 	testServiceName := "test_service_failure"
@@ -276,12 +277,7 @@ func TestEnableServiceWithInstaller(t *testing.T) {
 	}
 	
 	// Get the actual service_installers directory path
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("Failed to get current file path")
-	}
-	dir := filepath.Dir(currentFile)
-	installerDir := filepath.Join(dir, "service_installers")
+	installerDir := getInstallerDir(t)
 	
 	// Create a test service installer
 	testServiceName := "test_enable_service"
@@ -323,12 +319,7 @@ func TestEnableServiceWithFailingInstaller(t *testing.T) {
 	}
 	
 	// Get the actual service_installers directory path
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("Failed to get current file path")
-	}
-	dir := filepath.Dir(currentFile)
-	installerDir := filepath.Join(dir, "service_installers")
+	installerDir := getInstallerDir(t)
 	
 	// Create a test service installer that fails
 	testServiceName := "test_enable_fail"

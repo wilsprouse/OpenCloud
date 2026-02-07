@@ -187,7 +187,7 @@ func executeServiceInstaller(serviceName string) error {
 	// Check if the installer script exists
 	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
 		// Installer doesn't exist, which is fine - not all services need installers
-		log.Printf("No installer script found for service '%s' at %s (this is ok if the service doesn't require installation)", serviceName, installerPath)
+		log.Printf("No installer found for service '%s', skipping installation step", serviceName)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to check installer script: %w", err)
