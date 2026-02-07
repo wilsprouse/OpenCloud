@@ -138,6 +138,9 @@ func InitializeServiceLedger() error {
 		"container_registry": ServiceStatus{
 			Enabled: false,
 		},
+		"containers": ServiceStatus{
+			Enabled: false,
+		},
 		"Functions": ServiceStatus{
 			Enabled: false,
 		},
