@@ -15,7 +15,6 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/moby/buildkit/client"
-	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/docker/cli/cli/config"
@@ -510,26 +509,16 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Consume progress updates and log them
-	display, err := progressui.NewDisplay(nil, progressui.PlainMode)
-	if err == nil {
-		// Capture build output
-		go func() {
-			for status := range progressCh {
-				// Log progress statuses to build output
-				for _, vertex := range status.Vertexes {
-					if vertex.Error != "" {
-						buildOutput.WriteString(fmt.Sprintf("Error: %s\n", vertex.Error))
-					}
-					if vertex.Name != "" {
-						buildOutput.WriteString(fmt.Sprintf("%s\n", vertex.Name))
-					}
-				}
+	// Only consume from progressCh in one place to avoid race conditions
+	for status := range progressCh {
+		// Log progress statuses to build output
+		for _, vertex := range status.Vertexes {
+			if vertex.Error != "" {
+				buildOutput.WriteString(fmt.Sprintf("Error: %s\n", vertex.Error))
 			}
-		}()
-		display.UpdateFrom(ctx, progressCh)
-	} else {
-		// Drain the channel if display creation failed
-		for range progressCh {
+			if vertex.Name != "" {
+				buildOutput.WriteString(fmt.Sprintf("%s\n", vertex.Name))
+			}
 		}
 	}
 
