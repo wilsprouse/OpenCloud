@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -57,14 +58,24 @@ type ServiceLedger map[string]ServiceStatus
 
 var ledgerMutex sync.Mutex
 
+// serviceLedgerDir is the directory containing the service ledger files.
+// It is initialized once during package initialization to avoid runtime.Caller issues.
+var serviceLedgerDir string
+
+func init() {
+	// Initialize the service ledger directory path
+	_, currentFile, _, ok := runtime.Caller(0)
+	if ok {
+		serviceLedgerDir = filepath.Dir(currentFile)
+	}
+}
+
 // getLedgerPath returns the absolute path to the serviceLedger.json file
 func getLedgerPath() (string, error) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", os.ErrNotExist
+	if serviceLedgerDir == "" {
+		return "", fmt.Errorf("service ledger directory not initialized")
 	}
-	dir := filepath.Dir(currentFile)
-	return filepath.Join(dir, "serviceLedger.json"), nil
+	return filepath.Join(serviceLedgerDir, "serviceLedger.json"), nil
 }
 
 // ReadServiceLedger reads and parses the service ledger JSON file
@@ -165,20 +176,18 @@ func IsServiceEnabled(serviceName string) (bool, error) {
 //            installer doesn't exist (as not all services require installers) or if
 //            the installer executes successfully.
 func executeServiceInstaller(serviceName string) error {
-	// Get the current file path to construct the installer script path
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return fmt.Errorf("failed to get current file path")
+	// Use the package-level directory path initialized in init()
+	if serviceLedgerDir == "" {
+		return fmt.Errorf("service ledger directory not initialized")
 	}
 
 	// Construct the path to the installer script
-	dir := filepath.Dir(currentFile)
-	installerPath := filepath.Join(dir, "service_installers", serviceName+".sh")
+	installerPath := filepath.Join(serviceLedgerDir, "service_installers", serviceName+".sh")
 
 	// Check if the installer script exists
 	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
 		// Installer doesn't exist, which is fine - not all services need installers
-		fmt.Printf("No installer script found for service '%s' at %s (this is ok if the service doesn't require installation)\n", serviceName, installerPath)
+		log.Printf("No installer script found for service '%s' at %s (this is ok if the service doesn't require installation)", serviceName, installerPath)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("failed to check installer script: %w", err)
@@ -190,7 +199,7 @@ func executeServiceInstaller(serviceName string) error {
 	}
 
 	// Execute the installer script
-	fmt.Printf("Executing installer script for service '%s'...\n", serviceName)
+	log.Printf("Executing installer script for service '%s'...", serviceName)
 	cmd := exec.Command("/bin/bash", installerPath)
 
 	// Capture both stdout and stderr
@@ -198,14 +207,14 @@ func executeServiceInstaller(serviceName string) error {
 	
 	// Log the output regardless of success or failure
 	if len(output) > 0 {
-		fmt.Printf("Installer output for '%s':\n%s\n", serviceName, string(output))
+		log.Printf("Installer output for '%s':\n%s", serviceName, string(output))
 	}
 
 	if err != nil {
-		return fmt.Errorf("installer script failed for service '%s': %w\nOutput: %s", serviceName, err, string(output))
+		return fmt.Errorf("installer script failed for service '%s': %w", serviceName, err)
 	}
 
-	fmt.Printf("Successfully executed installer for service '%s'\n", serviceName)
+	log.Printf("Successfully executed installer for service '%s'", serviceName)
 	return nil
 }
 
