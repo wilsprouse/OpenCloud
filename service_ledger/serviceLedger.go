@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -152,10 +153,72 @@ func IsServiceEnabled(serviceName string) (bool, error) {
 	return status.Enabled, nil
 }
 
+// executeServiceInstaller executes the installer script for a given service if it exists.
+// The installer script is expected to be located at service_installers/{serviceName}.sh
+// relative to the service_ledger directory.
+//
+// Parameters:
+//   - serviceName: The name of the service to install
+//
+// Returns:
+//   - error: Returns an error if the installer fails to execute. Returns nil if the
+//            installer doesn't exist (as not all services require installers) or if
+//            the installer executes successfully.
+func executeServiceInstaller(serviceName string) error {
+	// Get the current file path to construct the installer script path
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return fmt.Errorf("failed to get current file path")
+	}
+
+	// Construct the path to the installer script
+	dir := filepath.Dir(currentFile)
+	installerPath := filepath.Join(dir, "service_installers", serviceName+".sh")
+
+	// Check if the installer script exists
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		// Installer doesn't exist, which is fine - not all services need installers
+		fmt.Printf("No installer script found for service '%s' at %s (this is ok if the service doesn't require installation)\n", serviceName, installerPath)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to check installer script: %w", err)
+	}
+
+	// Make the script executable
+	if err := os.Chmod(installerPath, 0755); err != nil {
+		return fmt.Errorf("failed to make installer script executable: %w", err)
+	}
+
+	// Execute the installer script
+	fmt.Printf("Executing installer script for service '%s'...\n", serviceName)
+	cmd := exec.Command("/bin/bash", installerPath)
+
+	// Capture both stdout and stderr
+	output, err := cmd.CombinedOutput()
+	
+	// Log the output regardless of success or failure
+	if len(output) > 0 {
+		fmt.Printf("Installer output for '%s':\n%s\n", serviceName, string(output))
+	}
+
+	if err != nil {
+		return fmt.Errorf("installer script failed for service '%s': %w\nOutput: %s", serviceName, err, string(output))
+	}
+
+	fmt.Printf("Successfully executed installer for service '%s'\n", serviceName)
+	return nil
+}
+
 // EnableService enables a specific service in the ledger
 func EnableService(serviceName string) error {
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
+
+	// Execute the service installer before enabling the service
+	// If the installer fails, the service will not be enabled
+	if err := executeServiceInstaller(serviceName); err != nil {
+		return fmt.Errorf("failed to execute installer for service '%s': %w", serviceName, err)
+	}
 
 	ledger, err := ReadServiceLedger()
 	if err != nil {

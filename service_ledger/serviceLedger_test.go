@@ -3,6 +3,7 @@ package service_ledger
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -196,6 +197,193 @@ func TestSyncFunctionsNoDirectory(t *testing.T) {
 	_, err := ReadServiceLedger()
 	if err != nil {
 		t.Errorf("Service ledger should be readable: %v", err)
+	}
+}
+
+func TestExecuteServiceInstallerNonExistent(t *testing.T) {
+	// Test with a service that doesn't have an installer script
+	// This should not fail - it should return nil
+	err := executeServiceInstaller("nonexistent_service")
+	if err != nil {
+		t.Errorf("executeServiceInstaller should not fail for non-existent installer: %v", err)
+	}
+}
+
+func TestExecuteServiceInstallerSuccess(t *testing.T) {
+	// Get the actual service_installers directory path
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("Failed to get current file path")
+	}
+	dir := filepath.Dir(currentFile)
+	installerDir := filepath.Join(dir, "service_installers")
+	
+	// Create a test service installer that will succeed
+	testServiceName := "test_service_success"
+	installerPath := filepath.Join(installerDir, testServiceName+".sh")
+	
+	// Create the installer script
+	scriptContent := "#!/bin/bash\necho 'Test installer executed successfully'\nexit 0\n"
+	if err := os.WriteFile(installerPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath) // Clean up after test
+	
+	// Execute the installer
+	err := executeServiceInstaller(testServiceName)
+	if err != nil {
+		t.Errorf("executeServiceInstaller should succeed for valid installer: %v", err)
+	}
+}
+
+func TestExecuteServiceInstallerFailure(t *testing.T) {
+	// Get the actual service_installers directory path
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("Failed to get current file path")
+	}
+	dir := filepath.Dir(currentFile)
+	installerDir := filepath.Join(dir, "service_installers")
+	
+	// Create a test service installer that will fail
+	testServiceName := "test_service_failure"
+	installerPath := filepath.Join(installerDir, testServiceName+".sh")
+	
+	// Create the installer script that exits with error
+	scriptContent := "#!/bin/bash\necho 'Test installer failed'\nexit 1\n"
+	if err := os.WriteFile(installerPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath) // Clean up after test
+	
+	// Execute the installer - should fail
+	err := executeServiceInstaller(testServiceName)
+	if err == nil {
+		t.Error("executeServiceInstaller should fail for failing installer script")
+	}
+}
+
+func TestEnableServiceWithInstaller(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+	
+	// Initialize the ledger
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+	
+	// Get the actual service_installers directory path
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("Failed to get current file path")
+	}
+	dir := filepath.Dir(currentFile)
+	installerDir := filepath.Join(dir, "service_installers")
+	
+	// Create a test service installer
+	testServiceName := "test_enable_service"
+	installerPath := filepath.Join(installerDir, testServiceName+".sh")
+	
+	scriptContent := "#!/bin/bash\necho 'Installing test service'\nexit 0\n"
+	if err := os.WriteFile(installerPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath)
+	
+	// Enable the service
+	err := EnableService(testServiceName)
+	if err != nil {
+		t.Errorf("EnableService should succeed when installer succeeds: %v", err)
+	}
+	
+	// Verify the service is enabled in the ledger
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	
+	if !enabled {
+		t.Error("Service should be enabled after successful EnableService call")
+	}
+}
+
+func TestEnableServiceWithFailingInstaller(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+	
+	// Initialize the ledger
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+	
+	// Get the actual service_installers directory path
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("Failed to get current file path")
+	}
+	dir := filepath.Dir(currentFile)
+	installerDir := filepath.Join(dir, "service_installers")
+	
+	// Create a test service installer that fails
+	testServiceName := "test_enable_fail"
+	installerPath := filepath.Join(installerDir, testServiceName+".sh")
+	
+	scriptContent := "#!/bin/bash\necho 'Installation failed'\nexit 1\n"
+	if err := os.WriteFile(installerPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath)
+	
+	// Enable the service - should fail
+	err := EnableService(testServiceName)
+	if err == nil {
+		t.Error("EnableService should fail when installer fails")
+	}
+	
+	// Verify the service is NOT enabled in the ledger
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	
+	if enabled {
+		t.Error("Service should NOT be enabled when installer fails")
+	}
+}
+
+func TestEnableServiceWithoutInstaller(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+	
+	// Initialize the ledger
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+	
+	// Enable a service without an installer - should succeed
+	testServiceName := "service_without_installer"
+	err := EnableService(testServiceName)
+	if err != nil {
+		t.Errorf("EnableService should succeed even without installer: %v", err)
+	}
+	
+	// Verify the service is enabled
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	
+	if !enabled {
+		t.Error("Service should be enabled even without installer")
 	}
 }
 
