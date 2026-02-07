@@ -79,7 +79,7 @@ export default function ContainerRegistry() {
   // Check if service is enabled
   const checkServiceStatus = async () => {
     try {
-      const res = await client.get<{ service: string; enabled: boolean }>("/get-service-status?service=Containers")
+      const res = await client.get<{ service: string; enabled: boolean }>("/get-service-status?service=container_registry")
       setServiceEnabled(res.data.enabled)
     } catch (err) {
       console.error("Failed to check service status:", err)
@@ -91,7 +91,7 @@ export default function ContainerRegistry() {
   const handleEnableService = async () => {
     setEnablingService(true)
     try {
-      await client.post("/enable-service", { service: "Containers" })
+      await client.post("/enable-service", { service: "container_registry" })
       setServiceEnabled(true)
       fetchImages()
     } catch (err) {

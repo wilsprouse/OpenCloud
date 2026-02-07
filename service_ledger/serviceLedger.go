@@ -9,8 +9,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -56,14 +58,27 @@ type ServiceLedger map[string]ServiceStatus
 
 var ledgerMutex sync.Mutex
 
-// getLedgerPath returns the absolute path to the serviceLedger.json file
-func getLedgerPath() (string, error) {
+// serviceLedgerDir is the directory containing the service ledger files.
+// It is initialized once during package initialization to avoid runtime.Caller issues.
+var serviceLedgerDir string
+
+func init() {
+	// Initialize the service ledger directory path
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
-		return "", os.ErrNotExist
+		log.Fatal("Critical: Failed to determine service ledger directory path using runtime.Caller(0). " +
+			"This may occur in unusual contexts such as certain testing frameworks, stripped binaries, " +
+			"or other non-standard execution environments.")
 	}
-	dir := filepath.Dir(currentFile)
-	return filepath.Join(dir, "serviceLedger.json"), nil
+	serviceLedgerDir = filepath.Dir(currentFile)
+}
+
+// getLedgerPath returns the absolute path to the serviceLedger.json file
+func getLedgerPath() (string, error) {
+	if serviceLedgerDir == "" {
+		return "", fmt.Errorf("service ledger directory not initialized")
+	}
+	return filepath.Join(serviceLedgerDir, "serviceLedger.json"), nil
 }
 
 // ReadServiceLedger reads and parses the service ledger JSON file
@@ -120,7 +135,10 @@ func InitializeServiceLedger() error {
 
 	// Create initial ledger with default services
 	initialLedger := ServiceLedger{
-		"Containers": ServiceStatus{
+		"container_registry": ServiceStatus{
+			Enabled: false,
+		},
+		"containers": ServiceStatus{
 			Enabled: false,
 		},
 		"Functions": ServiceStatus{
@@ -152,10 +170,74 @@ func IsServiceEnabled(serviceName string) (bool, error) {
 	return status.Enabled, nil
 }
 
+// executeServiceInstaller executes the installer script for a given service if it exists.
+// The installer script is expected to be located at service_installers/{serviceName}.sh
+// relative to the service_ledger directory.
+//
+// Parameters:
+//   - serviceName: The name of the service to install
+//
+// Returns:
+//   - error: Returns an error if the installer fails to execute. Returns nil if the
+//            installer doesn't exist (as not all services require installers) or if
+//            the installer executes successfully.
+func executeServiceInstaller(serviceName string) error {
+	// Use the package-level directory path initialized in init()
+	// Note: This check is a defensive measure. In normal execution, serviceLedgerDir
+	// is guaranteed to be initialized by init() (which calls log.Fatal if initialization
+	// fails). However, this check provides a more graceful error if the function is
+	// called in an unexpected context (e.g., during testing with reflection).
+	if serviceLedgerDir == "" {
+		return fmt.Errorf("service ledger directory not initialized")
+	}
+
+	// Construct the path to the installer script
+	installerPath := filepath.Join(serviceLedgerDir, "service_installers", serviceName+".sh")
+
+	// Check if the installer script exists
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		// Installer doesn't exist, which is fine - not all services need installers
+		log.Printf("No installer found for service '%s', skipping installation step", serviceName)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to check installer script: %w", err)
+	}
+
+	// Make the script executable
+	if err := os.Chmod(installerPath, 0755); err != nil {
+		return fmt.Errorf("failed to make installer script executable: %w", err)
+	}
+
+	// Execute the installer script
+	log.Printf("Executing installer script for service '%s'...", serviceName)
+	cmd := exec.Command("/bin/bash", installerPath)
+
+	// Capture both stdout and stderr
+	output, err := cmd.CombinedOutput()
+	
+	// Log the output regardless of success or failure
+	if len(output) > 0 {
+		log.Printf("Installer output for '%s':\n%s", serviceName, string(output))
+	}
+
+	if err != nil {
+		return fmt.Errorf("installer script failed for service '%s': %w", serviceName, err)
+	}
+
+	log.Printf("Successfully executed installer for service '%s'", serviceName)
+	return nil
+}
+
 // EnableService enables a specific service in the ledger
 func EnableService(serviceName string) error {
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
+
+	// Execute the service installer before enabling the service
+	// If the installer fails, the service will not be enabled
+	if err := executeServiceInstaller(serviceName); err != nil {
+		return fmt.Errorf("failed to execute installer for service '%s': %w", serviceName, err)
+	}
 
 	ledger, err := ReadServiceLedger()
 	if err != nil {

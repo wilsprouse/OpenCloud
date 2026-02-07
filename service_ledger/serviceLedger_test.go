@@ -1,10 +1,62 @@
 package service_ledger
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
+
+// getInstallerDir is a helper function that returns the path to the service_installers directory.
+// This is used by multiple test functions to avoid code duplication.
+func getInstallerDir(t *testing.T) string {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("Failed to get current file path")
+	}
+	dir := filepath.Dir(currentFile)
+	return filepath.Join(dir, "service_installers")
+}
+
+// escapeSingleQuoteForBash escapes single quotes in a string for safe use within
+// single-quoted bash strings. It uses the '\'' pattern: end the single-quoted string,
+// add an escaped single quote, then start a new single-quoted string. This is the
+// standard bash approach for including literal single quotes within single-quoted strings.
+// Example: "can't" becomes "can'\''t" which bash interprets as: can + ' + t
+func escapeSingleQuoteForBash(s string) string {
+	// Replace each ' with '\'' (end quote, escaped quote, start quote)
+	return strings.ReplaceAll(s, "'", "'\\''")
+}
+
+// createTestScript generates test installer scripts with configurable exit codes and messages.
+// This reduces code duplication across test functions that need to create test scripts.
+//
+// Parameters:
+//   - installerDir: The directory where the script should be created
+//   - serviceName: The name of the service (used to name the script file)
+//   - exitCode: The exit code the script should return (0 for success, non-zero for failure)
+//   - message: The message the script should echo (will be escaped for use in single-quoted bash strings)
+//
+// Returns:
+//   - scriptPath: The full path to the created script
+//   - error: Any error encountered during script creation
+//
+// Note: This function is designed for test purposes where messages are controlled and trusted.
+// The escaping handles single-quote contexts specifically. If using similar logic for user-provided
+// input in production code, additional validation and escaping would be needed for full shell safety.
+func createTestScript(installerDir, serviceName string, exitCode int, message string) (string, error) {
+	scriptPath := filepath.Join(installerDir, serviceName+".sh")
+	// Escape single quotes for use within single-quoted bash strings.
+	// When a string is enclosed in single quotes in bash, all characters are treated
+	// literally (no variable expansion, no command substitution, no globbing) except for
+	// single quotes themselves, making this escaping sufficient for single-quote contexts.
+	escapedMessage := escapeSingleQuoteForBash(message)
+	scriptContent := fmt.Sprintf("#!/bin/bash\necho '%s'\nexit %d\n", escapedMessage, exitCode)
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	return scriptPath, err
+}
 
 func TestSyncFunctionsBasic(t *testing.T) {
 	// Setup: Create a temporary directory for test functions
@@ -196,6 +248,163 @@ func TestSyncFunctionsNoDirectory(t *testing.T) {
 	_, err := ReadServiceLedger()
 	if err != nil {
 		t.Errorf("Service ledger should be readable: %v", err)
+	}
+}
+
+func TestExecuteServiceInstallerNonExistent(t *testing.T) {
+	// Test with a service that doesn't have an installer script
+	// This should not fail - it should return nil
+	err := executeServiceInstaller("nonexistent_service")
+	if err != nil {
+		t.Errorf("executeServiceInstaller should not fail for non-existent installer: %v", err)
+	}
+}
+
+func TestExecuteServiceInstallerSuccess(t *testing.T) {
+	// Get the actual service_installers directory path
+	installerDir := getInstallerDir(t)
+	
+	// Create a test service installer that will succeed
+	testServiceName := "test_service_success"
+	installerPath, err := createTestScript(installerDir, testServiceName, 0, "Test installer executed successfully")
+	if err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath) // Clean up after test
+	
+	// Execute the installer
+	err = executeServiceInstaller(testServiceName)
+	if err != nil {
+		t.Errorf("executeServiceInstaller should succeed for valid installer: %v", err)
+	}
+}
+
+func TestExecuteServiceInstallerFailure(t *testing.T) {
+	// Get the actual service_installers directory path
+	installerDir := getInstallerDir(t)
+	
+	// Create a test service installer that will fail
+	testServiceName := "test_service_failure"
+	installerPath, err := createTestScript(installerDir, testServiceName, 1, "Test installer failed")
+	if err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath) // Clean up after test
+	
+	// Execute the installer - should fail
+	err = executeServiceInstaller(testServiceName)
+	if err == nil {
+		t.Error("executeServiceInstaller should fail for failing installer script")
+	}
+}
+
+func TestEnableServiceWithInstaller(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+	
+	// Initialize the ledger
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+	
+	// Get the actual service_installers directory path
+	installerDir := getInstallerDir(t)
+	
+	// Create a test service installer
+	testServiceName := "test_enable_service"
+	installerPath, err := createTestScript(installerDir, testServiceName, 0, "Installing test service")
+	if err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath)
+	
+	// Enable the service
+	err = EnableService(testServiceName)
+	if err != nil {
+		t.Errorf("EnableService should succeed when installer succeeds: %v", err)
+	}
+	
+	// Verify the service is enabled in the ledger
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	
+	if !enabled {
+		t.Error("Service should be enabled after successful EnableService call")
+	}
+}
+
+func TestEnableServiceWithFailingInstaller(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+	
+	// Initialize the ledger
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+	
+	// Get the actual service_installers directory path
+	installerDir := getInstallerDir(t)
+	
+	// Create a test service installer that fails
+	testServiceName := "test_enable_fail"
+	installerPath, err := createTestScript(installerDir, testServiceName, 1, "Installation failed")
+	if err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath)
+	
+	// Enable the service - should fail
+	err = EnableService(testServiceName)
+	if err == nil {
+		t.Error("EnableService should fail when installer fails")
+	}
+	
+	// Verify the service is NOT enabled in the ledger
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	
+	if enabled {
+		t.Error("Service should NOT be enabled when installer fails")
+	}
+}
+
+func TestEnableServiceWithoutInstaller(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+	
+	// Initialize the ledger
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+	
+	// Enable a service without an installer - should succeed
+	testServiceName := "service_without_installer"
+	err := EnableService(testServiceName)
+	if err != nil {
+		t.Errorf("EnableService should succeed even without installer: %v", err)
+	}
+	
+	// Verify the service is enabled
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	
+	if !enabled {
+		t.Error("Service should be enabled even without installer")
 	}
 }
 
