@@ -220,15 +220,15 @@ export default function ContainerRegistry() {
               <div className="mx-auto p-3 rounded-full bg-blue-50 w-fit mb-4">
                 <Container className="h-8 w-8 text-blue-600" />
               </div>
-              <CardTitle>Enable Container Storage Service</CardTitle>
+              <CardTitle>Enable Container Registry Service</CardTitle>
               <CardDescription>
-                The Container Storage service is not yet enabled. Enable it to start managing container images and deployments.
+                The Container Registry service is not yet enabled. Enable it to start managing container images and deployments.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex justify-center">
               <Button onClick={handleEnableService} disabled={enablingService} size="lg">
                 <Power className="mr-2 h-4 w-4" />
-                {enablingService ? "Enabling..." : "Enable Container Storage"}
+                {enablingService ? "Enabling..." : "Enable Container Registry"}
               </Button>
             </CardContent>
           </Card>
