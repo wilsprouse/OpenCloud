@@ -325,10 +325,14 @@ type BuildImageRequest struct {
 
 // BuildImage builds a container image from a Dockerfile using containerd/buildkit
 func BuildImage(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("Here in func")
+	fmt.Println("Here in func ln")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	fmt.Printf("Here in func2")
+	fmt.Println("Here in func ln2")
 
 	// Parse request body
 	var req BuildImageRequest
@@ -336,6 +340,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	fmt.Printf("Here in func3")
+	fmt.Println("Here in func ln3")
 
 	// Validate required fields
 	if req.Dockerfile == "" || req.ImageName == "" {
@@ -343,6 +349,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Printf("Here in func4")
+	fmt.Println("Here in func ln4")
 	// Basic Dockerfile validation to prevent obvious security issues
 	// Note: This is not comprehensive - buildkit provides sandboxing
 	// Dockerfile instructions are case-insensitive
@@ -365,6 +373,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	fmt.Printf("Here in func5")
+	fmt.Println("Here in func ln5")
 	if !hasFrom {
 		http.Error(w, "Invalid Dockerfile: must contain FROM instruction after any comments/directives", http.StatusBadRequest)
 		return
@@ -380,6 +390,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		imageName = imageName[:idx]
 	}
 	
+	fmt.Printf("Here in func6")
+	fmt.Println("Here in func ln6")
 	// Check for path traversal and malicious patterns
 	if strings.Contains(imageName, "..") || 
 	   strings.Contains(imageName, "//") || 
@@ -406,6 +418,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	ctx = namespaces.WithNamespace(ctx, "default")
 
+	fmt.Printf("Here in func7")
+	fmt.Println("Here in func ln7")
 	// Create a temporary directory for the build context with restrictive permissions
 	tmpDir, err := os.MkdirTemp("", "opencloud-build-*")
 	if err != nil {
@@ -420,6 +434,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Printf("Here in func8")
+	fmt.Println("Here in func ln8")
 	// Write the Dockerfile to the temp directory
 	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(req.Dockerfile), 0644); err != nil {
@@ -437,6 +453,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Printf("Here in func9")
+	fmt.Println("Here in func ln9")
 	bkClient, err := client.New(ctx, buildkitAddr)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to connect to buildkit: %v. Make sure buildkit daemon is running.", err), http.StatusInternalServerError)
