@@ -135,7 +135,7 @@ func InitializeServiceLedger() error {
 
 	// Create initial ledger with default services
 	initialLedger := ServiceLedger{
-		"Containers": ServiceStatus{
+		"container_registry": ServiceStatus{
 			Enabled: false,
 		},
 		"Functions": ServiceStatus{
