@@ -65,9 +65,12 @@ var serviceLedgerDir string
 func init() {
 	// Initialize the service ledger directory path
 	_, currentFile, _, ok := runtime.Caller(0)
-	if ok {
-		serviceLedgerDir = filepath.Dir(currentFile)
+	if !ok {
+		log.Fatal("Critical: Failed to determine service ledger directory path using runtime.Caller(0). " +
+			"This may occur in unusual contexts such as certain testing frameworks, stripped binaries, " +
+			"or other non-standard execution environments.")
 	}
+	serviceLedgerDir = filepath.Dir(currentFile)
 }
 
 // getLedgerPath returns the absolute path to the serviceLedger.json file
@@ -177,6 +180,10 @@ func IsServiceEnabled(serviceName string) (bool, error) {
 //            the installer executes successfully.
 func executeServiceInstaller(serviceName string) error {
 	// Use the package-level directory path initialized in init()
+	// Note: This check is a defensive measure. In normal execution, serviceLedgerDir
+	// is guaranteed to be initialized by init() (which calls log.Fatal if initialization
+	// fails). However, this check provides a more graceful error if the function is
+	// called in an unexpected context (e.g., during testing with reflection).
 	if serviceLedgerDir == "" {
 		return fmt.Errorf("service ledger directory not initialized")
 	}

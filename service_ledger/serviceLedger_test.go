@@ -1,9 +1,11 @@
 package service_ledger
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +18,44 @@ func getInstallerDir(t *testing.T) string {
 	}
 	dir := filepath.Dir(currentFile)
 	return filepath.Join(dir, "service_installers")
+}
+
+// escapeSingleQuoteForBash escapes single quotes in a string for safe use within
+// single-quoted bash strings. It uses the '\'' pattern: end the single-quoted string,
+// add an escaped single quote, then start a new single-quoted string. This is the
+// standard bash approach for including literal single quotes within single-quoted strings.
+// Example: "can't" becomes "can'\''t" which bash interprets as: can + ' + t
+func escapeSingleQuoteForBash(s string) string {
+	// Replace each ' with '\'' (end quote, escaped quote, start quote)
+	return strings.ReplaceAll(s, "'", "'\\''")
+}
+
+// createTestScript generates test installer scripts with configurable exit codes and messages.
+// This reduces code duplication across test functions that need to create test scripts.
+//
+// Parameters:
+//   - installerDir: The directory where the script should be created
+//   - serviceName: The name of the service (used to name the script file)
+//   - exitCode: The exit code the script should return (0 for success, non-zero for failure)
+//   - message: The message the script should echo (will be escaped for use in single-quoted bash strings)
+//
+// Returns:
+//   - scriptPath: The full path to the created script
+//   - error: Any error encountered during script creation
+//
+// Note: This function is designed for test purposes where messages are controlled and trusted.
+// The escaping handles single-quote contexts specifically. If using similar logic for user-provided
+// input in production code, additional validation and escaping would be needed for full shell safety.
+func createTestScript(installerDir, serviceName string, exitCode int, message string) (string, error) {
+	scriptPath := filepath.Join(installerDir, serviceName+".sh")
+	// Escape single quotes for use within single-quoted bash strings.
+	// When a string is enclosed in single quotes in bash, all characters are treated
+	// literally (no variable expansion, no command substitution, no globbing) except for
+	// single quotes themselves, making this escaping sufficient for single-quote contexts.
+	escapedMessage := escapeSingleQuoteForBash(message)
+	scriptContent := fmt.Sprintf("#!/bin/bash\necho '%s'\nexit %d\n", escapedMessage, exitCode)
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	return scriptPath, err
 }
 
 func TestSyncFunctionsBasic(t *testing.T) {
@@ -226,17 +266,14 @@ func TestExecuteServiceInstallerSuccess(t *testing.T) {
 	
 	// Create a test service installer that will succeed
 	testServiceName := "test_service_success"
-	installerPath := filepath.Join(installerDir, testServiceName+".sh")
-	
-	// Create the installer script
-	scriptContent := "#!/bin/bash\necho 'Test installer executed successfully'\nexit 0\n"
-	if err := os.WriteFile(installerPath, []byte(scriptContent), 0755); err != nil {
+	installerPath, err := createTestScript(installerDir, testServiceName, 0, "Test installer executed successfully")
+	if err != nil {
 		t.Fatalf("Failed to create test installer: %v", err)
 	}
 	defer os.Remove(installerPath) // Clean up after test
 	
 	// Execute the installer
-	err := executeServiceInstaller(testServiceName)
+	err = executeServiceInstaller(testServiceName)
 	if err != nil {
 		t.Errorf("executeServiceInstaller should succeed for valid installer: %v", err)
 	}
@@ -248,17 +285,14 @@ func TestExecuteServiceInstallerFailure(t *testing.T) {
 	
 	// Create a test service installer that will fail
 	testServiceName := "test_service_failure"
-	installerPath := filepath.Join(installerDir, testServiceName+".sh")
-	
-	// Create the installer script that exits with error
-	scriptContent := "#!/bin/bash\necho 'Test installer failed'\nexit 1\n"
-	if err := os.WriteFile(installerPath, []byte(scriptContent), 0755); err != nil {
+	installerPath, err := createTestScript(installerDir, testServiceName, 1, "Test installer failed")
+	if err != nil {
 		t.Fatalf("Failed to create test installer: %v", err)
 	}
 	defer os.Remove(installerPath) // Clean up after test
 	
 	// Execute the installer - should fail
-	err := executeServiceInstaller(testServiceName)
+	err = executeServiceInstaller(testServiceName)
 	if err == nil {
 		t.Error("executeServiceInstaller should fail for failing installer script")
 	}
@@ -281,16 +315,14 @@ func TestEnableServiceWithInstaller(t *testing.T) {
 	
 	// Create a test service installer
 	testServiceName := "test_enable_service"
-	installerPath := filepath.Join(installerDir, testServiceName+".sh")
-	
-	scriptContent := "#!/bin/bash\necho 'Installing test service'\nexit 0\n"
-	if err := os.WriteFile(installerPath, []byte(scriptContent), 0755); err != nil {
+	installerPath, err := createTestScript(installerDir, testServiceName, 0, "Installing test service")
+	if err != nil {
 		t.Fatalf("Failed to create test installer: %v", err)
 	}
 	defer os.Remove(installerPath)
 	
 	// Enable the service
-	err := EnableService(testServiceName)
+	err = EnableService(testServiceName)
 	if err != nil {
 		t.Errorf("EnableService should succeed when installer succeeds: %v", err)
 	}
@@ -323,16 +355,14 @@ func TestEnableServiceWithFailingInstaller(t *testing.T) {
 	
 	// Create a test service installer that fails
 	testServiceName := "test_enable_fail"
-	installerPath := filepath.Join(installerDir, testServiceName+".sh")
-	
-	scriptContent := "#!/bin/bash\necho 'Installation failed'\nexit 1\n"
-	if err := os.WriteFile(installerPath, []byte(scriptContent), 0755); err != nil {
+	installerPath, err := createTestScript(installerDir, testServiceName, 1, "Installation failed")
+	if err != nil {
 		t.Fatalf("Failed to create test installer: %v", err)
 	}
 	defer os.Remove(installerPath)
 	
 	// Enable the service - should fail
-	err := EnableService(testServiceName)
+	err = EnableService(testServiceName)
 	if err == nil {
 		t.Error("EnableService should fail when installer fails")
 	}

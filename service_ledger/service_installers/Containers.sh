@@ -111,11 +111,9 @@ main() {
 
     # Check if containerd is already installed
     if check_containerd_installed; then
-        print_info "${SERVICE_NAME} is already installed on this system"
-        
-        # Verify it's working
         local version
         version=$(containerd --version 2>&1 | head -n 1)
+        print_info "${SERVICE_NAME} is already installed on this system"
         print_info "Current version: ${version}"
         
         # Check if service is running
