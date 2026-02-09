@@ -460,12 +460,15 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to connect to buildkit: %v. Make sure buildkit daemon is running.", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("Here in func ln9.1")
 	defer bkClient.Close()
+	fmt.Println("Here in func ln9.2")
 
 	// Load Docker config for authentication
 	// Use ioutil.Discard to suppress stderr output in server context
 	dockerConfig := config.LoadDefaultConfigFile(io.Discard)
 	
+	fmt.Println("Here in func ln9.2")
 	// Create build options
 	solveOpt := client.SolveOpt{
 		LocalDirs: map[string]string{
@@ -481,6 +484,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			authprovider.NewDockerAuthProvider(dockerConfig, nil),
 		},
 	}
+	fmt.Println("Here in func ln9.3")
 
 	// Add no-cache option if specified
 	if req.NoCache {
@@ -497,6 +501,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
+	fmt.Println("Here in func ln9.4")
 
 	// Create a progress writer and build error collector
 	progressCh := make(chan *client.SolveStatus)
@@ -508,6 +513,9 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
 		close(progressCh)
 	}()
+
+
+	fmt.Println("Here in func ln9.5")
 
 	// Consume progress updates and log them
 	// Only consume from progressCh in one place to avoid race conditions
@@ -523,6 +531,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	fmt.Println("Here in func ln9.6")
 	// Check if build failed
 	if buildErr != nil {
 		http.Error(w, fmt.Sprintf("Build failed: %v\nBuild output: %s", buildErr, buildOutput.String()), http.StatusInternalServerError)
@@ -545,6 +554,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	fmt.Println("Here in func ln9.6")
 
 	// Return success response
 	w.Header().Set("Content-Type", "application/json")
