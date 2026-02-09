@@ -503,32 +503,47 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Println("Here in func ln9.4")
 
-	// Create a progress writer and build error collector
 	progressCh := make(chan *client.SolveStatus)
+	done := make(chan struct{})
+
 	var buildErr error
 	var buildOutput strings.Builder
-	
-	// Build the image
+
 	go func() {
+		defer close(done)
 		_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
-		close(progressCh)
 	}()
 
-
-	fmt.Println("Here in func ln9.5")
-
-	// Consume progress updates and log them
-	// Only consume from progressCh in one place to avoid race conditions
-	for status := range progressCh {
-		// Log progress statuses to build output
-		for _, vertex := range status.Vertexes {
-			if vertex.Error != "" {
-				buildOutput.WriteString(fmt.Sprintf("Error: %s\n", vertex.Error))
+	// Consume progress updates
+	for {
+		select {
+		case status, ok := <-progressCh:
+			if !ok {
+				// channel closed (if buildkit closes it)
+				progressCh = nil
+				continue
 			}
-			if vertex.Name != "" {
-				buildOutput.WriteString(fmt.Sprintf("%s\n", vertex.Name))
+
+			for _, vertex := range status.Vertexes {
+				if vertex.Error != "" {
+					buildOutput.WriteString(fmt.Sprintf("Error: %s\n", vertex.Error))
+				}
+				if vertex.Name != "" {
+					buildOutput.WriteString(fmt.Sprintf("%s\n", vertex.Name))
+				}
 			}
+
+		case <-done:
+			// Solve finished
+			goto BUILD_DONE
 		}
+	}
+
+	BUILD_DONE:
+
+	if buildErr != nil {
+		http.Error(w, fmt.Sprintf("Build failed: %v\nBuild output: %s", buildErr, buildOutput.String()), http.StatusInternalServerError)
+		return
 	}
 
 	fmt.Println("Here in func ln9.6")
