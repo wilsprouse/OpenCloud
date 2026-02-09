@@ -208,7 +208,7 @@ Added 20 comprehensive unit tests covering:
 
 2. **buildkit daemon** running
    - Socket at `/run/buildkit/buildkitd.sock`
-   - Can be started with: `buildkitd --addr unix:///run/buildkit/buildkitd.sock`
+   - Automatically installed with Container Registry service
    - Must be running before using /build-image endpoint
 
 3. **Permissions**
@@ -216,7 +216,11 @@ Added 20 comprehensive unit tests covering:
    - Typically requires root or membership in docker/containerd group
 
 ### Installation Notes
-Per the issue description: "You can assume that containerd is already installed when the Container Registry service is enabled."
+Both containerd and buildkit are automatically installed when the Container Registry service is enabled via the `service_ledger/service_installers/container_registry.sh` script. The script:
+- Installs containerd v1.7.24 from apt packages
+- Downloads and installs buildkit v0.16.0 from GitHub releases
+- Creates systemd services for both components
+- Configures buildkit to run at `/run/buildkit/buildkitd.sock`
 
 ## Benefits of This Migration
 
