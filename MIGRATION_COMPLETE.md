@@ -143,7 +143,14 @@ TestDownloadObjectMissingFields:
 
 ## Runtime Requirements
 
-### Required
+### Automatic Installation
+When enabling the Container Registry service, the `service_ledger/service_installers/container_registry.sh` script automatically:
+- Installs containerd v1.7.24 from apt packages
+- Downloads and installs buildkit v0.16.0 from GitHub releases  
+- Creates systemd services for both components
+- Starts services and configures them to run on boot
+
+### Required Components
 - containerd installed and running
 - containerd socket at `/run/containerd/containerd.sock`
 - buildkit daemon at `/run/buildkit/buildkitd.sock`
