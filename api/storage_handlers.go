@@ -513,6 +513,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
 		_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
 	}()
+	fmt.Println("Here in func ln9.4.1")
 
 	// Consume progress updates
 	for {
@@ -533,6 +534,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+		fmt.Println("Here in func ln9.4.2")
 		case <-done:
 			// Solve finished
 			goto BUILD_DONE
@@ -540,6 +542,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	BUILD_DONE:
+	fmt.Println("Here in func ln9.4.3")
 
 	if buildErr != nil {
 		http.Error(w, fmt.Sprintf("Build failed: %v\nBuild output: %s", buildErr, buildOutput.String()), http.StatusInternalServerError)
