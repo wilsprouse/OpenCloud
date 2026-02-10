@@ -317,96 +317,30 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
 type BuildImageRequest struct {
 	Dockerfile string `json:"dockerfile"`
 	ImageName  string `json:"imageName"`
-	Context    string `json:"context"`
-	NoCache    bool   `json:"nocache"`
-	Platform   string `json:"platform"`
+	Context    string `json:"context"`   // optional, default "."
+	NoCache    bool   `json:"nocache"`   // optional
+	Platform   string `json:"platform"`  // optional, default "linux/amd64"
 }
 
-// BuildImage builds a container image from a Dockerfile using containerd/buildkit
+// BuildImage builds a container image using BuildKit + containerd
 func BuildImage(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("Here in func")
-	fmt.Println("Here in func ln")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	fmt.Printf("Here in func2")
-	fmt.Println("Here in func ln2")
 
-	// Parse request body
+	// Decode request
 	var req BuildImageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	fmt.Printf("Here in func3")
-	fmt.Println("Here in func ln3")
-
-	// Validate required fields
 	if req.Dockerfile == "" || req.ImageName == "" {
 		http.Error(w, "Missing required fields: dockerfile and imageName", http.StatusBadRequest)
 		return
 	}
 
-	fmt.Printf("Here in func4")
-	fmt.Println("Here in func ln4")
-	// Basic Dockerfile validation to prevent obvious security issues
-	// Note: This is not comprehensive - buildkit provides sandboxing
-	// Dockerfile instructions are case-insensitive
-	// Comments and parser directives can precede FROM
-	dockerfileLines := strings.Split(req.Dockerfile, "\n")
-	hasFrom := false
-	for _, line := range dockerfileLines {
-		trimmedLine := strings.TrimSpace(line)
-		// Skip empty lines and comments
-		if trimmedLine == "" || strings.HasPrefix(trimmedLine, "#") {
-			continue
-		}
-		// Check if first non-comment instruction is FROM (case-insensitive)
-		if strings.HasPrefix(strings.ToUpper(trimmedLine), "FROM ") {
-			hasFrom = true
-			break
-		}
-		// If we hit a non-comment, non-FROM instruction first, it's invalid
-		if !strings.HasPrefix(trimmedLine, "#") {
-			break
-		}
-	}
-	fmt.Printf("Here in func5")
-	fmt.Println("Here in func ln5")
-	if !hasFrom {
-		http.Error(w, "Invalid Dockerfile: must contain FROM instruction after any comments/directives", http.StatusBadRequest)
-		return
-	}
-
-	// Validate image name format using container registry naming conventions
-	// Pattern: [registry/][namespace/]name[:tag][@digest]
-	// We check for obvious malicious patterns
-	
-	// Remove any tag or digest for initial validation
-	imageName := req.ImageName
-	if idx := strings.Index(imageName, "@"); idx > 0 {
-		imageName = imageName[:idx]
-	}
-	
-	fmt.Printf("Here in func6")
-	fmt.Println("Here in func ln6")
-	// Check for path traversal and malicious patterns
-	if strings.Contains(imageName, "..") || 
-	   strings.Contains(imageName, "//") || 
-	   strings.HasPrefix(imageName, "/") ||
-	   strings.Contains(imageName, "\\") {
-		http.Error(w, "Invalid image name: contains path traversal or invalid characters", http.StatusBadRequest)
-		return
-	}
-	
-	// Validate against pre-compiled patterns
-	if !imageNamePatternLower.MatchString(strings.ToLower(imageName)) && !imageNamePatternMixed.MatchString(imageName) {
-		http.Error(w, "Invalid image name format: must follow container registry naming conventions", http.StatusBadRequest)
-		return
-	}
-
-	// Default values
+	// Defaults
 	if req.Context == "" {
 		req.Context = "."
 	}
@@ -414,62 +348,29 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		req.Platform = "linux/amd64"
 	}
 
-	ctx := context.Background()
-	ctx = namespaces.WithNamespace(ctx, "default")
+	ctx := namespaces.WithNamespace(context.Background(), "default")
 
-	fmt.Printf("Here in func7")
-	fmt.Println("Here in func ln7")
-	// Create a temporary directory for the build context with restrictive permissions
+	// Connect to BuildKit daemon
+	bk, err := client.New(ctx, "unix:///run/buildkit/buildkitd.sock")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to BuildKit: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer bk.Close()
+
+	// Create temporary directory for Dockerfile
 	tmpDir, err := os.MkdirTemp("", "opencloud-build-*")
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create temp directory: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to create temp dir: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer os.RemoveAll(tmpDir)
-
-	// Set restrictive permissions to prevent other users from accessing build context
-	if err := os.Chmod(tmpDir, 0700); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to set permissions on temp directory: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Printf("Here in func8")
-	fmt.Println("Here in func ln8")
-	// Write the Dockerfile to the temp directory
-	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
-	if err := os.WriteFile(dockerfilePath, []byte(req.Dockerfile), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "Dockerfile"), []byte(req.Dockerfile), 0644); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("Here in func ln8.5")
 
-	// Connect to buildkit daemon
-	// NOTE: This requires a separate buildkit daemon to be running.
-	// buildkit socket is typically at /run/buildkit/buildkitd.sock
-	// containerd does NOT provide buildkit functionality by default
-	buildkitAddr := "unix:///run/buildkit/buildkitd.sock"
-	if _, err := os.Stat("/run/buildkit/buildkitd.sock"); os.IsNotExist(err) {
-		http.Error(w, "buildkit daemon not found at /run/buildkit/buildkitd.sock. Please ensure buildkit is installed and running.", http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Printf("Here in func9")
-	fmt.Println("Here in func ln9")
-	bkClient, err := client.New(ctx, buildkitAddr)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to buildkit: %v. Make sure buildkit daemon is running.", err), http.StatusInternalServerError)
-		return
-	}
-	fmt.Println("Here in func ln9.1")
-	defer bkClient.Close()
-	fmt.Println("Here in func ln9.2")
-
-	// Load Docker config for authentication
-	// Use ioutil.Discard to suppress stderr output in server context
-	dockerConfig := config.LoadDefaultConfigFile(io.Discard)
-	
-	fmt.Println("Here in func ln9.2")
-	// Create build options
+	// Solve options
 	solveOpt := client.SolveOpt{
 		LocalDirs: map[string]string{
 			"context":    tmpDir,
@@ -480,117 +381,42 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			"filename": "Dockerfile",
 			"platform": req.Platform,
 		},
-		Session: []session.Attachable{
-			authprovider.NewDockerAuthProvider(dockerConfig, nil),
+		Exports: []client.ExportEntry{
+			{
+				Type: client.ExporterImage,
+				Attrs: map[string]string{
+					"name": req.ImageName,
+					"push": "false",
+				},
+			},
 		},
 	}
-	fmt.Println("Here in func ln9.3")
-
-	// Add no-cache option if specified
 	if req.NoCache {
 		solveOpt.FrontendAttrs["no-cache"] = ""
 	}
 
-	// Set the output to export as an image to containerd
-	solveOpt.Exports = []client.ExportEntry{
-		{
-			Type: client.ExporterImage,
-			Attrs: map[string]string{
-				"name": req.ImageName,
-				"push": "false",
-			},
-		},
-	}
-	fmt.Println("Here in func ln9.4")
-
-	progressCh := make(chan *client.SolveStatus)
-	done := make(chan struct{})
-
-	var buildErr error
-	var buildOutput strings.Builder
-
-	//go func() {
-	//	defer close(done)
-	//	_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
-	//}()
-
-	go func() {
- 		defer close(done)
-	    //defer close(progressCh)
-
- 		_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
-	}()
-
-	fmt.Println("Here in func ln9.4.1")
-
-	// Consume progress updates
-	for {
-		select {
-		case status, ok := <-progressCh:
-			if !ok {
-				// channel closed (if buildkit closes it)
-				progressCh = nil
-				continue
-			}
-
-			for _, vertex := range status.Vertexes {
-				if vertex.Error != "" {
-					buildOutput.WriteString(fmt.Sprintf("Error: %s\n", vertex.Error))
-				}
-				if vertex.Name != "" {
-					buildOutput.WriteString(fmt.Sprintf("%s\n", vertex.Name))
-				}
-			}
-
-		fmt.Println("Here in func ln9.4.2")
-		case <-done:
-			// Solve finished
-			goto BUILD_DONE
-		}
-	}
-
-	BUILD_DONE:
-	//fmt.Println("Here in func ln9.4.3")
-	fmt.Printf("Solve returned error: %v\n", buildErr)
-
-	if buildErr != nil {
-		http.Error(w, fmt.Sprintf("Build failed: %v\nBuild output: %s", buildErr, buildOutput.String()), http.StatusInternalServerError)
+	// Run BuildKit
+	if _, err := bk.Solve(ctx, nil, solveOpt, nil); err != nil {
+		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Println("Here in func ln9.6")
-	// Check if build failed
-	if buildErr != nil {
-		http.Error(w, fmt.Sprintf("Build failed: %v\nBuild output: %s", buildErr, buildOutput.String()), http.StatusInternalServerError)
-		return
-	}
-
-	// Connect to containerd to verify the image was created
+	// Optional: verify image in containerd
 	containerdClient, err := containerd.New("/run/containerd/containerd.sock")
-	if err != nil {
-		// Log error but don't fail - the image might still be built
-		fmt.Printf("Warning: Failed to connect to containerd for verification: %v\n", err)
-	} else {
+	if err == nil {
 		defer containerdClient.Close()
-		
-		// Verify the image exists in containerd
-		ctx = namespaces.WithNamespace(ctx, "default")
 		_, err = containerdClient.ImageService().Get(ctx, req.ImageName)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Image build may have failed - image not found in containerd: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Build completed but image not found in containerd: %v", err), http.StatusInternalServerError)
 			return
 		}
 	}
-	fmt.Println("Here in func ln9.6")
 
-	// Return success response
+	// Success
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"message": "Image built successfully",
-		"image":   req.ImageName,
-		"output":  buildOutput.String(),
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "success",
+		"image":  req.ImageName,
 	})
 }
 
