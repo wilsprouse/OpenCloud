@@ -198,6 +198,13 @@ configure_buildkit_service() {
     
     # Wait a moment for the socket to be created
     sleep 2
+
+    # Fix socket ownership and permissions so non-root users can access
+    if [ -S "${BUILDKIT_SOCKET_PATH}" ]; then
+        sudo chown root:${BUILDKIT_GROUP_NAME} "${BUILDKIT_SOCKET_PATH}"
+        sudo chmod 660 "${BUILDKIT_SOCKET_PATH}"
+        print_success "Set ownership and permissions for BuildKit socket"
+    fi
     
     print_success "buildkit service is running and enabled"
 }
