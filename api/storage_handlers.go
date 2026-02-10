@@ -365,6 +365,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("Herski")
 
 	// Solve options
 	solveOpt := client.SolveOpt{
@@ -390,6 +391,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if req.NoCache {
 		solveOpt.FrontendAttrs["no-cache"] = ""
 	}
+	fmt.Println("Herski1")
 
 	// Run BuildKit
 	if _, err := bk.Solve(ctx, nil, solveOpt, nil); err != nil {
@@ -407,6 +409,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	fmt.Println("Herski3")
 
 	// Success
 	w.Header().Set("Content-Type", "application/json")
