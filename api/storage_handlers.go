@@ -398,6 +398,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("Herski2")
 
 	// Optional: verify image in containerd
 	containerdClient, err := containerd.New("/run/containerd/containerd.sock")
