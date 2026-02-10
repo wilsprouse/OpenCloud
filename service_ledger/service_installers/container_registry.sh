@@ -4,8 +4,8 @@
 # Container Registry Service Installer - containerd and buildkit Setup
 # 
 # This script installs and configures containerd and buildkit for the OpenCloud
-# Container Registry Service. It checks if components are already installed and
-# only performs installation if necessary.
+# Container Registry Service. It ensures the BuildKit socket is accessible to
+# the current user to prevent permission errors.
 #
 # Requirements:
 #   - Ubuntu/Debian-based system
@@ -13,10 +13,7 @@
 #   - systemd for service management
 ################################################################################
 
-# Exit immediately if a command exits with a non-zero status
 set -e
-
-# Enable pipefail to catch errors in pipes
 set -o pipefail
 
 ################################################################################
@@ -33,120 +30,77 @@ readonly BUILDKIT_SOCKET_PATH="${BUILDKIT_SOCKET_DIR}/buildkitd.sock"
 readonly BUILDKIT_GROUP_NAME="buildkit"
 
 ################################################################################
-# Functions
+# Helper Functions
 ################################################################################
 
-# Print informational message
-print_info() {
-    echo "[INFO] $1"
-}
+print_info() { echo "[INFO] $1"; }
+print_success() { echo "[SUCCESS] $1"; }
+print_error() { echo "[ERROR] $1" >&2; }
 
-# Print success message
-print_success() {
-    echo "[SUCCESS] $1"
-}
+check_containerd_installed() { command -v containerd &> /dev/null; }
+check_buildkit_installed() { command -v buildkitd &> /dev/null; }
 
-# Print error message
-print_error() {
-    echo "[ERROR] $1" >&2
-}
-
-# Check if containerd is already installed
-check_containerd_installed() {
-    if command -v containerd &> /dev/null; then
-        return 0  # containerd is installed
-    else
-        return 1  # containerd is not installed
-    fi
-}
-
-# Check if buildkit is already installed
-check_buildkit_installed() {
-    if command -v buildkitd &> /dev/null; then
-        return 0  # buildkit is installed
-    else
-        return 1  # buildkit is not installed
-    fi
-}
-
-# Ensure buildkit group exists and current user is in it
+# Ensure BuildKit group exists and current user is in it
 ensure_buildkit_group_access() {
     print_info "Ensuring ${BUILDKIT_GROUP_NAME} group exists..."
-
-    if getent group "${BUILDKIT_GROUP_NAME}" > /dev/null 2>&1; then
-        print_info "Group ${BUILDKIT_GROUP_NAME} already exists"
-    else
+    if ! getent group "${BUILDKIT_GROUP_NAME}" > /dev/null; then
         sudo groupadd --system "${BUILDKIT_GROUP_NAME}"
         print_success "Created system group: ${BUILDKIT_GROUP_NAME}"
+    else
+        print_info "Group ${BUILDKIT_GROUP_NAME} already exists"
     fi
 
-    # Add current user to the buildkit group
     local current_user
     current_user="$(id -un)"
-
-    print_info "Ensuring user ${current_user} is in ${BUILDKIT_GROUP_NAME} group..."
-
-    if id -nG "${current_user}" | grep -qw "${BUILDKIT_GROUP_NAME}"; then
-        print_info "User ${current_user} is already in ${BUILDKIT_GROUP_NAME} group"
-    else
-        sudo usermod -aG "${BUILDKIT_GROUP_NAME}" "${current_user}"
-        print_success "Added user ${current_user} to ${BUILDKIT_GROUP_NAME} group"
+    if ! id -nG "$current_user" | grep -qw "${BUILDKIT_GROUP_NAME}"; then
+        sudo usermod -aG "${BUILDKIT_GROUP_NAME}" "$current_user"
+        print_success "Added user $current_user to ${BUILDKIT_GROUP_NAME} group"
         print_info "NOTE: You may need to log out and back in for group membership to apply"
+    else
+        print_info "User $current_user is already in ${BUILDKIT_GROUP_NAME} group"
     fi
 }
 
-# Install containerd using apt-get
+# Install containerd
 install_containerd() {
     print_info "Updating package index..."
     sudo apt-get update
-
     print_info "Installing ${CONTAINERD_PACKAGE_NAME}..."
     sudo apt-get install -y "${CONTAINERD_PACKAGE_NAME}"
-
-    print_success "${CONTAINERD_PACKAGE_NAME} package installed successfully"
+    print_success "${CONTAINERD_PACKAGE_NAME} installed successfully"
 }
 
-# Install buildkit from GitHub releases
+# Install BuildKit
 install_buildkit() {
     print_info "Installing buildkit ${BUILDKIT_VERSION}..."
-    
-    # Create temporary directory for download
     local temp_dir
     temp_dir=$(mktemp -d)
     trap "rm -rf ${temp_dir}" EXIT
-    
-    # Download buildkit
+
     print_info "Downloading buildkit from ${BUILDKIT_BINARY_URL}..."
-    if ! curl -sSL "${BUILDKIT_BINARY_URL}" -o "${temp_dir}/buildkit.tar.gz"; then
-        print_error "Failed to download buildkit"
-        return 1
-    fi
-    
-    # Extract and install binaries
+    curl -sSL "${BUILDKIT_BINARY_URL}" -o "${temp_dir}/buildkit.tar.gz"
+
     print_info "Extracting buildkit binaries..."
     sudo tar -C "${BUILDKIT_INSTALL_DIR}" -xzf "${temp_dir}/buildkit.tar.gz"
-    
-    # Verify installation
+
     if command -v buildkitd &> /dev/null; then
         print_success "buildkit installed successfully"
-        local version
-        version=$(buildkitd --version 2>&1 | head -n 1)
-        print_info "Installed version: ${version}"
+        print_info "Version: $(buildkitd --version | head -n 1)"
     else
         print_error "buildkit installation failed"
         return 1
     fi
-    
-    return 0
 }
 
-# Create buildkit systemd service
+# Create BuildKit systemd service
 create_buildkit_service() {
     print_info "Creating buildkit systemd service..."
-    
-    # Create socket directory
+
+    # Ensure socket directory exists and has proper permissions
     sudo mkdir -p "${BUILDKIT_SOCKET_DIR}"
-    
+    sudo chown root:${BUILDKIT_GROUP_NAME} "${BUILDKIT_SOCKET_DIR}"
+    sudo chmod 2775 "${BUILDKIT_SOCKET_DIR}"
+
     # Create systemd service file
     sudo tee /etc/systemd/system/buildkit.service > /dev/null <<EOF
 [Unit]
@@ -170,99 +124,50 @@ KillMode=process
 [Install]
 WantedBy=multi-user.target
 EOF
-    
+
     print_success "buildkit systemd service created"
 }
 
-# Start and enable containerd service
+# Start & enable containerd
 configure_containerd_service() {
-    print_info "Starting ${CONTAINERD_SERVICE_NAME} service..."
     sudo systemctl start "${CONTAINERD_SERVICE_NAME}"
-
-    print_info "Enabling ${CONTAINERD_SERVICE_NAME} service to start on boot..."
     sudo systemctl enable "${CONTAINERD_SERVICE_NAME}"
-
-    print_success "${CONTAINERD_SERVICE_NAME} service is running and enabled"
+    print_success "${CONTAINERD_SERVICE_NAME} service running and enabled"
 }
 
-# Start and enable buildkit service
+# Start & enable BuildKit
 configure_buildkit_service() {
-    print_info "Reloading systemd daemon..."
     sudo systemctl daemon-reload
-    
-    print_info "Starting buildkit service..."
     sudo systemctl start buildkit
-    
-    print_info "Enabling buildkit service to start on boot..."
     sudo systemctl enable buildkit
-    
-    # Wait a moment for the socket to be created
     sleep 2
-
-    # Fix socket ownership and permissions so non-root users can access
-    if [ -S "${BUILDKIT_SOCKET_PATH}" ]; then
-        sudo chown root:${BUILDKIT_GROUP_NAME} "${BUILDKIT_SOCKET_PATH}"
-        sudo chmod 660 "${BUILDKIT_SOCKET_PATH}"
-        print_success "Set ownership and permissions for BuildKit socket"
-    fi
-    
-    print_success "buildkit service is running and enabled"
+    print_success "buildkit service running and enabled"
 }
 
-# Verify containerd installation
+# Verify containerd
 verify_containerd() {
-    print_info "Verifying ${CONTAINERD_SERVICE_NAME} installation..."
-    
     if command -v containerd &> /dev/null; then
-        local version
-        version=$(containerd --version 2>&1 | head -n 1)
-        print_success "containerd is installed: ${version}"
-        
-        # Check service status
-        if sudo systemctl is-active --quiet "${CONTAINERD_SERVICE_NAME}"; then
-            print_success "${CONTAINERD_SERVICE_NAME} service is active and running"
-        else
-            print_error "${CONTAINERD_SERVICE_NAME} service is not running"
-            return 1
-        fi
+        print_success "containerd installed: $(containerd --version | head -n 1)"
     else
-        print_error "${CONTAINERD_SERVICE_NAME} is not installed"
+        print_error "containerd not installed"
         return 1
     fi
-    
-    return 0
 }
 
-# Verify buildkit installation
+# Verify BuildKit
 verify_buildkit() {
-    print_info "Verifying buildkit installation..."
-    
     if command -v buildkitd &> /dev/null; then
-        local version
-        version=$(buildkitd --version 2>&1 | head -n 1)
-        print_success "buildkit is installed: ${version}"
-        
-        # Check service status
-        if sudo systemctl is-active --quiet buildkit; then
-            print_success "buildkit service is active and running"
-        else
-            print_error "buildkit service is not running"
-            return 1
-        fi
-        
-        # Check socket existence
+        print_success "buildkit installed: $(buildkitd --version | head -n 1)"
         if [ -S "${BUILDKIT_SOCKET_PATH}" ]; then
             print_success "buildkit socket exists at ${BUILDKIT_SOCKET_PATH}"
         else
-            print_error "buildkit socket not found at ${BUILDKIT_SOCKET_PATH}"
+            print_error "buildkit socket missing or user not in buildkit group"
             return 1
         fi
     else
-        print_error "buildkit is not installed"
+        print_error "buildkit not installed"
         return 1
     fi
-    
-    return 0
 }
 
 ################################################################################
@@ -270,111 +175,44 @@ verify_buildkit() {
 ################################################################################
 
 main() {
-    print_info "Container Registry Service Installer - containerd and buildkit Setup"
-    print_info "======================================================================"
+    print_info "Starting Container Registry Service Installer"
     echo
 
-    # ========== Install and configure containerd ==========
-    print_info "Step 1: containerd installation"
-    print_info "--------------------------------"
-    
-    # Check if containerd is already installed
+    # Step 1: containerd
     if check_containerd_installed; then
-        local version
-        version=$(containerd --version 2>&1 | head -n 1)
-        print_info "${CONTAINERD_SERVICE_NAME} is already installed on this system"
-        print_info "Current version: ${version}"
-        
-        # Check if service is running
-        if sudo systemctl is-active --quiet "${CONTAINERD_SERVICE_NAME}"; then
-            print_success "${CONTAINERD_SERVICE_NAME} service is already running"
-        else
-            print_info "${CONTAINERD_SERVICE_NAME} service is not running, starting it..."
-            configure_containerd_service
-        fi
-    else
-        print_info "${CONTAINERD_SERVICE_NAME} is not installed. Beginning installation..."
-        echo
-        
-        # Install containerd
-        install_containerd
-        echo
-        
-        # Configure and start the service
+        print_info "containerd already installed"
         configure_containerd_service
-        echo
+    else
+        install_containerd
+        configure_containerd_service
     fi
-
-    # Verify containerd installation
-    echo
     verify_containerd
     echo
 
-    # ========== Install and configure buildkit ==========
-    print_info "Step 2: buildkit installation"
-    print_info "------------------------------"
-    
-    # Ensure buildkit group access exists before starting/creating service
+    # Step 2: BuildKit
     ensure_buildkit_group_access
     echo
 
-    # Check if buildkit is already installed
     if check_buildkit_installed; then
-        local version
-        version=$(buildkitd --version 2>&1 | head -n 1)
-        print_info "buildkit is already installed on this system"
-        print_info "Current version: ${version}"
-        
-        # Check if service is running
-        if sudo systemctl is-active --quiet buildkit; then
-            print_success "buildkit service is already running"
-            
-            # Check socket
-            if [ -S "${BUILDKIT_SOCKET_PATH}" ]; then
-                print_success "buildkit socket exists at ${BUILDKIT_SOCKET_PATH}"
-            else
-                print_info "buildkit socket not found, restarting service..."
-                sudo systemctl restart buildkit
-                sleep 2
-            fi
-        else
-            print_info "buildkit service is not running, starting it..."
-            
-            # Check if service file exists
-            if [ -f /etc/systemd/system/buildkit.service ]; then
-                configure_buildkit_service
-            else
-                print_info "buildkit service file not found, creating it..."
-                create_buildkit_service
-                configure_buildkit_service
-            fi
-        fi
+        print_info "buildkit already installed"
     else
-        print_info "buildkit is not installed. Beginning installation..."
-        echo
-        
-        # Install buildkit
         install_buildkit
-        echo
-        
-        # Create and configure the service
-        create_buildkit_service
-        echo
-        
-        configure_buildkit_service
-        echo
     fi
 
-    # Verify buildkit installation
-    echo
+    if [ -f /etc/systemd/system/buildkit.service ]; then
+        print_info "buildkit service file exists"
+    else
+        create_buildkit_service
+    fi
+
+    configure_buildkit_service
     verify_buildkit
     echo
 
     print_success "Container Registry Service setup completed successfully!"
     print_info "containerd socket: /run/containerd/containerd.sock"
     print_info "buildkit socket: ${BUILDKIT_SOCKET_PATH}"
-    return 0
 }
 
-# Execute main function
+# Run main
 main "$@"
