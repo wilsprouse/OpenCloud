@@ -516,7 +516,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
  		defer close(done)
-	    defer close(progressCh)
+	    //defer close(progressCh)
 
  		_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
 	}()
