@@ -13,6 +13,9 @@ RestartSec=5
 User=ubuntu
 Group=ubuntu
 
+# Add supplementary groups for buildkit access
+SupplementaryGroups=buildkit
+
 # Environment variables for your app
 Environment=PORT=3030
 Environment=ENV=production
@@ -22,3 +25,5 @@ Environment=LOG_LEVEL=info
 StandardOutput=journal
 StandardError=journal
 
+[Install]
+WantedBy=multi-user.target

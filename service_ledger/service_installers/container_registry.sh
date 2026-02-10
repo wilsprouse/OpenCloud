@@ -40,7 +40,7 @@ print_error() { echo "[ERROR] $1" >&2; }
 check_containerd_installed() { command -v containerd &> /dev/null; }
 check_buildkit_installed() { command -v buildkitd &> /dev/null; }
 
-# Ensure BuildKit group exists and current user is in it
+# Ensure BuildKit group exists and users have access
 ensure_buildkit_group_access() {
     print_info "Ensuring ${BUILDKIT_GROUP_NAME} group exists..."
     if ! getent group "${BUILDKIT_GROUP_NAME}" > /dev/null; then
@@ -50,15 +50,27 @@ ensure_buildkit_group_access() {
         print_info "Group ${BUILDKIT_GROUP_NAME} already exists"
     fi
 
+    # Add current user to buildkit group
     local current_user
     current_user="$(id -un)"
     if ! id -nG "$current_user" | grep -qw "${BUILDKIT_GROUP_NAME}"; then
         sudo usermod -aG "${BUILDKIT_GROUP_NAME}" "$current_user"
         print_success "Added user $current_user to ${BUILDKIT_GROUP_NAME} group"
-        print_info "NOTE: You may need to log out and back in for group membership to apply"
     else
         print_info "User $current_user is already in ${BUILDKIT_GROUP_NAME} group"
     fi
+
+    # Also add ubuntu user (used by opencloud service) to buildkit group
+    if id "ubuntu" &>/dev/null; then
+        if ! id -nG "ubuntu" | grep -qw "${BUILDKIT_GROUP_NAME}"; then
+            sudo usermod -aG "${BUILDKIT_GROUP_NAME}" "ubuntu"
+            print_success "Added user ubuntu to ${BUILDKIT_GROUP_NAME} group"
+        else
+            print_info "User ubuntu is already in ${BUILDKIT_GROUP_NAME} group"
+        fi
+    fi
+
+    print_info "NOTE: Services may need to be restarted for group membership to apply"
 }
 
 # Install containerd
