@@ -10,14 +10,10 @@ import (
 	"encoding/json"
 	"mime"
 	"time"
-	"strings"
 	"regexp"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/moby/buildkit/client"
-	"github.com/moby/buildkit/session"
-	"github.com/moby/buildkit/session/auth/authprovider"
-	"github.com/docker/cli/cli/config"
 )
 
 // Pre-compiled regex patterns for image name validation
