@@ -395,6 +395,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 
 	// Run BuildKit
 	if _, err := bk.Solve(ctx, nil, solveOpt, nil); err != nil {
+		fmt.Println("Build failed: %v", err)
 		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
 		return
 	}
