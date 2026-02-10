@@ -30,6 +30,7 @@ readonly BUILDKIT_BINARY_URL="https://github.com/moby/buildkit/releases/download
 readonly BUILDKIT_INSTALL_DIR="/usr/local"
 readonly BUILDKIT_SOCKET_DIR="/run/buildkit"
 readonly BUILDKIT_SOCKET_PATH="${BUILDKIT_SOCKET_DIR}/buildkitd.sock"
+readonly BUILDKIT_GROUP_NAME="buildkit"
 
 ################################################################################
 # Functions
@@ -65,6 +66,32 @@ check_buildkit_installed() {
         return 0  # buildkit is installed
     else
         return 1  # buildkit is not installed
+    fi
+}
+
+# Ensure buildkit group exists and current user is in it
+ensure_buildkit_group_access() {
+    print_info "Ensuring ${BUILDKIT_GROUP_NAME} group exists..."
+
+    if getent group "${BUILDKIT_GROUP_NAME}" > /dev/null 2>&1; then
+        print_info "Group ${BUILDKIT_GROUP_NAME} already exists"
+    else
+        sudo groupadd --system "${BUILDKIT_GROUP_NAME}"
+        print_success "Created system group: ${BUILDKIT_GROUP_NAME}"
+    fi
+
+    # Add current user to the buildkit group
+    local current_user
+    current_user="$(id -un)"
+
+    print_info "Ensuring user ${current_user} is in ${BUILDKIT_GROUP_NAME} group..."
+
+    if id -nG "${current_user}" | grep -qw "${BUILDKIT_GROUP_NAME}"; then
+        print_info "User ${current_user} is already in ${BUILDKIT_GROUP_NAME} group"
+    else
+        sudo usermod -aG "${BUILDKIT_GROUP_NAME}" "${current_user}"
+        print_success "Added user ${current_user} to ${BUILDKIT_GROUP_NAME} group"
+        print_info "NOTE: You may need to log out and back in for group membership to apply"
     fi
 }
 
@@ -130,7 +157,7 @@ Requires=containerd.service
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/buildkitd --addr unix://${BUILDKIT_SOCKET_PATH}
+ExecStart=/usr/local/bin/buildkitd --addr unix://${BUILDKIT_SOCKET_PATH} --group ${BUILDKIT_GROUP_NAME}
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
@@ -280,6 +307,10 @@ main() {
     print_info "Step 2: buildkit installation"
     print_info "------------------------------"
     
+    # Ensure buildkit group access exists before starting/creating service
+    ensure_buildkit_group_access
+    echo
+
     # Check if buildkit is already installed
     if check_buildkit_installed; then
         local version
