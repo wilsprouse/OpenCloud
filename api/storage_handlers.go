@@ -509,10 +509,18 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	var buildErr error
 	var buildOutput strings.Builder
 
+	//go func() {
+	//	defer close(done)
+	//	_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
+	//}()
+
 	go func() {
-		defer close(done)
-		_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
+ 		defer close(done)
+	    defer close(progressCh)
+
+ 		_, buildErr = bkClient.Solve(ctx, nil, solveOpt, progressCh)
 	}()
+
 	fmt.Println("Here in func ln9.4.1")
 
 	// Consume progress updates
@@ -542,7 +550,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	BUILD_DONE:
-	fmt.Println("Here in func ln9.4.3")
+	//fmt.Println("Here in func ln9.4.3")
+	fmt.Printf("Solve returned error: %v\n", buildErr)
 
 	if buildErr != nil {
 		http.Error(w, fmt.Sprintf("Build failed: %v\nBuild output: %s", buildErr, buildOutput.String()), http.StatusInternalServerError)
