@@ -11,9 +11,11 @@ import (
 	"mime"
 	"time"
 	"regexp"
+	"strings"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/util/progress/progressui"
 )
 
 // Pre-compiled regex patterns for image name validation
@@ -336,6 +338,42 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate Dockerfile (must contain FROM instruction)
+	dockerfileLines := strings.Split(req.Dockerfile, "\n")
+	hasFrom := false
+	for _, line := range dockerfileLines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" || strings.HasPrefix(trimmedLine, "#") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToUpper(trimmedLine), "FROM ") {
+			hasFrom = true
+			break
+		}
+		if !strings.HasPrefix(trimmedLine, "#") {
+			break
+		}
+	}
+	if !hasFrom {
+		http.Error(w, "Invalid Dockerfile: must contain FROM instruction", http.StatusBadRequest)
+		return
+	}
+
+	// Validate image name format
+	imageName := req.ImageName
+	if idx := strings.Index(imageName, "@"); idx > 0 {
+		imageName = imageName[:idx]
+	}
+	if strings.Contains(imageName, "..") || strings.Contains(imageName, "//") || 
+	   strings.HasPrefix(imageName, "/") || strings.Contains(imageName, "\\") {
+		http.Error(w, "Invalid image name: contains path traversal or invalid characters", http.StatusBadRequest)
+		return
+	}
+	if !imageNamePatternLower.MatchString(strings.ToLower(imageName)) && !imageNamePatternMixed.MatchString(imageName) {
+		http.Error(w, "Invalid image name format", http.StatusBadRequest)
+		return
+	}
+
 	// Defaults
 	if req.Context == "" {
 		req.Context = "."
@@ -361,14 +399,14 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.RemoveAll(tmpDir)
+	
 	if err := os.WriteFile(filepath.Join(tmpDir, "Dockerfile"), []byte(req.Dockerfile), 0644); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("Herski")
 
-	// Solve options
-	solveOpt := client.SolveOpt{
+	// Solve options - matching the example's pattern
+	solveOpt := &client.SolveOpt{
 		LocalDirs: map[string]string{
 			"context":    tmpDir,
 			"dockerfile": tmpDir,
@@ -383,23 +421,38 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 				Type: client.ExporterImage,
 				Attrs: map[string]string{
 					"name": req.ImageName,
-					"push": "false",
+					"push": "false", // store locally in containerd
 				},
 			},
 		},
 	}
+	
 	if req.NoCache {
 		solveOpt.FrontendAttrs["no-cache"] = ""
 	}
-	fmt.Println("Herski1")
 
-	// Run BuildKit
-	if _, err := bk.Solve(ctx, nil, solveOpt, nil); err != nil {
-		fmt.Println("Build failed: %v", err)
+	// Display progress - matching the example's pattern
+	ch := make(chan *client.SolveStatus, 100)
+	
+	// Create progress display (use plain mode for HTTP context, no writer needed)
+	display, _ := progressui.NewDisplay(nil, progressui.PlainMode)
+
+	done := make(chan error)
+	go func() {
+		_, solveErr := bk.Solve(ctx, nil, *solveOpt, ch)
+		done <- solveErr
+	}()
+
+	// Handle progress updates in separate goroutine
+	go func() {
+		display.UpdateFrom(ctx, ch)
+	}()
+
+	// Wait for solve to finish
+	if err := <-done; err != nil {
 		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("Herski2")
 
 	// Optional: verify image in containerd
 	containerdClient, err := containerd.New("/run/containerd/containerd.sock")
@@ -411,7 +464,6 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	fmt.Println("Herski3")
 
 	// Success
 	w.Header().Set("Content-Type", "application/json")
