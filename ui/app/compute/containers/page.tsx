@@ -79,7 +79,7 @@ export default function ContainersPage() {
 
   return (
     <DashboardShell>
-      <DashboardHeader heading="Containers" text="Manage your Docker containers">
+      <DashboardHeader heading="Containers" text="Manage your containers">
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={fetchContainers} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -130,7 +130,7 @@ export default function ContainersPage() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Containers</CardTitle>
-              <CardDescription>View and manage your Docker containers</CardDescription>
+              <CardDescription>View and manage your containers</CardDescription>
             </div>
           </div>
           <div className="relative mt-4">
@@ -214,7 +214,7 @@ export default function ContainersPage() {
                 <Container className="mx-auto h-12 w-12 text-muted-foreground" />
                 <h3 className="mt-4 text-lg font-semibold">No containers found</h3>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {searchTerm ? "Try adjusting your search terms" : "No Docker containers are currently available"}
+                  {searchTerm ? "Try adjusting your search terms" : "No containers are currently available"}
                 </p>
               </div>
             )}

@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"strings"
 	"path/filepath"
-	"github.com/docker/docker/api/types/image"
-    "github.com/docker/docker/client"
+	"github.com/containerd/containerd"
+	"github.com/containerd/containerd/namespaces"
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
@@ -59,23 +59,57 @@ func detectRuntime(filename string) string {
 	}
 }
 
+// GetContainers lists all container images using containerd
 func GetContainers(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
+	
+	// Use the "default" namespace for containerd operations
+	ctx = namespaces.WithNamespace(ctx, "default")
 
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        panic(err)
-    }
+	// Connect to containerd socket
+	cli, err := containerd.New("/run/containerd/containerd.sock")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer cli.Close()
 
-    images, err := cli.ImageList(ctx, image.ListOptions{
-        All: true, // include intermediate images
-    })
-    if err != nil {
-        panic(err)
-    }
+	// List all images in the containerd image store
+	imageList, err := cli.ImageService().List(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list images: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert containerd images to the format expected by the frontend
+	var result []ImageInfo
+	for _, img := range imageList {
+		// Get image size
+		size := img.Target.Size
+		
+		// Parse tags from image name
+		tags := []string{img.Name}
+		
+		imageInfo := ImageInfo{
+			ID:          img.Target.Digest.String(),
+			RepoTags:    tags,
+			RepoDigests: []string{img.Target.Digest.String()},
+			Created:     img.CreatedAt.Unix(),
+			Size:        size,
+			VirtualSize: size,
+			Labels:      img.Labels,
+			Names:       tags,
+			Image:       img.Name,
+			State:       "available",
+			Status:      fmt.Sprintf("Created %s", img.CreatedAt.Format(time.RFC3339)),
+		}
+		
+		result = append(result, imageInfo)
+	}
 
 	// Encode the images as JSON and write to response
-	if err := json.NewEncoder(w).Encode(images); err != nil {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(result); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

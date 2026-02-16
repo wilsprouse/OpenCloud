@@ -10,8 +10,20 @@ import (
 	"encoding/json"
 	"mime"
 	"time"
-	"github.com/docker/docker/api/types/image"
-    "github.com/docker/docker/client"
+	"regexp"
+	"strings"
+	"github.com/containerd/containerd"
+	"github.com/containerd/containerd/namespaces"
+	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/util/progress/progressui"
+)
+
+// Pre-compiled regex patterns for image name validation
+var (
+	// Pattern for lowercase image names (after normalization)
+	imageNamePatternLower = regexp.MustCompile(`^[a-z0-9]+(([._-]|__)[a-z0-9]+)*(:[a-z0-9]+(([._-]|__)[a-z0-9]+)*)*(/[a-z0-9]+(([._-]|__)[a-z0-9]+)*(:[a-z0-9]+(([._-]|__)[a-z0-9]+)*)*)*(@sha256:[a-f0-9]{64})?$`)
+	// Pattern for mixed-case image names
+	imageNamePatternMixed = regexp.MustCompile(`^[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*(:[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*)*(/[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*(:[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*)*)*$`)
 )
 
 type Blob struct {
@@ -30,41 +42,60 @@ type Container struct {
 	LastModified string `json:"lastModified"`
 }
 
+// GetContainerRegistry lists all container images using containerd
 func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
-
 	ctx := context.Background()
+	
+	// Use the "default" namespace for containerd operations
+	ctx = namespaces.WithNamespace(ctx, "default")
 
-    cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-    if err != nil {
-        panic(err)
-    }
+	// Connect to containerd socket (usually /run/containerd/containerd.sock)
+	cli, err := containerd.New("/run/containerd/containerd.sock")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer cli.Close()
 
- //   images, err := cli.ImageList(ctx, types.ImageListOptions{
-	//images, err := cli.ImageList(ctx, types.ImageListOptions{
-	images, err := cli.ImageList(ctx, image.ListOptions{
-        All: true, // include intermediate images
-    })
-    if err != nil {
-        panic(err)
-    }
-
-    /*for _, img := range images {
-		fmt.Printf("ID: %s\n", img.ID[7:19])
-		fmt.Printf("RepoTags: %v\n", img.RepoTags)
-		fmt.Printf("RepoDigests: %v\n", img.RepoDigests)
-		fmt.Printf("Created: %d\n", img.Created)
-		fmt.Printf("Size: %.2f MB\n", float64(img.Size)/1_000_000)
-		fmt.Printf("Virtual Size: %.2f MB\n", float64(img.VirtualSize)/1_000_000)
-		fmt.Printf("Labels: %v\n", img.Labels)
-		fmt.Printf("Containers: %d\n\n", img.Containers)
-    }*/
-
-	// Encode the images as JSON and write to response
-	if err := json.NewEncoder(w).Encode(images); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// List all images in the containerd image store
+	imageList, err := cli.ImageService().List(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list images: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	// Convert containerd images to the format expected by the frontend
+	var result []ImageInfo
+	for _, img := range imageList {
+		// Get image size
+		size := img.Target.Size
+		
+		// Parse tags from image name
+		tags := []string{img.Name}
+		
+		imageInfo := ImageInfo{
+			ID:          img.Target.Digest.String(),
+			RepoTags:    tags,
+			RepoDigests: []string{img.Target.Digest.String()},
+			Created:     img.CreatedAt.Unix(),
+			Size:        size,
+			VirtualSize: size,
+			Labels:      img.Labels,
+			Names:       tags,
+			Image:       img.Name,
+			State:       "available",
+			Status:      fmt.Sprintf("Created %s", img.CreatedAt.Format(time.RFC3339)),
+		}
+		
+		result = append(result, imageInfo)
+	}
+
+	// Encode the images as JSON and write to response
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 /*
@@ -280,6 +311,19 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
     })
 }
 
+// BuildImageRequest represents the request body for building an image
+type BuildImageRequest struct {
+	Dockerfile string `json:"dockerfile"`
+	ImageName  string `json:"imageName"`
+	Context    string `json:"context"`   // optional, default "."
+	NoCache    bool   `json:"nocache"`   // optional
+	Platform   string `json:"platform"`  // optional, default "linux/amd64"
+}
+
+// BuildImage builds a container image using BuildKit + containerd
+func BuildImage(w http.ResponseWriter, r *http.Request) {
+	// TODO: Implement
+}
 func DownloadObject(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodPost {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
