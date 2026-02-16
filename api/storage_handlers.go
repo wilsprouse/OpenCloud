@@ -11,9 +11,11 @@ import (
 	"mime"
 	"time"
 	"regexp"
+	"strings"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/util/progress/progressui"
 )
 
 // Pre-compiled regex patterns for image name validation
