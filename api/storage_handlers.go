@@ -23,6 +23,9 @@ var (
 	imageNamePatternLower = regexp.MustCompile(`^[a-z0-9]+(([._-]|__)[a-z0-9]+)*(:[a-z0-9]+(([._-]|__)[a-z0-9]+)*)*(/[a-z0-9]+(([._-]|__)[a-z0-9]+)*(:[a-z0-9]+(([._-]|__)[a-z0-9]+)*)*)*(@sha256:[a-f0-9]{64})?$`)
 	// Pattern for mixed-case image names
 	imageNamePatternMixed = regexp.MustCompile(`^[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*(:[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*)*(/[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*(:[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*)*)*$`)
+	
+	// Buffer size for BuildKit progress status channel
+	buildProgressBufferSize = 100
 )
 
 type Blob struct {
@@ -360,9 +363,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		// If we hit a non-comment, non-FROM instruction, the Dockerfile is invalid
-		if !strings.HasPrefix(trimmed, "#") {
-			break
-		}
+		break
 	}
 	if !hasFrom {
 		http.Error(w, "Dockerfile must contain a FROM instruction", http.StatusBadRequest)
@@ -405,13 +406,13 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 
 	// Write the Dockerfile to the temp directory
 	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
-	if err := os.WriteFile(dockerfilePath, []byte(req.Dockerfile), 0644); err != nil {
+	if err := os.WriteFile(dockerfilePath, []byte(req.Dockerfile), 0600); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Connect to BuildKit
-	ctx := context.Background()
+	// Connect to BuildKit using request context for proper cancellation
+	ctx := r.Context()
 	bkClient, err := client.New(ctx, "unix:///run/buildkit/buildkitd.sock")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to connect to BuildKit: %v", err), http.StatusInternalServerError)
@@ -447,7 +448,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create channels for progress tracking
-	ch := make(chan *client.SolveStatus, 100)
+	ch := make(chan *client.SolveStatus, buildProgressBufferSize)
 	
 	// Start the build in a goroutine
 	done := make(chan error)
