@@ -614,7 +614,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
                                 Type: client.ExporterImage, // Push to containerd
                                 Attrs: map[string]string{
                                         "name": req.ImageName,
-                                        "push": "false", // store locally in containerd
+					"unpack":"true",
+                                        //"push": "false", // store locally in containerd
                                 },
                         },
                 },
