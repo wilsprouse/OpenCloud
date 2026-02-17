@@ -325,6 +325,7 @@ type BuildImageRequest struct {
 // BuildImage builds a container image using BuildKit + containerd
 func BuildImage(w http.ResponseWriter, r *http.Request) {
 	// Only accept POST requests
+	fmt.Println("juice")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -336,6 +337,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	fmt.Println("juice2")
 
 	// Validate required fields
 	if req.Dockerfile == "" {
@@ -387,6 +389,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid image name: backslashes not allowed", http.StatusBadRequest)
 		return
 	}
+	fmt.Println("juice3")
 
 	// Set default values for optional fields
 	if req.Context == "" {
@@ -404,6 +407,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	fmt.Println("juice4")
 	// Write the Dockerfile to the temp directory
 	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(req.Dockerfile), 0600); err != nil {
@@ -433,14 +437,15 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		},
 		Exports: []client.ExportEntry{
 			{
-				Type: client.ExporterImage,
+				Type: "containerd",
 				Attrs: map[string]string{
 					"name": req.ImageName,
-					"push": "false", // store locally in containerd
+					"unpack": "true",
 				},
 			},
 		},
 	}
+	fmt.Println("juice6")
 
 	// Add no-cache option if requested
 	if req.NoCache {
@@ -457,6 +462,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		done <- solveErr
 	}()
 
+	fmt.Println("juice7")
 	// Consume progress updates (discard for now as we can't stream to HTTP response easily)
 	go func() {
 		for range ch {
@@ -464,12 +470,14 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			// In a production system, these could be streamed via WebSocket or SSE
 		}
 	}()
+	fmt.Println("juice7.5")
 
 	// Wait for the build to complete
 	if err := <-done; err != nil {
 		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("juice8")
 
 	// Return success response
 	w.Header().Set("Content-Type", "application/json")
