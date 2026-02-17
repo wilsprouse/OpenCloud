@@ -15,7 +15,10 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/moby/buildkit/client"
+	"github.com/distribution/reference"
 )
+
+const buildTimeout = 5 * time.Minute
 
 // Pre-compiled regex patterns for image name validation
 var (
@@ -43,6 +46,7 @@ type Container struct {
 	TotalSize    int64  `json:"totalSize"`
 	LastModified string `json:"lastModified"`
 }
+
 
 // GetContainerRegistry lists all container images using containerd
 func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
@@ -314,16 +318,23 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
 }
 
 // BuildImageRequest represents the request body for building an image
-type BuildImageRequest struct {
+/*type BuildImageRequest struct {
 	Dockerfile string `json:"dockerfile"`
 	ImageName  string `json:"imageName"`
 	Context    string `json:"context"`   // optional, default "."
 	NoCache    bool   `json:"nocache"`   // optional
 	Platform   string `json:"platform"`  // optional, default "linux/amd64"
+}*/
+type BuildImageRequest struct {
+	Dockerfile string `json:"dockerfile"`
+	ImageName  string `json:"imageName"`
+	Context    string `json:"context,omitempty"`  // unused in this version
+	Platform   string `json:"platform,omitempty"` // ex: linux/amd64
+	NoCache    bool   `json:"noCache,omitempty"`
 }
 
 // BuildImage builds a container image using BuildKit + containerd
-func BuildImage(w http.ResponseWriter, r *http.Request) {
+func BuildImage2(w http.ResponseWriter, r *http.Request) {
 	// Only accept POST requests
 	fmt.Println("juice")
 	if r.Method != http.MethodPost {
@@ -453,30 +464,21 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create channels for progress tracking
-	ch := make(chan *client.SolveStatus, buildProgressBufferSize)
-	
-	// Start the build in a goroutine
-	done := make(chan error)
+	//ch := make(chan *client.SolveStatus, buildProgressBufferSize)
+	ch := make(chan *client.SolveStatus)
+
 	go func() {
-		_, solveErr := bkClient.Solve(ctx, nil, *solveOpt, ch)
-		done <- solveErr
+    		for range ch {
+        		// drain
+    		}
 	}()
 
-	fmt.Println("juice7")
-	// Consume progress updates (discard for now as we can't stream to HTTP response easily)
-	go func() {
-		for range ch {
-			// Progress updates consumed here
-			// In a production system, these could be streamed via WebSocket or SSE
-		}
-	}()
-	fmt.Println("juice7.5")
-
-	// Wait for the build to complete
-	if err := <-done; err != nil {
-		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
-		return
+	_, err = bkClient.Solve(ctx, nil, *solveOpt, ch)
+	if err != nil {
+    		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
+    		return
 	}
+	
 	fmt.Println("juice8")
 
 	// Return success response
@@ -488,6 +490,169 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		"image":   req.ImageName,
 	})
 }
+
+func BuildImage(w http.ResponseWriter, r *http.Request) {
+	// Only accept POST requests
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse request body
+	var req BuildImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if strings.TrimSpace(req.Dockerfile) == "" {
+		http.Error(w, "Dockerfile content is required", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.ImageName) == "" {
+		http.Error(w, "Image name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Normalize + validate image name (also ensures it has a tag)
+	named, err := reference.ParseNormalizedNamed(strings.ToLower(strings.TrimSpace(req.ImageName)))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Invalid image name: %v", err), http.StatusBadRequest)
+		return
+	}
+	named = reference.TagNameOnly(named)
+	req.ImageName = named.String()
+
+	// Validate that Dockerfile contains FROM instruction (case-insensitive)
+	hasFrom := false
+	lines := strings.Split(req.Dockerfile, "\n")
+	for _, line := range lines {
+		fmt.Println(line)
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToUpper(trimmed), "FROM ") {
+			hasFrom = true
+		}
+		break
+	}
+	if !hasFrom {
+		http.Error(w, "Dockerfile must contain a FROM instruction", http.StatusBadRequest)
+		return
+	}
+	fmt.Println("juice1")
+
+	// Set default values
+	if strings.TrimSpace(req.Platform) == "" {
+		req.Platform = "linux/amd64"
+	}
+
+	// Create a temporary directory for the build context
+	tmpDir, err := os.MkdirTemp("", "buildkit-*")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create temp directory: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Write the Dockerfile to the temp directory
+	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(req.Dockerfile), 0600); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// BuildKit connection + timeout
+	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
+	defer cancel()
+	fmt.Println("juice2")
+
+	bkClient, err := client.New(ctx, "unix:///run/buildkit/buildkitd.sock")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to BuildKit: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer bkClient.Close()
+
+	// Configure build options
+	/*solveOpt := &client.SolveOpt{
+		LocalDirs: map[string]string{
+			"context":    tmpDir,
+			"dockerfile": tmpDir,
+		},
+		Frontend: "dockerfile.v0",
+		FrontendAttrs: map[string]string{
+			"filename": "Dockerfile",
+			"platform": req.Platform,
+		},
+		Exports: []client.ExportEntry{
+			{
+				// This forces BuildKit to use the containerd worker
+				// and ensures it shows up in:
+				// sudo ctr -n buildkit images list
+				Type: "containerd",
+				Attrs: map[string]string{
+					"name":   req.ImageName,
+					"unpack": "true",
+				},
+			},
+		},
+	}*/
+	solveOpt := &client.SolveOpt{
+                LocalDirs: map[string]string{
+                        "context":    tmpDir,
+                        "dockerfile": tmpDir,
+                },
+                Frontend: "dockerfile.v0",
+                FrontendAttrs: map[string]string{
+                        "filename": "Dockerfile",
+                },
+                Exports: []client.ExportEntry{
+                        {
+                                Type: client.ExporterImage, // Push to containerd
+                                Attrs: map[string]string{
+                                        "name": req.ImageName,
+                                        "push": "false", // store locally in containerd
+                                },
+                        },
+                },
+        }
+	fmt.Println("juice3")
+
+	if req.NoCache {
+		solveOpt.FrontendAttrs["no-cache"] = ""
+	}
+
+	// Progress channel MUST be drained or Solve can hang
+	ch := make(chan *client.SolveStatus)
+
+	go func() {
+		for range ch {
+			// drain progress updates (optional: log them)
+		}
+	}()
+
+	fmt.Println("juice4")
+	// Run solve synchronously (no done channel, no deadlock)
+	_, err = bkClient.Solve(ctx, nil, *solveOpt, ch)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	fmt.Println("juice5")
+
+	// Return success response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": fmt.Sprintf("Image %s built successfully", req.ImageName),
+		"image":   req.ImageName,
+	})
+}
+
 func DownloadObject(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodPost {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
