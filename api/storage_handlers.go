@@ -15,7 +15,6 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/moby/buildkit/client"
-	"github.com/moby/buildkit/util/progress/progressui"
 )
 
 // Pre-compiled regex patterns for image name validation
@@ -322,7 +321,163 @@ type BuildImageRequest struct {
 
 // BuildImage builds a container image using BuildKit + containerd
 func BuildImage(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
+	// Only accept POST requests
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse request body
+	var req BuildImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.Dockerfile == "" {
+		http.Error(w, "Dockerfile content is required", http.StatusBadRequest)
+		return
+	}
+	if req.ImageName == "" {
+		http.Error(w, "Image name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that Dockerfile contains FROM instruction (case-insensitive)
+	// Allow comments and syntax directives before FROM
+	hasFrom := false
+	lines := strings.Split(req.Dockerfile, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Skip empty lines and comments
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		// Check if line starts with FROM (case-insensitive)
+		if strings.HasPrefix(strings.ToUpper(trimmed), "FROM ") {
+			hasFrom = true
+			break
+		}
+		// If we hit a non-comment, non-FROM instruction, the Dockerfile is invalid
+		if !strings.HasPrefix(trimmed, "#") {
+			break
+		}
+	}
+	if !hasFrom {
+		http.Error(w, "Dockerfile must contain a FROM instruction", http.StatusBadRequest)
+		return
+	}
+
+	// Validate image name for security (prevent path traversal and malicious names)
+	if strings.Contains(req.ImageName, "..") {
+		http.Error(w, "Invalid image name: path traversal not allowed", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(req.ImageName, "//") {
+		http.Error(w, "Invalid image name: double slashes not allowed", http.StatusBadRequest)
+		return
+	}
+	if strings.HasPrefix(req.ImageName, "/") {
+		http.Error(w, "Invalid image name: absolute paths not allowed", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(req.ImageName, "\\") {
+		http.Error(w, "Invalid image name: backslashes not allowed", http.StatusBadRequest)
+		return
+	}
+
+	// Set default values for optional fields
+	if req.Context == "" {
+		req.Context = "."
+	}
+	if req.Platform == "" {
+		req.Platform = "linux/amd64"
+	}
+
+	// Create a temporary directory for the build context
+	tmpDir, err := os.MkdirTemp("", "buildkit-*")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create temp directory: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Write the Dockerfile to the temp directory
+	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(req.Dockerfile), 0644); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Connect to BuildKit
+	ctx := context.Background()
+	bkClient, err := client.New(ctx, "unix:///run/buildkit/buildkitd.sock")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to BuildKit: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer bkClient.Close()
+
+	// Configure build options
+	solveOpt := &client.SolveOpt{
+		LocalDirs: map[string]string{
+			"context":    tmpDir,
+			"dockerfile": tmpDir,
+		},
+		Frontend: "dockerfile.v0",
+		FrontendAttrs: map[string]string{
+			"filename": "Dockerfile",
+			"platform": req.Platform,
+		},
+		Exports: []client.ExportEntry{
+			{
+				Type: client.ExporterImage,
+				Attrs: map[string]string{
+					"name": req.ImageName,
+					"push": "false", // store locally in containerd
+				},
+			},
+		},
+	}
+
+	// Add no-cache option if requested
+	if req.NoCache {
+		solveOpt.FrontendAttrs["no-cache"] = ""
+	}
+
+	// Create channels for progress tracking
+	ch := make(chan *client.SolveStatus, 100)
+	
+	// Start the build in a goroutine
+	done := make(chan error)
+	go func() {
+		_, solveErr := bkClient.Solve(ctx, nil, *solveOpt, ch)
+		done <- solveErr
+	}()
+
+	// Consume progress updates (discard for now as we can't stream to HTTP response easily)
+	go func() {
+		for range ch {
+			// Progress updates consumed here
+			// In a production system, these could be streamed via WebSocket or SSE
+		}
+	}()
+
+	// Wait for the build to complete
+	if err := <-done; err != nil {
+		http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Return success response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": fmt.Sprintf("Image %s built successfully", req.ImageName),
+		"image":   req.ImageName,
+	})
 }
 func DownloadObject(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodPost {
