@@ -11,11 +11,10 @@ import (
 	"mime"
 	"time"
 	"regexp"
-	"strings"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
-	"github.com/moby/buildkit/client"
-	"github.com/distribution/reference"
+	//"github.com/moby/buildkit/client"
+	//"github.com/distribution/reference"
 )
 
 const buildTimeout = 5 * time.Minute
