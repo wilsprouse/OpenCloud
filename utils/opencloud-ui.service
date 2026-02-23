@@ -1,0 +1,27 @@
+[Unit]
+Description=OpenCloud Frontend Service
+After=network.target
+
+[Service]
+WorkingDirectory=/home/ubuntu/OpenCloud/ui
+ExecStart=/usr/bin/node /home/ubuntu/OpenCloud/ui/.next/standalone/server.js
+
+# Restart automatically on crash or reboot
+Restart=always
+RestartSec=5
+
+# Run as a non-root user (recommended)
+User=ubuntu
+Group=ubuntu
+
+# Environment variables for the frontend
+Environment=PORT=3000
+Environment=NODE_ENV=production
+Environment=HOSTNAME=0.0.0.0
+
+# Optional: redirect logs to journald
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

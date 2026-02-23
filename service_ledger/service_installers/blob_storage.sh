@@ -1,0 +1,1 @@
+mkdir ~/.opencloud/blob_storage/

@@ -1,4 +1,12 @@
 node_modules/
 package-lock.json
 .next/
-app
+bin/
+ui/.eslintrc.json
+ui/tsconfig.tsbuildinfo
+*.pem
+*.backup
+.env
+service_ledger/serviceLedger.json
+opencloud
+OpenCloud
