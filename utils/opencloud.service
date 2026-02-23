@@ -14,7 +14,7 @@ User=ubuntu
 Group=ubuntu
 
 # Add supplementary groups for buildkit access
-SupplementaryGroups=buildkit
+#SupplementaryGroups=buildkit
 
 # Environment variables for your app
 Environment=PORT=3030

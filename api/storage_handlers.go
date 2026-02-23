@@ -11,12 +11,13 @@ import (
 	"mime"
 	"time"
 	"regexp"
-	"strings"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
-	"github.com/moby/buildkit/client"
-	"github.com/moby/buildkit/util/progress/progressui"
+	//"github.com/moby/buildkit/client"
+	//"github.com/distribution/reference"
 )
+
+const buildTimeout = 5 * time.Minute
 
 // Pre-compiled regex patterns for image name validation
 var (
@@ -24,6 +25,9 @@ var (
 	imageNamePatternLower = regexp.MustCompile(`^[a-z0-9]+(([._-]|__)[a-z0-9]+)*(:[a-z0-9]+(([._-]|__)[a-z0-9]+)*)*(/[a-z0-9]+(([._-]|__)[a-z0-9]+)*(:[a-z0-9]+(([._-]|__)[a-z0-9]+)*)*)*(@sha256:[a-f0-9]{64})?$`)
 	// Pattern for mixed-case image names
 	imageNamePatternMixed = regexp.MustCompile(`^[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*(:[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*)*(/[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*(:[a-zA-Z0-9]+(([._-]|__)[a-zA-Z0-9]+)*)*)*$`)
+	
+	// Buffer size for BuildKit progress status channel
+	buildProgressBufferSize = 100
 )
 
 type Blob struct {
@@ -41,6 +45,7 @@ type Container struct {
 	TotalSize    int64  `json:"totalSize"`
 	LastModified string `json:"lastModified"`
 }
+
 
 // GetContainerRegistry lists all container images using containerd
 func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
@@ -311,19 +316,10 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
     })
 }
 
-// BuildImageRequest represents the request body for building an image
-type BuildImageRequest struct {
-	Dockerfile string `json:"dockerfile"`
-	ImageName  string `json:"imageName"`
-	Context    string `json:"context"`   // optional, default "."
-	NoCache    bool   `json:"nocache"`   // optional
-	Platform   string `json:"platform"`  // optional, default "linux/amd64"
+func BuildImage(w http.ResponseWriter, r *http.Request) {
+	// TODO: Create this function
 }
 
-// BuildImage builds a container image using BuildKit + containerd
-func BuildImage(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
-}
 func DownloadObject(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodPost {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
