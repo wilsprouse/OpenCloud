@@ -86,8 +86,9 @@ func buildAction(c *cli.Context) error {
                         {
                                 Type: client.ExporterImage, // Push to containerd
                                 Attrs: map[string]string{
-                                        "name": tag,
-                                        "push": "false", // store locally in containerd
+                                        "name":                 tag,
+                                        "push":                 "false", // store locally in containerd
+                                        "containerd-namespace": "default",
                                 },
                         },
                 },

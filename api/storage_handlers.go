@@ -395,7 +395,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		"--local", "context=" + tmpDir,
 		"--local", "dockerfile=" + tmpDir,
 		"--opt", "worker=containerd",
-		"--output", "type=image,name="+req.ImageName+",push=false,unpack=true",
+		"--output", "type=image,name="+req.ImageName+",push=false,unpack=true,containerd-namespace=default",
 	}
 
 	// Optional platform
