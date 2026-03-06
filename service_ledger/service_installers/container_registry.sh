@@ -123,7 +123,7 @@ Requires=containerd.service
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/buildkitd --addr unix://${BUILDKIT_SOCKET_PATH} --group ${BUILDKIT_GROUP_NAME}
+ExecStart=/usr/local/bin/buildkitd --addr unix://${BUILDKIT_SOCKET_PATH} --group ${BUILDKIT_GROUP_NAME} --containerd-worker=true
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
