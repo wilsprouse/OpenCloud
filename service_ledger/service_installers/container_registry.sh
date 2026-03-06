@@ -27,7 +27,7 @@ readonly BUILDKIT_BINARY_URL="https://github.com/moby/buildkit/releases/download
 readonly BUILDKIT_INSTALL_DIR="/usr/local"
 readonly BUILDKIT_SOCKET_DIR="/run/buildkit"
 readonly BUILDKIT_SOCKET_PATH="${BUILDKIT_SOCKET_DIR}/buildkitd.sock"
-readonly BUILDKIT_GROUP_NAME="buildkit"
+readonly BUILDKIT_GROUP_NAME="default"
 
 ################################################################################
 # Helper Functions
@@ -123,7 +123,7 @@ Requires=containerd.service
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/buildkitd --addr unix://${BUILDKIT_SOCKET_PATH} --group ${BUILDKIT_GROUP_NAME}
+ExecStart=/usr/local/bin/buildkitd --addr unix://${BUILDKIT_SOCKET_PATH} --group ${BUILDKIT_GROUP_NAME} --containerd-worker=true --containerd-worker-addr /run/containerd/containerd.sock --oci-worker=false
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
