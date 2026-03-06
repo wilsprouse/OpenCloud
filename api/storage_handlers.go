@@ -3,17 +3,12 @@ package api
 import (
         "context"
         "encoding/json"
-	//"log"
         "fmt"
         "io"
         "mime"
         "net/http"
         "os"
         "os/exec"
-	//"github.com/moby/buildkit/client"
-	//"github.com/moby/buildkit/client/llb"
-	//"github.com/moby/buildkit/util/progress/progressui"
-	//"golang.org/x/sync/errgroup"
         "path/filepath"
         "regexp"
         "strings"
@@ -21,7 +16,6 @@ import (
 
         "github.com/containerd/containerd"
         "github.com/containerd/containerd/namespaces"
-        //"github.com/containerd/containerd/oci"
 )
 
 const buildTimeout = 5 * time.Minute
@@ -349,100 +343,6 @@ func normalizeImageRef(imageRef string) string {
 
 // BuildImage handles building a container image using buildkitd and registers it with Containerd.
 func BuildImage(w http.ResponseWriter, r *http.Request) {
-/*	fmt.Println("here")
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	fmt.Println("here0")
-
-	var req BuildRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
-		return
-	}
-	fmt.Println("here0.1")
-	fmt.Printf("BaseImage: %s\n", req.BaseImage)
-	fmt.Printf("ImageName: %s\n", req.ImageName)
-
-	if req.ImageName == "" || req.BaseImage == "" {
-		http.Error(w, "image_name and base_image are required", http.StatusBadRequest)
-		return
-	}
-	fmt.Println("here0.2")
-
-	normalized := strings.ToLower(req.ImageName)
-	if !imageNamePatternLower.MatchString(normalized) && !imageNamePatternMixed.MatchString(req.ImageName) {
-		http.Error(w, "Invalid image name format", http.StatusBadRequest)
-		return
-	}
-	fmt.Println("here2")
-
-	baseImageRef := normalizeImageRef(req.BaseImage)
-
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "opencloud-build-*")
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create temp build context: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer os.RemoveAll(tmpDir)
-
-	fmt.Println("here3")
-	// Generate Dockerfile
-	var dfBuilder strings.Builder
-	dfBuilder.WriteString(fmt.Sprintf("FROM %s\n", baseImageRef))
-	
-	if req.Maintainer != "" {
-		dfBuilder.WriteString(fmt.Sprintf("LABEL maintainer=\"%s\"\n", req.Maintainer))
-	}
-	
-	for _, cmd := range req.Commands {
-		dfBuilder.WriteString(fmt.Sprintf("RUN %s\n", cmd))
-	}
-	fmt.Println("here4")
-	
-	if len(req.Entrypoint) > 0 {
-		ep, _ := json.Marshal(req.Entrypoint)
-		dfBuilder.WriteString(fmt.Sprintf("ENTRYPOINT %s\n", string(ep)))
-	}
-
-	dfPath := filepath.Join(tmpDir, "Dockerfile")
-	if err := os.WriteFile(dfPath, []byte(dfBuilder.String()), 0644); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Println("here5")
-	// Use buildctl to build and push directly to containerd
-	// This avoids the OCI tar export issue
-	buildCmd := exec.Command(
-		"buildctl",
-		"--addr", "unix:///run/buildkit/buildkitd.sock",
-		"build",
-		"--frontend", "dockerfile.v0",
-		"--local", "context="+tmpDir,
-		"--local", "dockerfile="+tmpDir,
-		"--output", "type=image,name="+req.ImageName+",push=false",
-	)
-	fmt.Println("here6")
-	
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		fmt.Println("Build failed: %v\nOutput: %s", err, string(out))
-		http.Error(w, fmt.Sprintf("Build failed: %v\nOutput: %s", err, string(out)), http.StatusInternalServerError)
-		return
-	}
-	fmt.Println("here6.5")
-
-	resp := map[string]string{
-		"status":    "success",
-		"message":   fmt.Sprintf("Image %s built successfully", req.ImageName),
-		"imageName": req.ImageName,
-	}
-	fmt.Println("here7")
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)*/
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
