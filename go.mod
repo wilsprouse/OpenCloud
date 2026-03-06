@@ -7,7 +7,6 @@ require (
 	github.com/moby/buildkit v0.13.1
 	github.com/pkg/errors v0.9.1
 	github.com/urfave/cli v1.22.15
-	golang.org/x/sync v0.18.0
 	golang.org/x/sys v0.38.0
 )
 
@@ -76,6 +75,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.0.0 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/genproto v0.0.0-20240123012728-ef4313101c80 // indirect
