@@ -3,12 +3,17 @@ package api
 import (
         "context"
         "encoding/json"
+	//"log"
         "fmt"
         "io"
         "mime"
         "net/http"
         "os"
         "os/exec"
+	//"github.com/moby/buildkit/client"
+	//"github.com/moby/buildkit/client/llb"
+	//"github.com/moby/buildkit/util/progress/progressui"
+	//"golang.org/x/sync/errgroup"
         "path/filepath"
         "regexp"
         "strings"
@@ -16,6 +21,7 @@ import (
 
         "github.com/containerd/containerd"
         "github.com/containerd/containerd/namespaces"
+        //"github.com/containerd/containerd/oci"
 )
 
 const buildTimeout = 5 * time.Minute
@@ -311,13 +317,22 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
 }
 
 // BuildRequest represents the JSON payload for building a container image
+
 type BuildRequest struct {
+	Dockerfile string `json:"dockerfile"`
+	ImageName  string `json:"imageName"`
+	Context    string `json:"context"`   // optional
+	NoCache    bool   `json:"nocache"`
+	Platform   string `json:"platform"`  // optional
+}
+
+/*type BuildRequest struct {
         ImageName  string   `json:"image_name"`
         BaseImage  string   `json:"base_image"`
         Maintainer string   `json:"maintainer"`
         Commands   []string `json:"commands"`
         Entrypoint []string `json:"entrypoint"`
-}
+}*/
 
 // normalizeImageRef adds docker.io registry prefix if no registry is specified
 func normalizeImageRef(imageRef string) string {
@@ -334,27 +349,34 @@ func normalizeImageRef(imageRef string) string {
 
 // BuildImage handles building a container image using buildkitd and registers it with Containerd.
 func BuildImage(w http.ResponseWriter, r *http.Request) {
+/*	fmt.Println("here")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	fmt.Println("here0")
 
 	var req BuildRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
+	fmt.Println("here0.1")
+	fmt.Printf("BaseImage: %s\n", req.BaseImage)
+	fmt.Printf("ImageName: %s\n", req.ImageName)
 
 	if req.ImageName == "" || req.BaseImage == "" {
 		http.Error(w, "image_name and base_image are required", http.StatusBadRequest)
 		return
 	}
+	fmt.Println("here0.2")
 
 	normalized := strings.ToLower(req.ImageName)
 	if !imageNamePatternLower.MatchString(normalized) && !imageNamePatternMixed.MatchString(req.ImageName) {
 		http.Error(w, "Invalid image name format", http.StatusBadRequest)
 		return
 	}
+	fmt.Println("here2")
 
 	baseImageRef := normalizeImageRef(req.BaseImage)
 
@@ -366,6 +388,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	fmt.Println("here3")
 	// Generate Dockerfile
 	var dfBuilder strings.Builder
 	dfBuilder.WriteString(fmt.Sprintf("FROM %s\n", baseImageRef))
@@ -377,6 +400,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	for _, cmd := range req.Commands {
 		dfBuilder.WriteString(fmt.Sprintf("RUN %s\n", cmd))
 	}
+	fmt.Println("here4")
 	
 	if len(req.Entrypoint) > 0 {
 		ep, _ := json.Marshal(req.Entrypoint)
@@ -389,6 +413,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println("here5")
 	// Use buildctl to build and push directly to containerd
 	// This avoids the OCI tar export issue
 	buildCmd := exec.Command(
@@ -400,9 +425,100 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		"--local", "dockerfile="+tmpDir,
 		"--output", "type=image,name="+req.ImageName+",push=false",
 	)
+	fmt.Println("here6")
 	
 	if out, err := buildCmd.CombinedOutput(); err != nil {
+		fmt.Println("Build failed: %v\nOutput: %s", err, string(out))
 		http.Error(w, fmt.Sprintf("Build failed: %v\nOutput: %s", err, string(out)), http.StatusInternalServerError)
+		return
+	}
+	fmt.Println("here6.5")
+
+	resp := map[string]string{
+		"status":    "success",
+		"message":   fmt.Sprintf("Image %s built successfully", req.ImageName),
+		"imageName": req.ImageName,
+	}
+	fmt.Println("here7")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)*/
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req BuildRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+	fmt.Printf("imageName %s", req.ImageName)
+	fmt.Println(req.ImageName)
+
+	if req.Dockerfile == "" || req.ImageName == "" {
+		http.Error(w, "dockerfile and imageName are required", http.StatusBadRequest)
+		fmt.Println("dockerfile and imageName are required")
+		return
+	}
+
+	// Create temp directory for build
+	tmpDir, err := os.MkdirTemp("", "opencloud-build-*")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create temp dir: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Write Dockerfile exactly as provided
+	dfPath := filepath.Join(tmpDir, "Dockerfile")
+	if err := os.WriteFile(dfPath, []byte(req.Dockerfile), 0644); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Optional: write context if provided
+	// (Assumes raw text or tar extraction logic if needed)
+	if req.Context != "" {
+		ctxPath := filepath.Join(tmpDir, "context.txt")
+		if err := os.WriteFile(ctxPath, []byte(req.Context), 0644); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write context: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Build buildctl arguments
+	args := []string{
+		"--addr", "unix:///run/buildkit/buildkitd.sock",
+		"build",
+		"--frontend", "dockerfile.v0",
+		"--local", "context=" + tmpDir,
+		"--local", "dockerfile=" + tmpDir,
+		"--opt", "worker=containerd",
+		"--output", "type=image,name="+req.ImageName+",push=false,unpack=true",
+	}
+
+	// Optional platform
+	if req.Platform != "" {
+		args = append(args, "--opt", "platform="+req.Platform)
+		//args = append(args, "--opt", "platform=linux/amd64")
+	}
+
+	// Optional no-cache
+	if req.NoCache {
+		args = append(args, "--no-cache")
+	}
+
+	buildCmd := exec.Command("buildctl", args...)
+
+	out, err := buildCmd.CombinedOutput()
+	fmt.Println(string(out))
+	if err != nil {
+		http.Error(
+			w,
+			fmt.Sprintf("Build failed: %v\nOutput:\n%s", err, string(out)),
+			http.StatusInternalServerError,
+		)
 		return
 	}
 
@@ -414,6 +530,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+
+
 }
 
 // DownloadObject downloads a file from blob storage
