@@ -310,23 +310,38 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
     })
 }
 
-// BuildRequest represents the JSON payload for building a container image
-
-type BuildRequest struct {
+// BuildImageRequest represents the JSON payload for building a container image
+type BuildImageRequest struct {
 	Dockerfile string `json:"dockerfile"`
 	ImageName  string `json:"imageName"`
-	Context    string `json:"context"`   // optional
+	Context    string `json:"context"`  // optional
 	NoCache    bool   `json:"nocache"`
-	Platform   string `json:"platform"`  // optional
+	Platform   string `json:"platform"` // optional
 }
 
-/*type BuildRequest struct {
-        ImageName  string   `json:"image_name"`
-        BaseImage  string   `json:"base_image"`
-        Maintainer string   `json:"maintainer"`
-        Commands   []string `json:"commands"`
-        Entrypoint []string `json:"entrypoint"`
-}*/
+// validateImageName checks if an image name is valid using pre-compiled patterns.
+// It rejects path traversal attempts, absolute paths, double slashes, and backslashes.
+func validateImageName(name string) bool {
+	return imageNamePatternLower.MatchString(name) || imageNamePatternMixed.MatchString(name)
+}
+
+// validateDockerfileHasFROM checks if a Dockerfile contains at least one FROM instruction.
+// Comment lines (starting with #) and blank lines are skipped.
+func validateDockerfileHasFROM(dockerfile string) bool {
+	for _, line := range strings.Split(dockerfile, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Skip empty lines and comments
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		// Check for FROM instruction (case-insensitive); requires a base image argument
+		upper := strings.ToUpper(trimmed)
+		if strings.HasPrefix(upper, "FROM ") {
+			return true
+		}
+	}
+	return false
+}
 
 // normalizeImageRef adds docker.io registry prefix if no registry is specified
 func normalizeImageRef(imageRef string) string {
@@ -348,17 +363,26 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req BuildRequest
+	var req BuildImageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-	fmt.Printf("imageName %s", req.ImageName)
-	fmt.Println(req.ImageName)
 
 	if req.Dockerfile == "" || req.ImageName == "" {
 		http.Error(w, "dockerfile and imageName are required", http.StatusBadRequest)
-		fmt.Println("dockerfile and imageName are required")
+		return
+	}
+
+	// Validate that the Dockerfile contains a FROM instruction
+	if !validateDockerfileHasFROM(req.Dockerfile) {
+		http.Error(w, "Dockerfile must contain a FROM instruction", http.StatusBadRequest)
+		return
+	}
+
+	// Validate the image name to prevent path traversal and other injection attacks
+	if !validateImageName(req.ImageName) {
+		http.Error(w, "Invalid image name: must be a valid image reference (e.g. myapp:latest or registry.io/org/myapp:v1.0)", http.StatusBadRequest)
 		return
 	}
 
