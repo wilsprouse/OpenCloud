@@ -49,12 +49,14 @@ type Container struct {
 
 
 
-// GetContainerRegistry lists all container images using containerd
+// GetContainerRegistry lists all container images built by buildkitd using containerd.
+// Images built via BuildImage are stored in the "buildkit" containerd namespace,
+// which corresponds to the output of `ctr -n buildkit images ls`.
 func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
         ctx := context.Background()
 
-        // Use the "default" namespace for containerd operations
-        ctx = namespaces.WithNamespace(ctx, "default")
+        // Use the "buildkit" namespace where buildkitd stores built images
+        ctx = namespaces.WithNamespace(ctx, "buildkit")
 
         // Connect to containerd socket (usually /run/containerd/containerd.sock)
         cli, err := containerd.New("/run/containerd/containerd.sock")
@@ -310,23 +312,14 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
     })
 }
 
-// BuildRequest represents the JSON payload for building a container image
-
-type BuildRequest struct {
+// BuildImageRequest represents the JSON payload for building a container image
+type BuildImageRequest struct {
 	Dockerfile string `json:"dockerfile"`
 	ImageName  string `json:"imageName"`
 	Context    string `json:"context"`   // optional
 	NoCache    bool   `json:"nocache"`
 	Platform   string `json:"platform"`  // optional
 }
-
-/*type BuildRequest struct {
-        ImageName  string   `json:"image_name"`
-        BaseImage  string   `json:"base_image"`
-        Maintainer string   `json:"maintainer"`
-        Commands   []string `json:"commands"`
-        Entrypoint []string `json:"entrypoint"`
-}*/
 
 // normalizeImageRef adds docker.io registry prefix if no registry is specified
 func normalizeImageRef(imageRef string) string {
@@ -341,6 +334,49 @@ func normalizeImageRef(imageRef string) string {
 }
 
 
+// validateImageName checks an image name for dangerous or invalid patterns.
+// Returns an error string if invalid, or empty string if valid.
+func validateImageName(name string) string {
+	// Reject backslashes
+	if strings.Contains(name, `\`) {
+		return "image name must not contain backslashes"
+	}
+	// Reject names starting with a slash (absolute paths)
+	if strings.HasPrefix(name, "/") {
+		return "image name must not start with a slash"
+	}
+	// Reject path traversal attempts
+	if strings.Contains(name, "..") {
+		return "image name must not contain path traversal sequences"
+	}
+	// Reject double slashes
+	if strings.Contains(name, "//") {
+		return "image name must not contain consecutive slashes"
+	}
+	// Validate against the allowed character pattern
+	if !imageNamePatternMixed.MatchString(name) {
+		return "image name contains invalid characters"
+	}
+	return ""
+}
+
+// hasFromInstruction checks whether a Dockerfile string contains a FROM instruction,
+// ignoring comment lines (lines starting with #).
+func hasFromInstruction(dockerfile string) bool {
+	for _, line := range strings.Split(dockerfile, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToUpper(trimmed), "FROM") {
+			return true
+		}
+		// First non-comment, non-empty line does not start with FROM
+		return false
+	}
+	return false
+}
+
 // BuildImage handles building a container image using buildkitd and registers it with Containerd.
 func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -348,7 +384,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req BuildRequest
+	var req BuildImageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
@@ -358,7 +394,18 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 
 	if req.Dockerfile == "" || req.ImageName == "" {
 		http.Error(w, "dockerfile and imageName are required", http.StatusBadRequest)
-		fmt.Println("dockerfile and imageName are required")
+		return
+	}
+
+	// Validate that the Dockerfile contains a FROM instruction
+	if !hasFromInstruction(req.Dockerfile) {
+		http.Error(w, "dockerfile must contain a FROM instruction", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that the image name is safe and properly formatted
+	if errMsg := validateImageName(req.ImageName); errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
 		return
 	}
 
