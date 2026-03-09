@@ -13,8 +13,8 @@ RestartSec=5
 User=ubuntu
 Group=ubuntu
 
-# Add supplementary groups for buildkit access
-#SupplementaryGroups=buildkit
+# Add supplementary groups so the service can access containerd and buildkit sockets
+SupplementaryGroups=containerd
 
 # Environment variables for your app
 Environment=PORT=3030
