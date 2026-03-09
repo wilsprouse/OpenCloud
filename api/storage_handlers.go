@@ -61,6 +61,7 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
         // Connect to containerd socket (usually /run/containerd/containerd.sock)
         cli, err := containerd.New("/run/containerd/containerd.sock")
         if err != nil {
+		fmt.Println(err)
                 http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
                 return
         }
@@ -72,6 +73,8 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
                 http.Error(w, fmt.Sprintf("Failed to list images: %v", err), http.StatusInternalServerError)
                 return
         }
+
+	fmt.Println(imageList)
 
         // Convert containerd images to the format expected by the frontend
         var result []ImageInfo
