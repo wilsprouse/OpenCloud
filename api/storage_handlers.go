@@ -20,6 +20,9 @@ import (
 
 const buildTimeout = 5 * time.Minute
 
+// containerdSocket is the path to the containerd Unix domain socket.
+const containerdSocket = "/run/containerd/containerd.sock"
+
 // Pre-compiled regex patterns for image name validation
 var (
         // Pattern for lowercase image names (after normalization)
@@ -58,13 +61,13 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
         // Use the "buildkit" namespace where buildkitd stores built images
         ctx = namespaces.WithNamespace(ctx, "buildkit")
 
-        // Connect to containerd socket (usually /run/containerd/containerd.sock)
-        cli, err := containerd.New("/run/containerd/containerd.sock")
-        if err != nil {
+	// Connect to containerd socket using the shared constant
+	cli, err := containerd.New(containerdSocket)
+	if err != nil {
 		fmt.Println(err)
-                http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
-                return
-        }
+		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		return
+	}
         defer cli.Close()
 
         // List all images in the containerd image store
@@ -313,6 +316,53 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
         "container": req.Container,
         "name":      req.Name,
     })
+}
+
+// DeleteImageRequest represents the JSON payload for deleting a container image
+type DeleteImageRequest struct {
+	ImageName string `json:"imageName"`
+}
+
+// DeleteImage handles deletion of a container image from the containerd registry.
+// It accepts a POST request with a JSON body containing the image name to delete.
+func DeleteImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req DeleteImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.ImageName == "" {
+		http.Error(w, "imageName is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := context.Background()
+	// Use the "buildkit" namespace where buildkitd stores built images
+	ctx = namespaces.WithNamespace(ctx, "buildkit")
+
+	cli, err := containerd.New(containerdSocket)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer cli.Close()
+
+	if err := cli.ImageService().Delete(ctx, req.ImageName); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete image: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":    "deleted",
+		"imageName": req.ImageName,
+	})
 }
 
 // BuildImageRequest represents the JSON payload for building a container image

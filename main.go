@@ -172,6 +172,7 @@ func main() {
 	mux.HandleFunc("/stop-pipeline/", api.StopPipeline)
 	mux.HandleFunc("/get-pipeline-logs/", api.GetPipelineLogs)
 	mux.HandleFunc("/build-image", api.BuildImage)
+	mux.HandleFunc("/delete-image", api.DeleteImage)
 	mux.HandleFunc("/", api.GetFunction)
 
 	// Wrap all routes with CORS middleware

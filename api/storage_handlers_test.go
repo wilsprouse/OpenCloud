@@ -365,3 +365,60 @@ func TestDownloadObjectMissingFields(t *testing.T) {
 		})
 	}
 }
+
+// TestDeleteImageInvalidMethod tests that DeleteImage rejects non-POST requests
+func TestDeleteImageInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/delete-image", nil)
+	w := httptest.NewRecorder()
+
+	DeleteImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
+	}
+}
+
+// TestDeleteImageInvalidJSON tests that DeleteImage rejects invalid JSON
+func TestDeleteImageInvalidJSON(t *testing.T) {
+	invalidJSON := bytes.NewBufferString("{invalid json")
+	req := httptest.NewRequest(http.MethodPost, "/delete-image", invalidJSON)
+	w := httptest.NewRecorder()
+
+	DeleteImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestDeleteImageMissingImageName tests that DeleteImage rejects a missing imageName field
+func TestDeleteImageMissingImageName(t *testing.T) {
+	body, _ := json.Marshal(DeleteImageRequest{ImageName: ""})
+	req := httptest.NewRequest(http.MethodPost, "/delete-image", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	DeleteImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestDeleteImageConnectsToContainerd tests that a valid request reaches the containerd connection step
+func TestDeleteImageConnectsToContainerd(t *testing.T) {
+	body, _ := json.Marshal(DeleteImageRequest{ImageName: "my-app:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/delete-image", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	DeleteImage(w, req)
+
+	resp := w.Result()
+	// In a test environment without containerd, we expect an InternalServerError at the connection step.
+	// A BadRequest here would indicate incorrect validation logic.
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("Valid request should not return BadRequest; got %d", resp.StatusCode)
+	}
+}

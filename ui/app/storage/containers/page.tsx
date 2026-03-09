@@ -63,6 +63,8 @@ export default function ContainerRegistry() {
   const [searchTerm, setSearchTerm] = useState("")
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBuilding, setIsBuilding] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [imageToDelete, setImageToDelete] = useState<Image | null>(null)
   
   // Service enabled state
   const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
@@ -124,17 +126,32 @@ export default function ContainerRegistry() {
     }
   }, [serviceEnabled])
 
-  // Manage container actions
-  const handleAction = async (id: string, action: "start" | "stop" | "remove") => {
+  // Manage container actions (start/stop only; deletion uses confirmation dialog)
+  const handleAction = async (id: string, action: "start" | "stop") => {
     try {
-      if (action === "remove") {
-        await axios.delete(`/api/containers/${id}`)
-      } else {
-        await axios.post(`/api/containers/${id}/${action}`)
-      }
+      await axios.post(`/api/containers/${id}/${action}`)
       fetchImages() // refresh list
     } catch (err) {
       console.error(`Failed to ${action} container:`, err)
+    }
+  }
+
+  // Open the delete confirmation dialog for the selected image
+  const openDeleteDialog = (image: Image) => {
+    setImageToDelete(image)
+    setIsDeleteDialogOpen(true)
+  }
+
+  // Confirm deletion: POST to /delete-image with the image name
+  const handleDeleteImage = async () => {
+    if (!imageToDelete) return
+    try {
+      await client.post("/delete-image", { imageName: imageToDelete.Image })
+      fetchImages()
+      setIsDeleteDialogOpen(false)
+      setImageToDelete(null)
+    } catch (err) {
+      console.error("Failed to delete image:", err)
     }
   }
 
@@ -391,7 +408,7 @@ export default function ContainerRegistry() {
                         <Button
                           variant="destructive"
                           size="sm"
-                          onClick={() => handleAction(c.Id, "remove")}
+                          onClick={() => openDeleteDialog(c)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -639,6 +656,37 @@ export default function ContainerRegistry() {
           </Card>
         </div>
       </div>
+
+      {/* Delete Image Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Container Image</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete{" "}
+              <span className="font-semibold">
+                {imageToDelete?.RepoTags?.[0]?.replace(/^\//, "") || imageToDelete?.Image || "this image"}
+              </span>
+              ? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsDeleteDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteImage}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete Image
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardShell>
   )
 }
