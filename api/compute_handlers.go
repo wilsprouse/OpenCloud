@@ -64,7 +64,7 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	
 	// Use the "default" namespace for containerd operations
-	ctx = namespaces.WithNamespace(ctx, "default")
+	ctx = namespaces.WithNamespace(ctx, "buildkit")
 
 	// Connect to containerd socket
 	cli, err := containerd.New("/run/containerd/containerd.sock")
@@ -76,6 +76,7 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
 
 	// List all images in the containerd image store
 	imageList, err := cli.ImageService().List(ctx)
+	fmt.Println(imageList)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list images: %v", err), http.StatusInternalServerError)
 		return
