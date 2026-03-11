@@ -43,6 +43,13 @@ type ContainerItem = {
   Status: string
 }
 
+// Represents an image returned by /get-images (Container Registry)
+type AvailableImage = {
+  Id: string
+  RepoTags: string[]
+  Image: string
+}
+
 // A single port mapping entry: hostPort -> containerPort
 type PortMapping = {
   hostPort: string
@@ -61,15 +68,25 @@ type VolumeMount = {
   containerPath: string
 }
 
+// Sentinel values used in the image Select dropdown
+const CUSTOM_IMAGE_VALUE = "__custom__"
+const NO_IMAGES_VALUE = "__no_images__"
+
 export default function ContainersPage() {
   const [containers, setContainers] = useState<ContainerItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
 
+  // Available images fetched from the Container Registry for the dropdown
+  const [availableImages, setAvailableImages] = useState<AvailableImage[]>([])
+  const [loadingImages, setLoadingImages] = useState(false)
+
   // Pull and run dialog state
   const [isPullRunDialogOpen, setIsPullRunDialogOpen] = useState(false)
   const [isPullingAndRunning, setIsPullingAndRunning] = useState(false)
+  // runImage holds the selected dropdown value; "__custom__" means the user typed a custom name
   const [runImage, setRunImage] = useState("")
+  const [runCustomImage, setRunCustomImage] = useState("")
   const [runContainerName, setRunContainerName] = useState("")
   const [runPorts, setRunPorts] = useState<PortMapping[]>([{ hostPort: "", containerPort: "" }])
   const [runEnvVars, setRunEnvVars] = useState<EnvVar[]>([{ key: "", value: "" }])
@@ -88,6 +105,19 @@ export default function ContainersPage() {
       console.error("Failed to fetch containers:", err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Fetch available images from the Container Registry to populate the image dropdown
+  const fetchAvailableImages = async () => {
+    setLoadingImages(true)
+    try {
+      const res = await client.get<AvailableImage[]>("/get-images")
+      setAvailableImages(res.data)
+    } catch (err) {
+      console.error("Failed to fetch available images:", err)
+    } finally {
+      setLoadingImages(false)
     }
   }
 
@@ -112,6 +142,7 @@ export default function ContainersPage() {
   // Reset the pull-and-run dialog form fields to defaults
   const resetPullRunForm = () => {
     setRunImage("")
+    setRunCustomImage("")
     setRunContainerName("")
     setRunPorts([{ hostPort: "", containerPort: "" }])
     setRunEnvVars([{ key: "", value: "" }])
@@ -123,8 +154,10 @@ export default function ContainersPage() {
 
   // Submit handler for pulling and running a container
   const handlePullAndRun = async () => {
-    if (!runImage) {
-      alert("Please provide an image name to pull and run")
+    // Resolve the actual image: use custom input when CUSTOM_IMAGE_VALUE is selected
+    const resolvedImage = runImage === CUSTOM_IMAGE_VALUE ? runCustomImage : runImage
+    if (!resolvedImage) {
+      alert("Please select or enter an image name to pull and run")
       return
     }
 
@@ -144,7 +177,7 @@ export default function ContainersPage() {
         .map(v => `${v.hostPath}:${v.containerPath}`)
 
       await client.post("/pull-and-run", {
-        image: runImage,
+        image: resolvedImage,
         name: runContainerName || undefined,
         ports,
         env: envVars,
@@ -361,7 +394,11 @@ export default function ContainersPage() {
                 open={isPullRunDialogOpen}
                 onOpenChange={(open) => {
                   setIsPullRunDialogOpen(open)
-                  if (!open) resetPullRunForm()
+                  if (open) {
+                    fetchAvailableImages()
+                  } else {
+                    resetPullRunForm()
+                  }
                 }}
               >
                 <DialogTrigger asChild>
@@ -387,17 +424,45 @@ export default function ContainersPage() {
                   </DialogHeader>
 
                   <div className="grid gap-4 py-4">
-                    {/* Image */}
+                    {/* Image — dropdown of available images with a custom-image fallback */}
                     <div className="grid gap-2">
                       <Label htmlFor="runImage">Image *</Label>
-                      <Input
-                        id="runImage"
-                        placeholder="nginx:latest"
-                        value={runImage}
-                        onChange={(e) => setRunImage(e.target.value)}
-                      />
+                      <Select value={runImage} onValueChange={setRunImage}>
+                        <SelectTrigger id="runImage" disabled={loadingImages}>
+                          <SelectValue
+                            placeholder={
+                              loadingImages ? "Loading images…" : "Select an image"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableImages.map((img) => {
+                            // RepoTags is the preferred display value (e.g. "nginx:latest").
+                            // Fall back to Image (short name) then Id if no tags are present.
+                            const tag = img.RepoTags?.[0] || img.Image || img.Id
+                            return (
+                              <SelectItem key={img.Id} value={tag}>
+                                {tag}
+                              </SelectItem>
+                            )
+                          })}
+                          {availableImages.length === 0 && !loadingImages && (
+                            <SelectItem value={NO_IMAGES_VALUE} disabled>
+                              No images found in registry
+                            </SelectItem>
+                          )}
+                          <SelectItem value={CUSTOM_IMAGE_VALUE}>Enter custom image…</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {runImage === CUSTOM_IMAGE_VALUE && (
+                        <Input
+                          placeholder="nginx:latest"
+                          value={runCustomImage}
+                          onChange={(e) => setRunCustomImage(e.target.value)}
+                        />
+                      )}
                       <p className="text-xs text-muted-foreground">
-                        Image name and optional tag to pull from your OpenCloud Registry or any available registry
+                        Choose from your OpenCloud Container Registry or enter a custom image name
                       </p>
                     </div>
 
@@ -593,7 +658,12 @@ export default function ContainersPage() {
                     </Button>
                     <Button
                       onClick={handlePullAndRun}
-                      disabled={isPullingAndRunning || !runImage}
+                      disabled={
+                        isPullingAndRunning ||
+                        !runImage ||
+                        runImage === NO_IMAGES_VALUE ||
+                        (runImage === CUSTOM_IMAGE_VALUE && !runCustomImage)
+                      }
                     >
                       {isPullingAndRunning ? (
                         <>
