@@ -382,7 +382,7 @@ export default function ContainersPage() {
                   <DialogHeader>
                     <DialogTitle>Pull and Run Container</DialogTitle>
                     <DialogDescription>
-                      Specify an image to pull and configure common runtime options before starting the container.
+                      Specify an image to pull from your registry or another, then configure common runtime options before starting the container.
                     </DialogDescription>
                   </DialogHeader>
 
@@ -397,7 +397,7 @@ export default function ContainersPage() {
                         onChange={(e) => setRunImage(e.target.value)}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Image name and optional tag to pull (e.g., nginx:latest, ubuntu:22.04)
+                        Image name and optional tag to pull from your OpenCloud Registry or any available registry
                       </p>
                     </div>
 
