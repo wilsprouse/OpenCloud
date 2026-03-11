@@ -41,6 +41,8 @@ type ContainerItem = {
   Image: string
   State: string
   Status: string
+  Pid: number
+  MemoryUsageBytes: number
 }
 
 // Represents an image returned by /get-images (Container Registry)
@@ -71,6 +73,15 @@ type VolumeMount = {
 // Sentinel values used in the image Select dropdown
 const CUSTOM_IMAGE_VALUE = "__custom__"
 const NO_IMAGES_VALUE = "__no_images__"
+
+// formatBytes converts a byte count into a human-readable string
+// (e.g. 1048576 → "1.0 MB").
+function formatBytes(bytes: number): string {
+  if (bytes == null || bytes <= 0) return "—"
+  const units = ["B", "KB", "MB", "GB", "TB"]
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+}
 
 export default function ContainersPage() {
   const [containers, setContainers] = useState<ContainerItem[]>([])
@@ -333,6 +344,15 @@ export default function ContainersPage() {
                           </span>
                           <span>•</span>
                           <span>{c.Status}</span>
+                          {c.State === "running" && (
+                            <>
+                              <span>•</span>
+                              <span className="flex items-center">
+                                <Activity className="h-3 w-3 mr-1" />
+                                {formatBytes(c.MemoryUsageBytes)}
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>

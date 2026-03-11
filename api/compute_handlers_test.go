@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -573,5 +575,57 @@ func TestFunctionRename(t *testing.T) {
 	
 	if _, err := os.Stat(newLogPath); os.IsNotExist(err) {
 		t.Error("New log file should exist after rename")
+	}
+}
+
+// TestGetContainersHandler verifies that GetContainers does not panic and
+// returns either 200 (containerd available) or 500 (containerd unavailable)
+// in a test environment.
+func TestGetContainersHandler(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/get-containers", nil)
+	w := httptest.NewRecorder()
+
+	// In a test environment containerd is typically not running, so the handler
+	// is expected to return an Internal Server Error.  What we verify here is
+	// that the handler completes without panicking and returns a recognised HTTP
+	// status code.
+	GetContainers(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("Expected status 200 or 500, got %d", resp.StatusCode)
+	}
+}
+
+// TestContainerMemoryUsageBytesZeroPID verifies that containerMemoryUsageBytes
+// returns 0 when given a zero PID (no running process).
+func TestContainerMemoryUsageBytesZeroPID(t *testing.T) {
+	if got := containerMemoryUsageBytes(0); got != 0 {
+		t.Errorf("Expected 0 for zero PID, got %d", got)
+	}
+}
+
+// TestContainerMemoryUsageBytesInvalidPID verifies that containerMemoryUsageBytes
+// returns 0 for a PID that does not correspond to a live process.
+func TestContainerMemoryUsageBytesInvalidPID(t *testing.T) {
+	// PID math.MaxUint32 is very unlikely to be a real process.
+	if got := containerMemoryUsageBytes(^uint32(0)); got != 0 {
+		t.Errorf("Expected 0 for non-existent PID, got %d", got)
+	}
+}
+
+// TestContainerMemoryUsageBytesCurrentProcess verifies that
+// containerMemoryUsageBytes returns a positive, non-zero value for the current
+// test process (which is guaranteed to have /proc/{PID}/status on Linux).
+func TestContainerMemoryUsageBytesCurrentProcess(t *testing.T) {
+	if _, err := os.Stat("/proc/self/status"); os.IsNotExist(err) {
+		t.Skip("/proc filesystem not available – skipping Linux-specific test")
+	}
+
+	// Obtain the current process PID.
+	pid := uint32(os.Getpid())
+	mem := containerMemoryUsageBytes(pid)
+	if mem <= 0 {
+		t.Errorf("Expected positive memory value for current process (pid %d), got %d", pid, mem)
 	}
 }

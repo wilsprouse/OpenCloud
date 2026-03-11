@@ -59,61 +59,99 @@ func detectRuntime(filename string) string {
 	}
 }
 
-// GetContainers lists all container images using containerd
+// GetContainers lists all containers (running and stopped) from the containerd
+// container store and returns their state along with common runtime metrics such
+// as memory usage and the host PID of the main container process.
 func GetContainers(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
-	
-	// Use the "default" namespace for containerd operations
+
+	// Use the "buildkit" namespace where OpenCloud containers reside.
 	ctx = namespaces.WithNamespace(ctx, "buildkit")
 
-	// Connect to containerd socket
-	cli, err := containerd.New("/run/containerd/containerd.sock")
+	// Connect to the containerd socket.
+	cli, err := containerd.New(containerdSocket)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer cli.Close()
 
-	// List all images in the containerd image store
-	imageList, err := cli.ImageService().List(ctx)
-	fmt.Println(imageList)
+	// List all containers from the container store (not the image store).
+	containers, err := cli.Containers(ctx)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to list images: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to list containers: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Convert containerd images to the format expected by the frontend
-	var result []ImageInfo
-	for _, img := range imageList {
-		// Get image size
-		size := img.Target.Size
-		
-		// Parse tags from image name
-		tags := []string{img.Name}
-		
-		imageInfo := ImageInfo{
-			ID:          img.Target.Digest.String(),
-			RepoTags:    tags,
-			RepoDigests: []string{img.Target.Digest.String()},
-			Created:     img.CreatedAt.Unix(),
-			Size:        size,
-			VirtualSize: size,
-			Labels:      img.Labels,
-			Names:       tags,
-			Image:       img.Name,
-			State:       "available",
-			Status:      fmt.Sprintf("Created %s", img.CreatedAt.Format(time.RFC3339)),
+	var result []ContainerInfo
+	for _, c := range containers {
+		info, err := c.Info(ctx)
+		if err != nil {
+			continue
 		}
-		
-		result = append(result, imageInfo)
+
+		// Use the "nerdctl/name" label as the container name when available,
+		// otherwise fall back to the container ID.
+		name := c.ID()
+		if n, ok := info.Labels["nerdctl/name"]; ok {
+			name = n
+		}
+
+		ci := ContainerInfo{
+			ID:      c.ID(),
+			Names:   []string{name},
+			Image:   info.Image,
+			State:   "stopped",
+			Status:  "stopped",
+			Created: info.CreatedAt.Unix(),
+			Labels:  info.Labels,
+		}
+
+		// Attempt to load the running task (process) for this container.
+		// If the task exists the container is running; otherwise it is stopped.
+		task, terr := c.Task(ctx, nil)
+		if terr == nil {
+			if status, serr := task.Status(ctx); serr == nil {
+				ci.State = string(status.Status)
+				ci.PID = task.Pid()
+				ci.Status = fmt.Sprintf("%s (pid: %d)", status.Status, task.Pid())
+			}
+			// Read the resident set size of the container's main process.
+			ci.MemoryUsageBytes = containerMemoryUsageBytes(ci.PID)
+		}
+
+		result = append(result, ci)
 	}
 
-	// Encode the images as JSON and write to response
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(result); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+// containerMemoryUsageBytes reads the resident set size (RSS) of the process
+// with the given PID from the Linux /proc filesystem and returns it in bytes.
+// Returns 0 when the PID is zero, the file cannot be read, or the value cannot
+// be parsed.
+func containerMemoryUsageBytes(pid uint32) int64 {
+	if pid == 0 {
+		return 0
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "VmRSS:") {
+			var kb int64
+			if n, err := fmt.Sscanf(strings.TrimPrefix(line, "VmRSS:"), "%d", &kb); err != nil || n != 1 {
+				return 0
+			}
+			return kb * 1024
+		}
+	}
+	return 0
 }
 
 func ListFunctions(w http.ResponseWriter, r *http.Request) {
