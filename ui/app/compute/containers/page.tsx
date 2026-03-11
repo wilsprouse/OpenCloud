@@ -372,7 +372,7 @@ export default function ContainersPage() {
                       </div>
                       <div className="text-left">
                         <div className="font-medium text-sm">Pull and Run Container</div>
-                        <div className="text-xs text-muted-foreground">Pull an image and run it as a container</div>
+                        <div className="text-xs text-muted-foreground">Pull an image from your Container Registry</div>
                       </div>
                     </div>
                   </Button>
