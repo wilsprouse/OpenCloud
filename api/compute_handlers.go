@@ -387,21 +387,46 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Build OCI spec options, starting from the image's embedded config.
-	specOpts := []oci.SpecOpts{
-		oci.WithImageConfig(image),
+	// Read the image's OCI config directly from the content store.
+	// We deliberately avoid oci.WithImageConfig here: that helper resolves
+	// non-numeric User names by mounting the container snapshot under
+	// /tmp, which requires CAP_SYS_ADMIN. The OpenCloud API process does
+	// not hold that capability, so the mount fails with "operation not
+	// permitted". Reading the spec from the content store needs no mount.
+	imgSpec, err := image.Spec(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read image spec: %v", err), http.StatusInternalServerError)
+		return
 	}
 
-	// Overlay environment variables from the request on top of those in the image.
-	if len(req.Env) > 0 {
-		specOpts = append(specOpts, oci.WithEnv(req.Env))
-	}
-
-	// Override the process arguments when a custom command is provided.
-	// strings.Fields splits on whitespace; exec.Command is not involved so
-	// shell metacharacters are treated as literals.
+	// Determine the process arguments: request command overrides image
+	// defaults; otherwise use ENTRYPOINT+CMD from the image config.
+	processArgs := append(imgSpec.Config.Entrypoint, imgSpec.Config.Cmd...)
 	if req.Command != "" {
-		specOpts = append(specOpts, oci.WithProcessArgs(strings.Fields(req.Command)...))
+		processArgs = strings.Fields(req.Command)
+	}
+	if len(processArgs) == 0 {
+		processArgs = []string{"/bin/sh"}
+	}
+
+	// Working directory from the image config, defaulting to root.
+	workDir := imgSpec.Config.WorkingDir
+	if workDir == "" {
+		workDir = "/"
+	}
+
+	// Environment: image defaults first so that request values take precedence.
+	containerEnv := imgSpec.Config.Env
+	if len(req.Env) > 0 {
+		containerEnv = append(containerEnv, req.Env...)
+	}
+
+	// Build OCI spec options. We use oci.WithEnv / WithProcessArgs / WithProcessCwd
+	// rather than oci.WithImageConfig so that no snapshot mount is needed.
+	specOpts := []oci.SpecOpts{
+		oci.WithEnv(containerEnv),
+		oci.WithProcessArgs(processArgs...),
+		oci.WithProcessCwd(workDir),
 	}
 
 	// Append bind-mount volumes.
