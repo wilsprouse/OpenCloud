@@ -239,6 +239,37 @@ func validateVolumeMount(mount string) string {
 	return ""
 }
 
+// resolveLocalImage returns the Image from the local containerd store, trying
+// the exact ref first, then the normalised docker.io/library/… form. If neither
+// is found locally, it falls back to pulling from the registry.
+func resolveLocalImage(ctx context.Context, cli *containerd.Client, ref string) (containerd.Image, error) {
+	// 1. Exact ref as supplied by the user.
+	if img, err := cli.GetImage(ctx, ref); err == nil {
+		return img, nil
+	}
+
+	// 2. Normalised ref (e.g. "nginx" → "docker.io/library/nginx:latest").
+	normalised := normalizeImageRef(ref)
+	if normalised != ref {
+		if img, err := cli.GetImage(ctx, normalised); err == nil {
+			return img, nil
+		}
+	}
+
+	// 3. Image not in the local store — pull from the registry.
+	// WithPullUnpack ensures layers are unpacked so the image is immediately
+	// usable for container creation.
+	pullRef := normalised
+	img, err := cli.Pull(ctx, pullRef,
+		containerd.WithResolver(docker.NewResolver(docker.ResolverOptions{})),
+		containerd.WithPullUnpack,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("image %q not found locally and could not be pulled: %w", ref, err)
+	}
+	return img, nil
+}
+
 // PullAndRun pulls the specified container image and starts a new container using
 // the containerd client directly in the "buildkit" namespace (the same namespace
 // read by GetContainers). It accepts POST requests with a JSON body matching
@@ -323,19 +354,15 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cli.Close()
 
-	// Normalize the image reference so plain names like "nginx" resolve to
-	// "docker.io/library/nginx:latest" as Docker-compatible registries expect.
-	imageRef := normalizeImageRef(req.Image)
-
-	// Pull the image using the standard Docker registry resolver.
-	// WithPullUnpack ensures the image layers are unpacked into the snapshotter
-	// so they are immediately available for container creation.
-	image, err := cli.Pull(ctx, imageRef,
-		containerd.WithResolver(docker.NewResolver(docker.ResolverOptions{})),
-		containerd.WithPullUnpack,
-	)
+	// Resolve the image reference: prefer images already present in the local
+	// containerd store (visible via `ctr -n buildkit images ls`) before making
+	// any outbound network call. We try the exact ref first, then the
+	// normalised docker.io/library/… form, and only fall back to a registry
+	// pull when neither is found locally.
+	imageRef := req.Image
+	image, err := resolveLocalImage(ctx, cli, req.Image)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to pull image %q: %v", imageRef, err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to resolve image %q: %v", req.Image, err), http.StatusInternalServerError)
 		return
 	}
 
