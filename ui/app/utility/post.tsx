@@ -1,59 +1,53 @@
-/*
-TODO: This will eventually be used when we get into Auth
-*/
-import axios from "axios";
-import { useRouter } from 'next/navigation';
-
-        /*const res = await axios.get("http://localhost:3030/get-server-metrics", {
-          headers: {
-             "Content-Type": "application/json",
-          },
-        });*/
+import axios from "axios"
 
 const client = axios.create({
   baseURL: process.env.REACT_APP_BACKEND || "/api",
   headers: {
     "Content-Type": "application/json",
-    //'Access-Control-Allow-Origin' : '*',
-    //'Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,PATCH,OPTIONS',   
+  },
+})
+
+// Attach the access token to every outgoing request when available
+client.interceptors.request.use((config) => {
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("access_token")
+    if (token) {
+      config.headers["AccessToken"] = token
+    }
   }
-});
+  return config
+})
 
-// Setup interceptors for expired AccessTokens
-/*client.interceptors.response.use(null, (error) => {
-  if(error.config && error.response && error.response.status === 401) {
-    return client.get("/user/get-auth/").then((resp) => {
+// On a 401 response, attempt a silent token refresh.
+// If the refresh also fails, clear credentials and redirect to the login page.
+client.interceptors.response.use(null, async (error) => {
+  if (error.config && error.response && error.response.status === 401) {
+    try {
+      const resp = await client.get("/user/get-auth/")
+      const newToken: string | undefined = resp.data?.new_access_token
 
-      localStorage.setItem("access_token", resp.data.new_access_token);
-      error.config.headers['AccessToken'] = resp.data.new_access_token;
-      return axios.request(error.config);
+      if (!newToken) {
+        throw new Error("Token refresh returned no access token")
+      }
 
-    }).catch((error: any) => {
+      const secure = window.location.protocol === "https:" ? "; Secure" : ""
+      localStorage.setItem("access_token", newToken)
+      document.cookie = `opencloud_session=${newToken}; path=/; SameSite=Strict${secure}`
 
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("refresh_token");
-      localStorage.removeItem("username");
-   
-      const router = useRouter();
-
-      router.push("/login");
-    });
+      error.config.headers["AccessToken"] = newToken
+      return axios.request(error.config)
+    } catch {
+      localStorage.removeItem("access_token")
+      localStorage.removeItem("refresh_token")
+      localStorage.removeItem("username")
+      const secure = window.location.protocol === "https:" ? "; Secure" : ""
+      document.cookie =
+        `opencloud_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict${secure}`
+      window.location.href = "/login"
+    }
   }
-  return Promise.reject(error);
-});
+  return Promise.reject(error)
+})
 
-const getErrorMessage = (error: any) => {
-  let resp = "";
+export default client
 
-  try {
-    resp = error.response.data.message;
-  }
-  catch(error) {
-    resp = "Sorry, something went wrong. Please try again later.";
-  }
-
-  return resp;
-};*/
-
-export default client;
-//export { getErrorMessage };
