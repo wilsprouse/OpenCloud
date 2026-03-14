@@ -13,7 +13,11 @@ import (
 	"strings"
 	"path/filepath"
 	"github.com/containerd/containerd"
+	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/oci"
+	"github.com/containerd/containerd/remotes/docker"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
@@ -236,9 +240,14 @@ func validateVolumeMount(mount string) string {
 }
 
 // PullAndRun pulls the specified container image and starts a new container using
-// nerdctl in the "buildkit" containerd namespace (the same namespace read by
-// GetContainers). It accepts POST requests with a JSON body matching
+// the containerd client directly in the "buildkit" namespace (the same namespace
+// read by GetContainers). It accepts POST requests with a JSON body matching
 // PullAndRunRequest and returns the new container ID on success.
+//
+// Note: port mappings and restart policies are managed at the container orchestration
+// layer (e.g. CNI/systemd) and are not part of the core containerd API. Those fields
+// in PullAndRunRequest are accepted for forward-compatibility but are stored as
+// container labels only and are not enforced at runtime by this handler.
 func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -292,65 +301,138 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// autoRemove (--rm) conflicts with any restart policy other than "no" because the
+	// autoRemove conflicts with any restart policy other than "no" because the
 	// container runtime cannot both remove the container on exit and restart it.
 	if req.AutoRemove && req.RestartPolicy != "" && req.RestartPolicy != "no" {
 		http.Error(w, "autoRemove cannot be used with a restart policy other than 'no'", http.StatusBadRequest)
 		return
 	}
 
-	// Build the nerdctl run command.
-	// Containers are placed in the "buildkit" namespace so GetContainers can list them.
-	args := []string{"-n", "buildkit", "run", "-d"}
-
-	if req.Name != "" {
-		args = append(args, "--name", req.Name)
-	}
-
-	for _, port := range req.Ports {
-		args = append(args, "-p", port)
-	}
-
-	for _, env := range req.Env {
-		args = append(args, "-e", env)
-	}
-
-	for _, vol := range req.Volumes {
-		args = append(args, "-v", vol)
-	}
-
-	if req.RestartPolicy != "" && req.RestartPolicy != "no" {
-		args = append(args, "--restart", req.RestartPolicy)
-	}
-
-	if req.AutoRemove {
-		args = append(args, "--rm")
-	}
-
-	args = append(args, req.Image)
-
-	// Append optional command tokens. We split by whitespace and pass each token as a
-	// separate argument to exec.Command (no shell is invoked), so shell metacharacters
-	// such as |, >, $, and ; are treated as literals by the container runtime.
-	if req.Command != "" {
-		args = append(args, strings.Fields(req.Command)...)
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, "nerdctl", args...).CombinedOutput()
+	// All OpenCloud containers live in the "buildkit" namespace so that
+	// GetContainers can list them.
+	ctx = namespaces.WithNamespace(ctx, "buildkit")
+
+	// Connect to the containerd socket.
+	cli, err := containerd.New(containerdSocket)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to pull and run container: %v\nOutput: %s", err, string(out)), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer cli.Close()
+
+	// Normalize the image reference so plain names like "nginx" resolve to
+	// "docker.io/library/nginx:latest" as Docker-compatible registries expect.
+	imageRef := normalizeImageRef(req.Image)
+
+	// Pull the image using the standard Docker registry resolver.
+	// WithPullUnpack ensures the image layers are unpacked into the snapshotter
+	// so they are immediately available for container creation.
+	image, err := cli.Pull(ctx, imageRef,
+		containerd.WithResolver(docker.NewResolver(docker.ResolverOptions{})),
+		containerd.WithPullUnpack,
+	)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to pull image %q: %v", imageRef, err), http.StatusInternalServerError)
 		return
 	}
 
-	containerID := strings.TrimSpace(string(out))
+	// Build the unique container ID from the requested name (or a timestamp fallback).
+	containerID := req.Name
+	if containerID == "" {
+		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
+	}
+
+	// Parse volume mounts ("hostPath:containerPath") into OCI mount entries.
+	var mounts []specs.Mount
+	for _, vol := range req.Volumes {
+		parts := strings.SplitN(vol, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		mounts = append(mounts, specs.Mount{
+			Type:        "bind",
+			Source:      parts[0],
+			Destination: parts[1],
+			Options:     []string{"rbind", "rw"},
+		})
+	}
+
+	// Build OCI spec options, starting from the image's embedded config.
+	specOpts := []oci.SpecOpts{
+		oci.WithImageConfig(image),
+	}
+
+	// Overlay environment variables from the request on top of those in the image.
+	if len(req.Env) > 0 {
+		specOpts = append(specOpts, oci.WithEnv(req.Env))
+	}
+
+	// Override the process arguments when a custom command is provided.
+	// strings.Fields splits on whitespace; exec.Command is not involved so
+	// shell metacharacters are treated as literals.
+	if req.Command != "" {
+		specOpts = append(specOpts, oci.WithProcessArgs(strings.Fields(req.Command)...))
+	}
+
+	// Append bind-mount volumes.
+	if len(mounts) > 0 {
+		specOpts = append(specOpts, oci.WithMounts(mounts))
+	}
+
+	// Attach metadata labels to the container. The "nerdctl/name" label is the
+	// convention used by GetContainers to return a human-readable name.
+	labels := map[string]string{
+		"nerdctl/name": containerID,
+	}
+	if req.RestartPolicy != "" {
+		labels["opencloud/restart-policy"] = req.RestartPolicy
+	}
+	if req.AutoRemove {
+		labels["opencloud/auto-remove"] = "true"
+	}
+	if len(req.Ports) > 0 {
+		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
+	}
+
+	// Create the container record in the containerd metadata store.
+	ctr, err := cli.NewContainer(ctx,
+		containerID,
+		containerd.WithImage(image),
+		containerd.WithNewSnapshot(containerID+"-snapshot", image),
+		containerd.WithNewSpec(specOpts...),
+		containerd.WithContainerLabels(labels),
+	)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Create a task (the running process) for the container, discarding I/O.
+	// Logs can be collected separately through the container runtime or a
+	// dedicated log driver.
+	task, err := ctr.NewTask(ctx, cio.NullIO)
+	if err != nil {
+		// Clean up the container record if task creation fails.
+		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
+		http.Error(w, fmt.Sprintf("Failed to create task: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Start the task (equivalent to unblocking the container's init process).
+	if err := task.Start(ctx); err != nil {
+		task.Delete(ctx)
+		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
+		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":      "success",
-		"message":     fmt.Sprintf("Container started from image %s", req.Image),
+		"message":     fmt.Sprintf("Container started from image %s", imageRef),
 		"containerId": containerID,
 	})
 }
