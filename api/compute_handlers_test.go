@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -645,5 +646,230 @@ func TestContainerMemoryUsageBytesCurrentProcess(t *testing.T) {
 	mem := containerMemoryUsageBytes(pid)
 	if mem <= 0 {
 		t.Errorf("Expected positive memory value for current process (pid %d), got %d", pid, mem)
+	}
+}
+
+// TestPullAndRunHandlerMethodNotAllowed verifies that non-POST requests are rejected with 405.
+func TestPullAndRunHandlerMethodNotAllowed(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/pull-and-run", nil)
+		w := httptest.NewRecorder()
+		PullAndRun(w, req)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Method %s: expected 405, got %d", method, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunHandlerInvalidJSON verifies that malformed JSON returns 400.
+func TestPullAndRunHandlerInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader("{invalid json}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PullAndRun(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+// TestPullAndRunHandlerMissingImage verifies that a request without an image returns 400.
+func TestPullAndRunHandlerMissingImage(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(`{"name":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PullAndRun(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+// TestPullAndRunHandlerInvalidImageName verifies that a dangerous image name returns 400.
+func TestPullAndRunHandlerInvalidImageName(t *testing.T) {
+	cases := []string{"../etc/passwd", "/etc/passwd", "my image", "image\\name"}
+	for _, img := range cases {
+		body := `{"image":"` + img + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRun(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Image %q: expected 400, got %d", img, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunHandlerInvalidContainerName verifies that an invalid container name returns 400.
+func TestPullAndRunHandlerInvalidContainerName(t *testing.T) {
+	cases := []string{"-bad", ".bad", "bad name", "bad/name"}
+	for _, name := range cases {
+		body, _ := json.Marshal(map[string]string{"image": "nginx:latest", "name": name})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRun(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Container name %q: expected 400, got %d", name, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunHandlerInvalidPort verifies that an invalid port mapping returns 400.
+func TestPullAndRunHandlerInvalidPort(t *testing.T) {
+	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	for _, port := range cases {
+		body, _ := json.Marshal(map[string]interface{}{"image": "nginx:latest", "ports": []string{port}})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRun(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Port %q: expected 400, got %d", port, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunHandlerInvalidVolume verifies that a volume with path traversal returns 400.
+func TestPullAndRunHandlerInvalidVolume(t *testing.T) {
+	cases := []string{"../../etc:/data", "/data/../../etc:/data", "/host", "/host:../container"}
+	for _, vol := range cases {
+		body, _ := json.Marshal(map[string]interface{}{"image": "nginx:latest", "volumes": []string{vol}})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRun(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Volume %q: expected 400, got %d", vol, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunHandlerInvalidRestartPolicy verifies that an unknown restart policy returns 400.
+func TestPullAndRunHandlerInvalidRestartPolicy(t *testing.T) {
+	body, _ := json.Marshal(map[string]string{"image": "nginx:latest", "restartPolicy": "invalid-policy"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PullAndRun(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for invalid restart policy, got %d", w.Code)
+	}
+}
+
+// TestPullAndRunHandlerAutoRemoveWithRestartPolicy verifies that combining autoRemove with
+// a non-"no" restart policy returns 400 (the two options are mutually exclusive).
+func TestPullAndRunHandlerAutoRemoveWithRestartPolicy(t *testing.T) {
+	for _, policy := range []string{"always", "on-failure", "unless-stopped"} {
+		body, _ := json.Marshal(map[string]interface{}{
+			"image":         "nginx:latest",
+			"autoRemove":    true,
+			"restartPolicy": policy,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRun(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Policy %q with autoRemove: expected 400, got %d", policy, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunHandlerValidRequest verifies that a well-formed request passes all validation
+// and either succeeds (nerdctl available) or returns 500 (nerdctl unavailable in test env).
+func TestPullAndRunHandlerValidRequest(t *testing.T) {
+	body, _ := json.Marshal(PullAndRunRequest{
+		Image:         "nginx:latest",
+		Name:          "test-container",
+		Ports:         []string{"8080:80"},
+		Env:           []string{"FOO=bar"},
+		Volumes:       []string{"/tmp:/data"},
+		RestartPolicy: "no",
+		AutoRemove:    false,
+		Command:       "",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PullAndRun(w, req)
+	// In a CI environment nerdctl is typically unavailable, so 500 is expected.
+	// In production (nerdctl present) the handler should return 200.
+	if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected 200 or 500, got %d", w.Code)
+	}
+}
+
+// TestValidateContainerName verifies valid and invalid container names.
+func TestValidateContainerName(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"my-container", false},
+		{"my_container", false},
+		{"my.container", false},
+		{"container123", false},
+		{"A", false},
+		{"-container", true},
+		{".container", true},
+		{"", true},
+		{"my container", true},
+		{"my/container", true},
+		{"my@container", true},
+	}
+	for _, tt := range tests {
+		result := validateContainerName(tt.input)
+		if tt.wantErr && result == "" {
+			t.Errorf("validateContainerName(%q): expected error, got none", tt.input)
+		} else if !tt.wantErr && result != "" {
+			t.Errorf("validateContainerName(%q): expected no error, got %q", tt.input, result)
+		}
+	}
+}
+
+// TestValidatePortMapping verifies valid and invalid port mapping strings.
+func TestValidatePortMapping(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"8080:80", false},
+		{"0:80", false},
+		{"8080:80/tcp", false},
+		{"0.0.0.0:8080:80", false},
+		{"8080", true},      // no colon
+		{"../80:80", true},  // path traversal
+		{"8080;80", true},   // semicolon
+		{"8080 80", true},   // space
+	}
+	for _, tt := range tests {
+		result := validatePortMapping(tt.input)
+		if tt.wantErr && result == "" {
+			t.Errorf("validatePortMapping(%q): expected error, got none", tt.input)
+		} else if !tt.wantErr && result != "" {
+			t.Errorf("validatePortMapping(%q): expected no error, got %q", tt.input, result)
+		}
+	}
+}
+
+// TestValidateVolumeMount verifies valid and invalid volume mount strings.
+func TestValidateVolumeMount(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"/host/data:/container/data", false},
+		{"/tmp:/data", false},
+		{"data:/container/data", false},
+		{"../../etc:/container/data", true},  // path traversal in host
+		{"/host/data:../../etc", true},        // path traversal in container
+		{"/host/data", true},                  // no colon
+	}
+	for _, tt := range tests {
+		result := validateVolumeMount(tt.input)
+		if tt.wantErr && result == "" {
+			t.Errorf("validateVolumeMount(%q): expected error, got none", tt.input)
+		} else if !tt.wantErr && result != "" {
+			t.Errorf("validateVolumeMount(%q): expected no error, got %q", tt.input, result)
+		}
 	}
 }
