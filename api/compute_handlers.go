@@ -13,7 +13,11 @@ import (
 	"strings"
 	"path/filepath"
 	"github.com/containerd/containerd"
+	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/oci"
+	"github.com/containerd/containerd/remotes/docker"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
@@ -154,6 +158,335 @@ func containerMemoryUsageBytes(pid uint32) int64 {
 		}
 	}
 	return 0
+}
+
+// PullAndRunRequest represents the JSON payload for pulling an image and starting a container.
+type PullAndRunRequest struct {
+	// Image is the container image to pull and run (e.g. "nginx:latest").
+	Image string `json:"image"`
+	// Name is an optional human-readable name to assign to the container.
+	Name string `json:"name,omitempty"`
+	// Ports is a list of port mappings in "hostPort:containerPort" format.
+	Ports []string `json:"ports,omitempty"`
+	// Env is a list of environment variables in "KEY=VALUE" or "KEY" format.
+	Env []string `json:"env,omitempty"`
+	// Volumes is a list of volume mounts in "hostPath:containerPath" format.
+	Volumes []string `json:"volumes,omitempty"`
+	// RestartPolicy is the container restart policy ("no", "always", "on-failure", "unless-stopped").
+	RestartPolicy string `json:"restartPolicy,omitempty"`
+	// AutoRemove removes the container automatically when it exits.
+	AutoRemove bool `json:"autoRemove,omitempty"`
+	// Command overrides the default container entrypoint command.
+	Command string `json:"command,omitempty"`
+}
+
+// validRestartPolicies lists the restart policies accepted by nerdctl.
+var validRestartPolicies = map[string]bool{
+	"no":             true,
+	"always":         true,
+	"on-failure":     true,
+	"unless-stopped": true,
+}
+
+// validateContainerName checks a container name for unsafe or invalid characters.
+// Names must start with a letter or digit and may only contain letters, digits,
+// hyphens, underscores, and dots.
+func validateContainerName(name string) string {
+	if len(name) == 0 {
+		return "container name must not be empty"
+	}
+	first := name[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || (first >= '0' && first <= '9')) {
+		return "container name must start with a letter or digit"
+	}
+	for _, c := range name[1:] {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+			return fmt.Sprintf("container name contains invalid character %q", c)
+		}
+	}
+	return ""
+}
+
+// validatePortMapping checks a port mapping string for invalid or dangerous patterns.
+// Accepts formats such as "hostPort:containerPort", "hostIP:hostPort:containerPort",
+// and "hostPort:containerPort/proto". Only alphanumeric characters, dots, colons,
+// slashes, and hyphens are permitted.
+func validatePortMapping(mapping string) string {
+	if !strings.Contains(mapping, ":") {
+		return fmt.Sprintf("invalid port mapping %q: must contain a colon separator", mapping)
+	}
+	if strings.Contains(mapping, "..") {
+		return fmt.Sprintf("invalid port mapping %q: must not contain path traversal sequences", mapping)
+	}
+	for _, c := range mapping {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			c == '.' || c == ':' || c == '/' || c == '-') {
+			return fmt.Sprintf("invalid port mapping %q: contains invalid character %q", mapping, c)
+		}
+	}
+	return ""
+}
+
+// validateVolumeMount checks a volume mount string for path traversal or missing separators.
+// Volume mounts must be in "hostPath:containerPath" format.
+func validateVolumeMount(mount string) string {
+	if !strings.Contains(mount, ":") {
+		return fmt.Sprintf("invalid volume mount %q: must be in hostPath:containerPath format", mount)
+	}
+	if strings.Contains(mount, "..") {
+		return fmt.Sprintf("invalid volume mount %q: path must not contain path traversal sequences", mount)
+	}
+	return ""
+}
+
+// resolveLocalImage returns the Image from the local containerd store, trying
+// the exact ref first, then the normalised docker.io/library/… form. If neither
+// is found locally, it falls back to pulling from the registry.
+func resolveLocalImage(ctx context.Context, cli *containerd.Client, ref string) (containerd.Image, error) {
+	// 1. Exact ref as supplied by the user.
+	if img, err := cli.GetImage(ctx, ref); err == nil {
+		return img, nil
+	}
+
+	// 2. Normalised ref (e.g. "nginx" → "docker.io/library/nginx:latest").
+	normalised := normalizeImageRef(ref)
+	if normalised != ref {
+		if img, err := cli.GetImage(ctx, normalised); err == nil {
+			return img, nil
+		}
+	}
+
+	// 3. Image not in the local store — pull from the registry.
+	// WithPullUnpack ensures layers are unpacked so the image is immediately
+	// usable for container creation.
+	pullRef := normalised
+	img, err := cli.Pull(ctx, pullRef,
+		containerd.WithResolver(docker.NewResolver(docker.ResolverOptions{})),
+		containerd.WithPullUnpack,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("image %q not found locally and could not be pulled: %w", ref, err)
+	}
+	return img, nil
+}
+
+// PullAndRun pulls the specified container image and starts a new container using
+// the containerd client directly in the "buildkit" namespace (the same namespace
+// read by GetContainers). It accepts POST requests with a JSON body matching
+// PullAndRunRequest and returns the new container ID on success.
+//
+// Note: port mappings and restart policies are managed at the container orchestration
+// layer (e.g. CNI/systemd) and are not part of the core containerd API. Those fields
+// in PullAndRunRequest are accepted for forward-compatibility but are stored as
+// container labels only and are not enforced at runtime by this handler.
+func PullAndRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PullAndRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.Image == "" {
+		http.Error(w, "image is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate the image name to prevent command injection or path traversal.
+	if errMsg := validateImageName(req.Image); errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	// Validate the optional container name.
+	if req.Name != "" {
+		if errMsg := validateContainerName(req.Name); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate port mappings.
+	for _, port := range req.Ports {
+		if errMsg := validatePortMapping(port); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate volume mounts for path traversal.
+	for _, vol := range req.Volumes {
+		if errMsg := validateVolumeMount(vol); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate restart policy when explicitly provided.
+	if req.RestartPolicy != "" && !validRestartPolicies[req.RestartPolicy] {
+		http.Error(w, "invalid restart policy: must be one of no, always, on-failure, unless-stopped", http.StatusBadRequest)
+		return
+	}
+
+	// autoRemove conflicts with any restart policy other than "no" because the
+	// container runtime cannot both remove the container on exit and restart it.
+	if req.AutoRemove && req.RestartPolicy != "" && req.RestartPolicy != "no" {
+		http.Error(w, "autoRemove cannot be used with a restart policy other than 'no'", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
+	defer cancel()
+
+	// All OpenCloud containers live in the "buildkit" namespace so that
+	// GetContainers can list them.
+	ctx = namespaces.WithNamespace(ctx, "buildkit")
+
+	// Connect to the containerd socket.
+	cli, err := containerd.New(containerdSocket)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer cli.Close()
+
+	// Resolve the image reference: prefer images already present in the local
+	// containerd store (visible via `ctr -n buildkit images ls`) before making
+	// any outbound network call. We try the exact ref first, then the
+	// normalised docker.io/library/… form, and only fall back to a registry
+	// pull when neither is found locally.
+	imageRef := req.Image
+	image, err := resolveLocalImage(ctx, cli, req.Image)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to resolve image %q: %v", req.Image, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Build the unique container ID from the requested name (or a timestamp fallback).
+	containerID := req.Name
+	if containerID == "" {
+		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
+	}
+
+	// Parse volume mounts ("hostPath:containerPath") into OCI mount entries.
+	var mounts []specs.Mount
+	for _, vol := range req.Volumes {
+		parts := strings.SplitN(vol, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		mounts = append(mounts, specs.Mount{
+			Type:        "bind",
+			Source:      parts[0],
+			Destination: parts[1],
+			Options:     []string{"rbind", "rw"},
+		})
+	}
+
+	// Read the image's OCI config directly from the content store.
+	// We deliberately avoid oci.WithImageConfig here: that helper resolves
+	// non-numeric User names by mounting the container snapshot under
+	// /tmp, which requires CAP_SYS_ADMIN. The OpenCloud API process does
+	// not hold that capability, so the mount fails with "operation not
+	// permitted". Reading the spec from the content store needs no mount.
+	imgSpec, err := image.Spec(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read image spec: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Determine the process arguments: request command overrides image
+	// defaults; otherwise use ENTRYPOINT+CMD from the image config.
+	processArgs := append(imgSpec.Config.Entrypoint, imgSpec.Config.Cmd...)
+	if req.Command != "" {
+		processArgs = strings.Fields(req.Command)
+	}
+	if len(processArgs) == 0 {
+		processArgs = []string{"/bin/sh"}
+	}
+
+	// Working directory from the image config, defaulting to root.
+	workDir := imgSpec.Config.WorkingDir
+	if workDir == "" {
+		workDir = "/"
+	}
+
+	// Environment: image defaults first so that request values take precedence.
+	containerEnv := imgSpec.Config.Env
+	if len(req.Env) > 0 {
+		containerEnv = append(containerEnv, req.Env...)
+	}
+
+	// Build OCI spec options. We use oci.WithEnv / WithProcessArgs / WithProcessCwd
+	// rather than oci.WithImageConfig so that no snapshot mount is needed.
+	specOpts := []oci.SpecOpts{
+		oci.WithEnv(containerEnv),
+		oci.WithProcessArgs(processArgs...),
+		oci.WithProcessCwd(workDir),
+	}
+
+	// Append bind-mount volumes.
+	if len(mounts) > 0 {
+		specOpts = append(specOpts, oci.WithMounts(mounts))
+	}
+
+	// Attach metadata labels to the container. The "nerdctl/name" label is the
+	// convention used by GetContainers to return a human-readable name.
+	labels := map[string]string{
+		"nerdctl/name": containerID,
+	}
+	if req.RestartPolicy != "" {
+		labels["opencloud/restart-policy"] = req.RestartPolicy
+	}
+	if req.AutoRemove {
+		labels["opencloud/auto-remove"] = "true"
+	}
+	if len(req.Ports) > 0 {
+		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
+	}
+
+	// Create the container record in the containerd metadata store.
+	ctr, err := cli.NewContainer(ctx,
+		containerID,
+		containerd.WithImage(image),
+		containerd.WithNewSnapshot(containerID+"-snapshot", image),
+		containerd.WithNewSpec(specOpts...),
+		containerd.WithContainerLabels(labels),
+	)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Create a task (the running process) for the container, discarding I/O.
+	// Logs can be collected separately through the container runtime or a
+	// dedicated log driver.
+	task, err := ctr.NewTask(ctx, cio.NullIO)
+	if err != nil {
+		// Clean up the container record if task creation fails.
+		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
+		http.Error(w, fmt.Sprintf("Failed to create task: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Start the task (equivalent to unblocking the container's init process).
+	if err := task.Start(ctx); err != nil {
+		task.Delete(ctx)
+		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
+		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":      "success",
+		"message":     fmt.Sprintf("Container started from image %s", imageRef),
+		"containerId": containerID,
+	})
 }
 
 func ListFunctions(w http.ResponseWriter, r *http.Request) {
