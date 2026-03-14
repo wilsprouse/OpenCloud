@@ -156,6 +156,205 @@ func containerMemoryUsageBytes(pid uint32) int64 {
 	return 0
 }
 
+// PullAndRunRequest represents the JSON payload for pulling an image and starting a container.
+type PullAndRunRequest struct {
+	// Image is the container image to pull and run (e.g. "nginx:latest").
+	Image string `json:"image"`
+	// Name is an optional human-readable name to assign to the container.
+	Name string `json:"name,omitempty"`
+	// Ports is a list of port mappings in "hostPort:containerPort" format.
+	Ports []string `json:"ports,omitempty"`
+	// Env is a list of environment variables in "KEY=VALUE" or "KEY" format.
+	Env []string `json:"env,omitempty"`
+	// Volumes is a list of volume mounts in "hostPath:containerPath" format.
+	Volumes []string `json:"volumes,omitempty"`
+	// RestartPolicy is the container restart policy ("no", "always", "on-failure", "unless-stopped").
+	RestartPolicy string `json:"restartPolicy,omitempty"`
+	// AutoRemove removes the container automatically when it exits.
+	AutoRemove bool `json:"autoRemove,omitempty"`
+	// Command overrides the default container entrypoint command.
+	Command string `json:"command,omitempty"`
+}
+
+// validRestartPolicies lists the restart policies accepted by nerdctl.
+var validRestartPolicies = map[string]bool{
+	"no":             true,
+	"always":         true,
+	"on-failure":     true,
+	"unless-stopped": true,
+}
+
+// validateContainerName checks a container name for unsafe or invalid characters.
+// Names must start with a letter or digit and may only contain letters, digits,
+// hyphens, underscores, and dots.
+func validateContainerName(name string) string {
+	if len(name) == 0 {
+		return "container name must not be empty"
+	}
+	first := name[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || (first >= '0' && first <= '9')) {
+		return "container name must start with a letter or digit"
+	}
+	for _, c := range name[1:] {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+			return fmt.Sprintf("container name contains invalid character %q", c)
+		}
+	}
+	return ""
+}
+
+// validatePortMapping checks a port mapping string for invalid or dangerous patterns.
+// Accepts formats such as "hostPort:containerPort", "hostIP:hostPort:containerPort",
+// and "hostPort:containerPort/proto". Only alphanumeric characters, dots, colons,
+// slashes, and hyphens are permitted.
+func validatePortMapping(mapping string) string {
+	if !strings.Contains(mapping, ":") {
+		return fmt.Sprintf("invalid port mapping %q: must contain a colon separator", mapping)
+	}
+	if strings.Contains(mapping, "..") {
+		return fmt.Sprintf("invalid port mapping %q: must not contain path traversal sequences", mapping)
+	}
+	for _, c := range mapping {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			c == '.' || c == ':' || c == '/' || c == '-') {
+			return fmt.Sprintf("invalid port mapping %q: contains invalid character %q", mapping, c)
+		}
+	}
+	return ""
+}
+
+// validateVolumeMount checks a volume mount string for path traversal or missing separators.
+// Volume mounts must be in "hostPath:containerPath" format.
+func validateVolumeMount(mount string) string {
+	if !strings.Contains(mount, ":") {
+		return fmt.Sprintf("invalid volume mount %q: must be in hostPath:containerPath format", mount)
+	}
+	if strings.Contains(mount, "..") {
+		return fmt.Sprintf("invalid volume mount %q: path must not contain path traversal sequences", mount)
+	}
+	return ""
+}
+
+// PullAndRun pulls the specified container image and starts a new container using
+// nerdctl in the "buildkit" containerd namespace (the same namespace read by
+// GetContainers). It accepts POST requests with a JSON body matching
+// PullAndRunRequest and returns the new container ID on success.
+func PullAndRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PullAndRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.Image == "" {
+		http.Error(w, "image is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate the image name to prevent command injection or path traversal.
+	if errMsg := validateImageName(req.Image); errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	// Validate the optional container name.
+	if req.Name != "" {
+		if errMsg := validateContainerName(req.Name); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate port mappings.
+	for _, port := range req.Ports {
+		if errMsg := validatePortMapping(port); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate volume mounts for path traversal.
+	for _, vol := range req.Volumes {
+		if errMsg := validateVolumeMount(vol); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate restart policy when explicitly provided.
+	if req.RestartPolicy != "" && !validRestartPolicies[req.RestartPolicy] {
+		http.Error(w, "invalid restart policy: must be one of no, always, on-failure, unless-stopped", http.StatusBadRequest)
+		return
+	}
+
+	// autoRemove (--rm) conflicts with any restart policy other than "no" because the
+	// container runtime cannot both remove the container on exit and restart it.
+	if req.AutoRemove && req.RestartPolicy != "" && req.RestartPolicy != "no" {
+		http.Error(w, "autoRemove cannot be used with a restart policy other than 'no'", http.StatusBadRequest)
+		return
+	}
+
+	// Build the nerdctl run command.
+	// Containers are placed in the "buildkit" namespace so GetContainers can list them.
+	args := []string{"-n", "buildkit", "run", "-d"}
+
+	if req.Name != "" {
+		args = append(args, "--name", req.Name)
+	}
+
+	for _, port := range req.Ports {
+		args = append(args, "-p", port)
+	}
+
+	for _, env := range req.Env {
+		args = append(args, "-e", env)
+	}
+
+	for _, vol := range req.Volumes {
+		args = append(args, "-v", vol)
+	}
+
+	if req.RestartPolicy != "" && req.RestartPolicy != "no" {
+		args = append(args, "--restart", req.RestartPolicy)
+	}
+
+	if req.AutoRemove {
+		args = append(args, "--rm")
+	}
+
+	args = append(args, req.Image)
+
+	// Append optional command tokens. We split by whitespace and pass each token as a
+	// separate argument to exec.Command (no shell is invoked), so shell metacharacters
+	// such as |, >, $, and ; are treated as literals by the container runtime.
+	if req.Command != "" {
+		args = append(args, strings.Fields(req.Command)...)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "nerdctl", args...).CombinedOutput()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to pull and run container: %v\nOutput: %s", err, string(out)), http.StatusInternalServerError)
+		return
+	}
+
+	containerID := strings.TrimSpace(string(out))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":      "success",
+		"message":     fmt.Sprintf("Container started from image %s", req.Image),
+		"containerId": containerID,
+	})
+}
+
 func ListFunctions(w http.ResponseWriter, r *http.Request) {
 	home, err := os.UserHomeDir()
 	functionDir := filepath.Join(home, ".opencloud", "functions")
