@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -580,7 +581,10 @@ func TestFunctionRename(t *testing.T) {
 
 // TestGetContainersHandler verifies that GetContainers does not panic and
 // returns either 200 (containerd available) or 500 (containerd unavailable)
-// in a test environment.
+// in a test environment.  When containerd is unavailable the handler must
+// still return a valid HTTP status; when it is available and no containers
+// exist the response body must be a JSON array (not null) so that the
+// frontend can safely iterate over the result.
 func TestGetContainersHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/get-containers", nil)
 	w := httptest.NewRecorder()
@@ -594,6 +598,20 @@ func TestGetContainersHandler(t *testing.T) {
 	resp := w.Result()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("Expected status 200 or 500, got %d", resp.StatusCode)
+	}
+
+	// When the handler returns 200 (containerd reachable, zero containers),
+	// the body must be a JSON array — not null — so that the frontend can
+	// safely call .filter() / .length without crashing.
+	if resp.StatusCode == http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+		trimmed := strings.TrimSpace(string(body))
+		if trimmed == "null" {
+			t.Error("Response body must be a JSON array, not null, when no containers are present")
+		}
 	}
 }
 

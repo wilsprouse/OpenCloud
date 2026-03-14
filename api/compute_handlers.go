@@ -83,7 +83,9 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var result []ContainerInfo
+	// Initialize to an empty slice so JSON encodes as [] rather than null
+	// when no containers are present.
+	result := make([]ContainerInfo, 0)
 	for _, c := range containers {
 		info, err := c.Info(ctx)
 		if err != nil {
