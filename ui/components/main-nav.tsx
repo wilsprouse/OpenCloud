@@ -1,13 +1,25 @@
 'use client'
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Cloud, Bell, Settings, HelpCircle, ChevronDown, Cpu, HardDrive, Database, Network } from "lucide-react"
+import { Cloud, Bell, Settings, HelpCircle, ChevronDown, HardDrive, LogOut } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
+import { getUsername, logout } from "@/lib/auth"
 
 export function MainNav() {
+  const [username, setUsername] = useState<string | null>(null)
+
+  // Read the username from localStorage after the component mounts on the client
+  useEffect(() => {
+    setUsername(getUsername())
+  }, [])
+
+  // Derive initials for the avatar fallback (e.g. "Tom" → "T")
+  const initials = username ? username.charAt(0).toUpperCase() : "U"
+
   return (
     <div className="flex w-full items-center justify-between">
       <div className="flex items-center gap-6 md:gap-10">
@@ -128,10 +140,46 @@ export function MainNav() {
         <Button variant="ghost" size="icon">
           <Settings className="h-5 w-5" />
         </Button>
-        <Avatar>
-          <AvatarImage src="/placeholder-user.jpg" alt="User" />
-          <AvatarFallback>U</AvatarFallback>
-        </Avatar>
+
+        {/* User menu — shows username and logout option */}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button className="flex items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+              <Avatar className="h-8 w-8">
+                <AvatarImage src="/placeholder-user.jpg" alt={username ?? "User"} />
+                <AvatarFallback>{initials}</AvatarFallback>
+              </Avatar>
+              {username && (
+                <span className="hidden font-medium md:inline-block">{username}</span>
+              )}
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </DropdownMenu.Trigger>
+
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              className="min-w-[160px] rounded-md bg-white p-1 shadow-lg ring-1 ring-black/5 dark:bg-neutral-900"
+              sideOffset={8}
+              align="end"
+            >
+              {username && (
+                <>
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    Signed in as <span className="font-medium text-foreground">{username}</span>
+                  </div>
+                  <DropdownMenu.Separator className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+                </>
+              )}
+              <DropdownMenu.Item
+                onSelect={logout}
+                className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              >
+                <LogOut className="h-4 w-4" />
+                Sign out
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </div>
     </div>
   )
