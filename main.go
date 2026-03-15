@@ -144,6 +144,8 @@ func main() {
 	fmt.Println("Service ledger initialized successfully")
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/user/login", api.Login)
+	mux.HandleFunc("/user/get-auth/", api.RefreshAuth)
 	mux.HandleFunc("/get-server-metrics", api.GetSystemMetrics)
 	mux.HandleFunc("/get-containers", api.GetContainers)
 	mux.HandleFunc("/get-images", api.GetContainerRegistry)
