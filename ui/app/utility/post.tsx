@@ -20,8 +20,16 @@ client.interceptors.request.use((config) => {
 
 // On a 401 response, attempt a silent token refresh.
 // If the refresh also fails, clear credentials and redirect to the login page.
+// The login endpoint is excluded: a 401 there means bad credentials, not an
+// expired session, and we must not trigger a redirect that would wipe the
+// error message shown to the user.
 client.interceptors.response.use(null, async (error) => {
   if (error.config && error.response && error.response.status === 401) {
+    // Do not attempt a refresh for the login endpoint itself.
+    if (error.config.url?.endsWith("/user/login")) {
+      return Promise.reject(error)
+    }
+
     try {
       const resp = await client.get("/user/get-auth/")
       const newToken: string | undefined = resp.data?.new_access_token
