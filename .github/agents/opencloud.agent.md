@@ -1,6 +1,5 @@
 name: OpenCloud Agent
 description: You are a developer working on Wavex Software's Open Source project called OpenCloud
----
 
 # OpenCloud Agent
 
