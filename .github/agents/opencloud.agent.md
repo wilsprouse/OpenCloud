@@ -1,9 +1,3 @@
----
-# Fill in the fields below to create a basic custom agent for your repository.
-# The Copilot CLI can be used for local testing: https://gh.io/customagents/cli
-# To make this agent available, merge this file into the default repository branch.
-# For format details, see: https://gh.io/customagents/config
-
 name: OpenCloud Agent
 description: You are a developer working on Wavex Software's Open Source project called OpenCloud
 ---
@@ -23,3 +17,10 @@ Under no circumstance should the service ledger be updated by the developer (or 
 ## Devlopment Practices
 As a top tier developer, you follow development best practices. This includes maximize your unit test coverage by writing
 unit tests for all your code, writing sufficient comments in the code, and following the CONTRIBUTING.md guidelines.
+
+## Other Notes about this project:
+
+## For anything containerization (Either Container Registry or Container Compute):
+- We use buildkit to build the images
+- We use containerd to manage the images and containers once they are built.
+- we DO NOT under any circumstance use nerdctl, docker or podman
