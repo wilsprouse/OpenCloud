@@ -408,3 +408,228 @@ func TestEnableServiceWithoutInstaller(t *testing.T) {
 	}
 }
 
+// resetContainerImages removes all container image entries from the shared service ledger.
+// This is used by tests that rely on an exact count or clean state, since the ledger file
+// is stored in the source tree and persists across test runs.
+func resetContainerImages(t *testing.T) {
+	t.Helper()
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		t.Fatalf("resetContainerImages: failed to read ledger: %v", err)
+	}
+	if status, exists := ledger["container_registry"]; exists {
+		status.ContainerImages = make(map[string]ContainerImageEntry)
+		ledger["container_registry"] = status
+	}
+	if err := WriteServiceLedger(ledger); err != nil {
+		t.Fatalf("resetContainerImages: failed to write ledger: %v", err)
+	}
+}
+
+// TestUpdateContainerImageEntry tests that a container image entry is stored in the ledger
+func TestUpdateContainerImageEntry(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetContainerImages(t)
+	t.Cleanup(func() { resetContainerImages(t) })
+
+	imageName := "my-app:latest"
+	dockerfile := "FROM alpine:latest\nRUN echo hello"
+	context := "."
+	platform := "linux/amd64"
+	noCache := false
+	builtAt := "2024-01-01T00:00:00Z"
+
+	if err := UpdateContainerImageEntry(imageName, dockerfile, context, platform, noCache, builtAt); err != nil {
+		t.Fatalf("UpdateContainerImageEntry failed: %v", err)
+	}
+
+	entry, err := GetContainerImageEntry(imageName)
+	if err != nil {
+		t.Fatalf("GetContainerImageEntry failed: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("Expected container image entry, got nil")
+	}
+
+	if entry.ImageName != imageName {
+		t.Errorf("Expected imageName %q, got %q", imageName, entry.ImageName)
+	}
+	if entry.Dockerfile != dockerfile {
+		t.Errorf("Expected dockerfile %q, got %q", dockerfile, entry.Dockerfile)
+	}
+	if entry.Context != context {
+		t.Errorf("Expected context %q, got %q", context, entry.Context)
+	}
+	if entry.Platform != platform {
+		t.Errorf("Expected platform %q, got %q", platform, entry.Platform)
+	}
+	if entry.NoCache != noCache {
+		t.Errorf("Expected noCache %v, got %v", noCache, entry.NoCache)
+	}
+	if entry.BuiltAt != builtAt {
+		t.Errorf("Expected builtAt %q, got %q", builtAt, entry.BuiltAt)
+	}
+}
+
+// TestUpdateContainerImageEntryOverwrite tests that updating an existing image overwrites its fields
+func TestUpdateContainerImageEntryOverwrite(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetContainerImages(t)
+	t.Cleanup(func() { resetContainerImages(t) })
+
+	imageName := "my-app:v1"
+	firstDockerfile := "FROM alpine:latest"
+	secondDockerfile := "FROM ubuntu:22.04\nRUN apt-get update"
+
+	if err := UpdateContainerImageEntry(imageName, firstDockerfile, ".", "", false, "2024-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("First UpdateContainerImageEntry failed: %v", err)
+	}
+	if err := UpdateContainerImageEntry(imageName, secondDockerfile, ".", "linux/arm64", true, "2024-06-01T00:00:00Z"); err != nil {
+		t.Fatalf("Second UpdateContainerImageEntry failed: %v", err)
+	}
+
+	entry, err := GetContainerImageEntry(imageName)
+	if err != nil {
+		t.Fatalf("GetContainerImageEntry failed: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("Expected container image entry, got nil")
+	}
+
+	if entry.Dockerfile != secondDockerfile {
+		t.Errorf("Expected updated dockerfile %q, got %q", secondDockerfile, entry.Dockerfile)
+	}
+	if entry.Platform != "linux/arm64" {
+		t.Errorf("Expected updated platform %q, got %q", "linux/arm64", entry.Platform)
+	}
+	if !entry.NoCache {
+		t.Error("Expected noCache to be true after update")
+	}
+}
+
+// TestDeleteContainerImageEntry tests that a container image entry can be removed from the ledger
+func TestDeleteContainerImageEntry(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetContainerImages(t)
+	t.Cleanup(func() { resetContainerImages(t) })
+
+	imageName := "to-delete:latest"
+	if err := UpdateContainerImageEntry(imageName, "FROM alpine:latest", ".", "", false, "2024-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("UpdateContainerImageEntry failed: %v", err)
+	}
+
+	if err := DeleteContainerImageEntry(imageName); err != nil {
+		t.Fatalf("DeleteContainerImageEntry failed: %v", err)
+	}
+
+	entry, err := GetContainerImageEntry(imageName)
+	if err != nil {
+		t.Fatalf("GetContainerImageEntry after delete failed: %v", err)
+	}
+	if entry != nil {
+		t.Error("Expected nil entry after deletion, but got one")
+	}
+}
+
+// TestDeleteContainerImageEntryNonExistent tests that deleting a non-existent entry is a no-op
+func TestDeleteContainerImageEntryNonExistent(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Should not return an error for a non-existent image
+	if err := DeleteContainerImageEntry("does-not-exist:latest"); err != nil {
+		t.Errorf("DeleteContainerImageEntry should not fail for non-existent entry: %v", err)
+	}
+}
+
+// TestGetContainerImageEntryNonExistent tests that getting a non-existent entry returns nil
+func TestGetContainerImageEntryNonExistent(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	entry, err := GetContainerImageEntry("not-there:latest")
+	if err != nil {
+		t.Fatalf("GetContainerImageEntry returned unexpected error: %v", err)
+	}
+	if entry != nil {
+		t.Error("Expected nil for non-existent entry, got non-nil")
+	}
+}
+
+// TestGetAllContainerImageEntries tests that all stored images are returned
+func TestGetAllContainerImageEntries(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetContainerImages(t)
+	t.Cleanup(func() { resetContainerImages(t) })
+
+	images := map[string]string{
+		"app-a:latest": "FROM alpine:latest\nRUN echo a",
+		"app-b:v2":     "FROM ubuntu:22.04\nRUN echo b",
+	}
+	for name, df := range images {
+		if err := UpdateContainerImageEntry(name, df, ".", "", false, "2024-01-01T00:00:00Z"); err != nil {
+			t.Fatalf("UpdateContainerImageEntry(%s) failed: %v", name, err)
+		}
+	}
+
+	all, err := GetAllContainerImageEntries()
+	if err != nil {
+		t.Fatalf("GetAllContainerImageEntries failed: %v", err)
+	}
+
+	if len(all) != len(images) {
+		t.Errorf("Expected %d entries, got %d", len(images), len(all))
+	}
+	for name, expectedDF := range images {
+		entry, ok := all[name]
+		if !ok {
+			t.Errorf("Expected entry for %q not found", name)
+			continue
+		}
+		if entry.Dockerfile != expectedDF {
+			t.Errorf("Entry %q: expected dockerfile %q, got %q", name, expectedDF, entry.Dockerfile)
+		}
+	}
+}
+
+// TestGetAllContainerImageEntriesEmpty tests that an empty map is returned when no images are stored
+func TestGetAllContainerImageEntriesEmpty(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetContainerImages(t)
+	t.Cleanup(func() { resetContainerImages(t) })
+
+	all, err := GetAllContainerImageEntries()
+	if err != nil {
+		t.Fatalf("GetAllContainerImageEntries failed: %v", err)
+	}
+	if len(all) != 0 {
+		t.Errorf("Expected empty map, got %d entries", len(all))
+	}
+}
+

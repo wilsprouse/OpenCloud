@@ -5,6 +5,7 @@ import (
         "encoding/json"
         "fmt"
         "io"
+        "log"
         "mime"
         "net/http"
         "os"
@@ -16,6 +17,7 @@ import (
 
         "github.com/containerd/containerd"
         "github.com/containerd/containerd/namespaces"
+        service_ledger "github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 const buildTimeout = 5 * time.Minute
@@ -520,6 +522,18 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			http.StatusInternalServerError,
 		)
 		return
+	}
+
+	// Record the built image in the service ledger so it can be rebuilt if needed
+	if ledgerErr := service_ledger.UpdateContainerImageEntry(
+		req.ImageName,
+		req.Dockerfile,
+		req.Context,
+		req.Platform,
+		req.NoCache,
+		time.Now().UTC().Format(time.RFC3339),
+	); ledgerErr != nil {
+		log.Printf("Warning: failed to record image %s in service ledger: %v", req.ImageName, ledgerErr)
 	}
 
 	resp := map[string]string{
