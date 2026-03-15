@@ -46,11 +46,22 @@ type PipelineEntry struct {
 	CreatedAt   string `json:"createdAt"`
 }
 
+// ContainerImageEntry stores all information needed to rebuild a container image
+type ContainerImageEntry struct {
+	ImageName  string `json:"imageName"`
+	Dockerfile string `json:"dockerfile"`
+	Context    string `json:"context,omitempty"`
+	Platform   string `json:"platform,omitempty"`
+	NoCache    bool   `json:"nocache"`
+	BuiltAt    string `json:"builtAt"`
+}
+
 // ServiceStatus represents the status of a single service
 type ServiceStatus struct {
-	Enabled   bool                      `json:"enabled"`
-	Functions map[string]FunctionEntry  `json:"functions,omitempty"`
-	Pipelines map[string]PipelineEntry  `json:"pipelines,omitempty"`
+	Enabled         bool                          `json:"enabled"`
+	Functions       map[string]FunctionEntry      `json:"functions,omitempty"`
+	Pipelines       map[string]PipelineEntry      `json:"pipelines,omitempty"`
+	ContainerImages map[string]ContainerImageEntry `json:"containerImages,omitempty"`
 }
 
 // ServiceLedger represents the complete service ledger
@@ -617,6 +628,94 @@ func SyncPipelinesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateContainerImageEntry stores or updates a container image entry in the container_registry service ledger.
+// All fields needed to rebuild the image are persisted.
+func UpdateContainerImageEntry(imageName, dockerfile, context, platform string, noCache bool, builtAt string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["container_registry"]
+	if !exists {
+		serviceStatus = ServiceStatus{Enabled: false, ContainerImages: make(map[string]ContainerImageEntry)}
+	} else if serviceStatus.ContainerImages == nil {
+		serviceStatus.ContainerImages = make(map[string]ContainerImageEntry)
+	}
+
+	serviceStatus.ContainerImages[imageName] = ContainerImageEntry{
+		ImageName:  imageName,
+		Dockerfile: dockerfile,
+		Context:    context,
+		Platform:   platform,
+		NoCache:    noCache,
+		BuiltAt:    builtAt,
+	}
+
+	ledger["container_registry"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// DeleteContainerImageEntry removes a container image entry from the container_registry service ledger
+func DeleteContainerImageEntry(imageName string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["container_registry"]
+	if !exists || serviceStatus.ContainerImages == nil {
+		return nil // Nothing to delete
+	}
+
+	delete(serviceStatus.ContainerImages, imageName)
+	ledger["container_registry"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// GetContainerImageEntry retrieves a specific container image entry from the container_registry service ledger
+func GetContainerImageEntry(imageName string) (*ContainerImageEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["container_registry"]
+	if !exists || serviceStatus.ContainerImages == nil {
+		return nil, nil
+	}
+
+	entry, exists := serviceStatus.ContainerImages[imageName]
+	if !exists {
+		return nil, nil
+	}
+
+	return &entry, nil
+}
+
+// GetAllContainerImageEntries retrieves all container image entries from the container_registry service ledger
+func GetAllContainerImageEntries() (map[string]ContainerImageEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["container_registry"]
+	if !exists || serviceStatus.ContainerImages == nil {
+		return make(map[string]ContainerImageEntry), nil
+	}
+
+	return serviceStatus.ContainerImages, nil
 }
 
 // detectRuntime determines the runtime based on the file extension
