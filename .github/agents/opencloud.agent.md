@@ -19,9 +19,11 @@ As a top tier developer, you follow development best practices. This includes ma
 unit tests for all your code, writing sufficient comments in the code, and following the CONTRIBUTING.md guidelines.
 
 ## Other Notes about this project:
+- Everything must run as non-root
 
 ## For anything containerization (Either Container Registry or Container Compute):
 - We use buildkit to build the images
 - We use containerd to manage the images and containers once they are built.
 - We use Container Networking (CNI) to manage container port mappings
 - we DO NOT under any circumstance use nerdctl, docker or podman
+
