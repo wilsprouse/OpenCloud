@@ -323,6 +323,9 @@ func parsePortMappings(ports []string) ([]PortMapping, error) {
 type slirp4netnsHandle struct {
 	cmd        *exec.Cmd
 	socketPath string
+	// waitCh receives the result of cmd.Wait(); must be drained by teardown to
+	// prevent goroutine and zombie-process leaks.
+	waitCh chan error
 }
 
 // slirp4netnsRequest is the JSON request format for the slirp4netns API socket.
@@ -359,27 +362,66 @@ func setupSlirp4netns(containerID string, pid uint32, portMappings []PortMapping
 		"tap0",
 	)
 
+	// Capture stderr so that if slirp4netns exits early we can include its
+	// output in the error message (e.g. "permission denied", "no such process").
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start slirp4netns: %w", err)
 	}
 
+	// waitCh receives the result of cmd.Wait(). This goroutine must be the only
+	// caller of cmd.Wait() — teardown() drains the channel after Kill().
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
 	handle := &slirp4netnsHandle{
 		cmd:        cmd,
 		socketPath: socketPath,
+		waitCh:     waitCh,
 	}
 
-	// Wait up to 10 seconds for the API socket to appear, which signals
-	// slirp4netns is ready to accept port-forward commands.
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
+	// Wait up to 10 seconds for the API socket to appear, detecting early
+	// process exit so we can surface the actual slirp4netns error immediately.
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
+
+	socketReady := false
+waitLoop:
+	for {
+		select {
+		case exitErr := <-waitCh:
+			// slirp4netns exited before the socket appeared.
+			os.Remove(socketPath) //nolint:errcheck
+			stderr := strings.TrimSpace(stderrBuf.String())
+			if stderr != "" {
+				return nil, fmt.Errorf("slirp4netns exited unexpectedly (exit: %v); stderr: %s", exitErr, stderr)
+			}
+			return nil, fmt.Errorf("slirp4netns exited unexpectedly: %v", exitErr)
+		case <-timeout.C:
+			break waitLoop
+		case <-ticker.C:
+			if _, err := os.Stat(socketPath); err == nil {
+				socketReady = true
+				break waitLoop
+			}
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
-	if _, err := os.Stat(socketPath); err != nil {
-		handle.teardown()
-		return nil, fmt.Errorf("slirp4netns API socket not ready within 10s")
+
+	if !socketReady {
+		// Timed out — kill the process and drain waitCh to avoid a goroutine
+		// and zombie-process leak, then return with any stderr output captured.
+		cmd.Process.Kill() //nolint:errcheck
+		<-waitCh
+		os.Remove(socketPath) //nolint:errcheck
+		stderr := strings.TrimSpace(stderrBuf.String())
+		if stderr != "" {
+			return nil, fmt.Errorf("slirp4netns API socket not ready within 10 seconds; stderr: %s", stderr)
+		}
+		return nil, fmt.Errorf("slirp4netns API socket not ready within 10 seconds")
 	}
 
 	// Add each requested port forwarding rule.
@@ -431,10 +473,14 @@ func addSlirp4netnsPortForward(socketPath string, pm PortMapping) error {
 }
 
 // teardown stops the slirp4netns process and removes the API socket file.
+// It drains waitCh (the goroutine started by setupSlirp4netns that owns
+// cmd.Wait()) to prevent goroutine and zombie-process leaks.
 func (h *slirp4netnsHandle) teardown() {
 	if h.cmd != nil && h.cmd.Process != nil {
 		h.cmd.Process.Kill() //nolint:errcheck
-		h.cmd.Wait()         //nolint:errcheck
+		if h.waitCh != nil {
+			<-h.waitCh // drain so the goroutine exits and the process is reaped
+		}
 	}
 	os.Remove(h.socketPath) //nolint:errcheck
 }
