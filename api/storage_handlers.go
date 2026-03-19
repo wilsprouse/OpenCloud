@@ -24,6 +24,7 @@ const buildTimeout = 5 * time.Minute
 
 // containerdSocket is the path to the containerd Unix domain socket.
 const containerdSocket = "/run/containerd/containerd.sock"
+const buildkitSocket = "/run/buildkit/buildkitd.sock"
 
 // Pre-compiled regex patterns for image name validation
 var (
@@ -79,10 +80,8 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
-	fmt.Println(imageList)
-
         // Convert containerd images to the format expected by the frontend
-        var result []ImageInfo
+        result := make([]ImageInfo, 0, len(imageList))
         for _, img := range imageList {
                 // Get image size
                 size := img.Target.Size
@@ -444,9 +443,6 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-	fmt.Printf("imageName %s", req.ImageName)
-	fmt.Println(req.ImageName)
-
 	if req.Dockerfile == "" || req.ImageName == "" {
 		http.Error(w, "dockerfile and imageName are required", http.StatusBadRequest)
 		return
@@ -479,6 +475,15 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := os.Stat(buildkitSocket); err != nil {
+		http.Error(
+			w,
+			"BuildKit is not available. Start or enable the container registry build service and try again.",
+			http.StatusServiceUnavailable,
+		)
+		return
+	}
+
 	// Optional: write context if provided
 	// (Assumes raw text or tar extraction logic if needed)
 	if req.Context != "" {
@@ -491,7 +496,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 
 	// Build buildctl arguments
 	args := []string{
-		"--addr", "unix:///run/buildkit/buildkitd.sock",
+		"--addr", "unix://" + buildkitSocket,
 		"build",
 		"--frontend", "dockerfile.v0",
 		"--local", "context=" + tmpDir,
@@ -514,8 +519,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	buildCmd := exec.Command("buildctl", args...)
 
 	out, err := buildCmd.CombinedOutput()
-	fmt.Println(string(out))
 	if err != nil {
+		log.Printf("BuildImage failed for %s: %v\n%s", req.ImageName, err, string(out))
 		http.Error(
 			w,
 			fmt.Sprintf("Build failed: %v\nOutput:\n%s", err, string(out)),

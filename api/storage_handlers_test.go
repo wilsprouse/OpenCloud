@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+// TestImageInfoEmptySliceMarshalsToJSONArray guards the frontend contract used by
+// /storage/containers: an empty image list must encode as [] rather than null.
+func TestImageInfoEmptySliceMarshalsToJSONArray(t *testing.T) {
+	result := make([]ImageInfo, 0)
+
+	body, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Failed to marshal image list: %v", err)
+	}
+
+	if string(body) != "[]" {
+		t.Fatalf("Expected empty image list to marshal as [], got %s", string(body))
+	}
+}
+
 // TestBuildImageInvalidMethod tests that BuildImage rejects non-POST requests
 func TestBuildImageInvalidMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/build-image", nil)
