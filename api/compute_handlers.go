@@ -14,12 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"net"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/remotes/docker"
-	"github.com/containernetworking/cni/libcni"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
@@ -243,15 +244,16 @@ func validateVolumeMount(mount string) string {
 	return ""
 }
 
-// CNI networking constants.
+// slirp4netns networking constants.
 const (
-	// cniBinDir is the standard directory for CNI plugin binaries.
-	cniBinDir = "/opt/cni/bin"
-	// cniConfListPath is the OpenCloud CNI network configuration file.
-	cniConfListPath = "/etc/cni/net.d/opencloud.conflist"
+	// slirp4netnsBin is the name of the slirp4netns binary expected on PATH.
+	slirp4netnsBin = "slirp4netns"
+	// slirp4netnsGuestIP is the IP address assigned to the container's tap
+	// interface by slirp4netns when using the default SLIRP address space.
+	slirp4netnsGuestIP = "10.0.2.100"
 )
 
-// PortMapping represents a single host-to-container port mapping for CNI.
+// PortMapping represents a single host-to-container port mapping.
 type PortMapping struct {
 	// HostPort is the port number on the host machine.
 	HostPort int `json:"hostPort"`
@@ -262,7 +264,7 @@ type PortMapping struct {
 }
 
 // parsePortMappings converts port mapping strings (e.g. "8080:80" or
-// "0.0.0.0:8080:80/tcp") into PortMapping structs suitable for CNI.
+// "0.0.0.0:8080:80/tcp") into PortMapping structs.
 // Accepted formats:
 //   - "hostPort:containerPort"
 //   - "hostPort:containerPort/proto"
@@ -293,8 +295,8 @@ func parsePortMappings(ports []string) ([]PortMapping, error) {
 			}
 			hostPort, containerPort = hp, cp
 		case 3:
-			// "hostIP:hostPort:containerPort" — host IP is ignored by CNI (rules
-			// are applied to all interfaces via iptables NAT).
+			// "hostIP:hostPort:containerPort" — host IP is stored in the label
+			// but slirp4netns always binds on all interfaces (0.0.0.0).
 			hp, err := strconv.Atoi(parts[1])
 			if err != nil {
 				return nil, fmt.Errorf("invalid host port in mapping %q: %v", p, err)
@@ -317,47 +319,124 @@ func parsePortMappings(ports []string) ([]PortMapping, error) {
 	return mappings, nil
 }
 
-// setupCNINetworking loads the OpenCloud CNI conflist and calls CNI ADD to
-// create the network namespace configuration and iptables NAT rules for the
-// given container. It returns the loaded config and CNIConfig so that the
-// caller can later call teardownCNINetworking.
+// slirp4netnsHandle holds state for a running slirp4netns instance.
+type slirp4netnsHandle struct {
+	cmd        *exec.Cmd
+	socketPath string
+}
+
+// slirp4netnsRequest is the JSON request format for the slirp4netns API socket.
+type slirp4netnsRequest struct {
+	Execute   string                 `json:"execute"`
+	Arguments map[string]interface{} `json:"arguments"`
+}
+
+// slirp4netnsResponse is the JSON response from the slirp4netns API socket.
+type slirp4netnsResponse struct {
+	Return interface{} `json:"return,omitempty"`
+	Error  *struct {
+		Class string `json:"class"`
+		Desc  string `json:"desc"`
+	} `json:"error,omitempty"`
+}
+
+// setupSlirp4netns launches slirp4netns for the container process identified by
+// pid, creating a rootless user-space network stack without requiring elevated
+// privileges. Port forwarding rules are installed via the slirp4netns API
+// socket so that host ports are forwarded to the container.
 //
-// netnsPath must be the path to the container's network namespace, typically
-// "/proc/<pid>/ns/net" obtained from the containerd task PID after NewTask().
-func setupCNINetworking(ctx context.Context, containerID, netnsPath string, portMappings []PortMapping) (*libcni.NetworkConfigList, *libcni.CNIConfig, error) {
-	netConf, err := libcni.ConfListFromFile(cniConfListPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load CNI config from %s: %w", cniConfListPath, err)
+// The returned handle must be passed to teardown() when the container exits to
+// stop the slirp4netns process and remove the API socket.
+func setupSlirp4netns(containerID string, pid uint32, portMappings []PortMapping) (*slirp4netnsHandle, error) {
+	socketPath := filepath.Join(os.TempDir(), fmt.Sprintf("slirp4netns-%s.sock", containerID))
+
+	cmd := exec.Command(slirp4netnsBin,
+		"--configure",
+		"--mtu=65520",
+		"--disable-host-loopback",
+		"--api-socket", socketPath,
+		strconv.FormatUint(uint64(pid), 10),
+		"tap0",
+	)
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start slirp4netns: %w", err)
 	}
 
-	cniConf := libcni.NewCNIConfig([]string{cniBinDir}, nil)
+	handle := &slirp4netnsHandle{
+		cmd:        cmd,
+		socketPath: socketPath,
+	}
 
-	runtimeConf := &libcni.RuntimeConf{
-		ContainerID: containerID,
-		NetNS:       netnsPath,
-		IfName:      "eth0",
-		CapabilityArgs: map[string]interface{}{
-			"portMappings": portMappings,
+	// Wait up to 10 seconds for the API socket to appear, which signals
+	// slirp4netns is ready to accept port-forward commands.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(socketPath); err != nil {
+		handle.teardown()
+		return nil, fmt.Errorf("slirp4netns API socket not ready within 10s")
+	}
+
+	// Add each requested port forwarding rule.
+	for _, pm := range portMappings {
+		if err := addSlirp4netnsPortForward(socketPath, pm); err != nil {
+			handle.teardown()
+			return nil, fmt.Errorf("failed to add port forward %d->%d/%s: %w",
+				pm.HostPort, pm.ContainerPort, pm.Protocol, err)
+		}
+	}
+
+	return handle, nil
+}
+
+// addSlirp4netnsPortForward sends an add_hostfwd command to the slirp4netns
+// API socket, forwarding the given host port to the container's guest port.
+func addSlirp4netnsPortForward(socketPath string, pm PortMapping) error {
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to slirp4netns API socket: %w", err)
+	}
+	defer conn.Close()
+
+	req := slirp4netnsRequest{
+		Execute: "add_hostfwd",
+		Arguments: map[string]interface{}{
+			"proto":      pm.Protocol,
+			"host_addr":  "0.0.0.0",
+			"host_port":  pm.HostPort,
+			"guest_addr": slirp4netnsGuestIP,
+			"guest_port": pm.ContainerPort,
 		},
 	}
 
-	if _, err := cniConf.AddNetworkList(ctx, netConf, runtimeConf); err != nil {
-		return nil, nil, fmt.Errorf("CNI ADD failed: %w", err)
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return fmt.Errorf("failed to send port forward request: %w", err)
 	}
 
-	return netConf, cniConf, nil
+	var resp slirp4netnsResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return fmt.Errorf("failed to read port forward response: %w", err)
+	}
+
+	if resp.Error != nil {
+		return fmt.Errorf("slirp4netns API error: %s: %s", resp.Error.Class, resp.Error.Desc)
+	}
+
+	return nil
 }
 
-// teardownCNINetworking calls CNI DEL to remove iptables NAT rules and clean
-// up the network namespace configuration for the given container. This should
-// be called when the container exits to prevent resource leaks.
-func teardownCNINetworking(ctx context.Context, containerID, netnsPath string, netConf *libcni.NetworkConfigList, cniConf *libcni.CNIConfig) error {
-	runtimeConf := &libcni.RuntimeConf{
-		ContainerID: containerID,
-		NetNS:       netnsPath,
-		IfName:      "eth0",
+// teardown stops the slirp4netns process and removes the API socket file.
+func (h *slirp4netnsHandle) teardown() {
+	if h.cmd != nil && h.cmd.Process != nil {
+		h.cmd.Process.Kill() //nolint:errcheck
+		h.cmd.Wait()         //nolint:errcheck
 	}
-	return cniConf.DelNetworkList(ctx, netConf, runtimeConf)
+	os.Remove(h.socketPath) //nolint:errcheck
 }
 
 // resolveLocalImage returns the Image from the local containerd store, trying
@@ -396,11 +475,11 @@ func resolveLocalImage(ctx context.Context, cli *containerd.Client, ref string) 
 // read by GetContainers). It accepts POST requests with a JSON body matching
 // PullAndRunRequest and returns the new container ID on success.
 //
-// When port mappings are specified, CNI networking is configured via the
-// opencloud conflist (/etc/cni/net.d/opencloud.conflist). The portmap CNI
-// plugin installs iptables NAT rules so that host ports are forwarded to the
-// corresponding container ports. CNI DEL is called automatically when the
-// container process exits to clean up those rules.
+// When port mappings are specified, slirp4netns is launched after NewTask()
+// returns the container PID. slirp4netns creates a rootless user-space network
+// stack (no root or iptables required) and installs port-forwarding rules via
+// its API socket so that host ports are forwarded to the container. The
+// slirp4netns process is terminated automatically when the container exits.
 func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -604,14 +683,12 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Println("juice8")
 
-	// If port mappings are requested, configure CNI networking now that the
-	// task has been created and its PID (and thus network namespace) is known.
-	// The network namespace is available at /proc/<pid>/ns/net as soon as
-	// NewTask() returns, before Start() is called. CNI ADD installs iptables
-	// NAT rules that forward host ports to the container's IP:port.
-	var cniNetConf *libcni.NetworkConfigList
-	var cniConf *libcni.CNIConfig
-	var cniNetnsPath string
+	// If port mappings are requested, launch slirp4netns now that the task has
+	// been created and its PID (and thus network namespace) is known.
+	// slirp4netns runs entirely in user space — no root or iptables privileges
+	// are required. Port-forwarding rules are pushed to it via its API socket
+	// before task.Start() unblocks the container's init process.
+	var slirpHandle *slirp4netnsHandle
 	if len(req.Ports) > 0 {
 		portMappings, parseErr := parsePortMappings(req.Ports)
 		if parseErr != nil {
@@ -619,19 +696,18 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 			fmt.Println(parseErr)
 			task.Delete(ctx)
 			ctr.Delete(ctx, containerd.WithSnapshotCleanup)
-			http.Error(w, fmt.Sprintf("Failed to parse port mappings: %v", parseErr), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to parse port mappings: %v", parseErr), http.StatusBadRequest)
 			return
 		}
 
-		cniNetnsPath = fmt.Sprintf("/proc/%d/ns/net", task.Pid())
-		var cniSetupErr error
-		cniNetConf, cniConf, cniSetupErr = setupCNINetworking(ctx, containerID, cniNetnsPath, portMappings)
-		if cniSetupErr != nil {
-			fmt.Println("cniNetConf err")
-			fmt.Println(cniSetupErr)
+		var setupErr error
+		slirpHandle, setupErr = setupSlirp4netns(containerID, task.Pid(), portMappings)
+		if setupErr != nil {
+			fmt.Println("slirp4netns setup err")
+			fmt.Println(setupErr)
 			task.Delete(ctx)
 			ctr.Delete(ctx, containerd.WithSnapshotCleanup)
-			http.Error(w, fmt.Sprintf("Failed to setup CNI networking: %v", cniSetupErr), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to setup slirp4netns networking: %v", setupErr), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -639,9 +715,9 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	// Start the task (equivalent to unblocking the container's init process).
 	if err := task.Start(ctx); err != nil {
-		// CNI was set up but the task failed to start — clean up CNI rules.
-		if cniNetConf != nil {
-			teardownCNINetworking(context.Background(), containerID, cniNetnsPath, cniNetConf, cniConf)
+		// slirp4netns was set up but the task failed to start — clean it up.
+		if slirpHandle != nil {
+			slirpHandle.teardown()
 		}
 		task.Delete(ctx)
 		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
@@ -650,18 +726,16 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Println("juice9")
 
-	// If CNI networking was configured, start a background goroutine that waits
-	// for the container task to exit and then calls CNI DEL to remove the
-	// iptables NAT rules and free any associated resources.
-	if cniNetConf != nil {
+	// If slirp4netns was configured, start a background goroutine that waits
+	// for the container task to exit and then tears down the slirp4netns
+	// process to free its resources.
+	if slirpHandle != nil {
 		go func() {
 			exitCh, waitErr := task.Wait(context.Background())
 			if waitErr == nil {
 				<-exitCh
 			}
-			if delErr := teardownCNINetworking(context.Background(), containerID, cniNetnsPath, cniNetConf, cniConf); delErr != nil {
-				fmt.Printf("Warning: CNI teardown failed for container %s: %v\n", containerID, delErr)
-			}
+			slirpHandle.teardown()
 		}()
 	}
 	fmt.Println("juice10")

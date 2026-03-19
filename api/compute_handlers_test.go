@@ -875,7 +875,7 @@ func TestValidateVolumeMount(t *testing.T) {
 }
 
 // TestParsePortMappings verifies that port mapping strings are parsed correctly
-// into PortMapping structs for CNI.
+// into PortMapping structs for slirp4netns port forwarding.
 func TestParsePortMappings(t *testing.T) {
 	tests := []struct {
 		name    string

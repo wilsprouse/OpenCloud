@@ -4,7 +4,6 @@ go 1.24.0
 
 require (
 	github.com/containerd/containerd v1.7.30
-	github.com/containernetworking/cni v1.1.2
 	github.com/moby/buildkit v0.13.1
 	github.com/opencontainers/runtime-spec v1.2.0
 	github.com/pkg/errors v0.9.1
