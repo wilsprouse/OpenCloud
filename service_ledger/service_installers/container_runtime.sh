@@ -1,52 +1,47 @@
 #!/bin/bash
 
 ################################################################################
-# Container Runtime Service Installer - slirp4netns Networking Setup
+# Container Runtime Service Installer - CNI Networking Setup
 #
-# This script installs slirp4netns, a rootless user-space network stack for
-# containers. slirp4netns enables port forwarding without requiring root
-# privileges, kernel bridge interfaces, or iptables NAT rules — it runs
-# entirely in user space using the SLIRP TCP/IP emulation library.
+# This script installs the official CNI (Container Network Interface) plugins
+# required for OpenCloud container port mapping. The CNI bridge and portmap
+# plugins create veth pairs, attach containers to the ocni0 bridge, and install
+# iptables NAT rules to forward host ports to container ports.
 #
 # Requirements:
-#   - Ubuntu/Debian-based system (preferred) or a system with curl
-#   - No root required at container runtime
+#   - curl
+#   - Root or sudo privileges (for /opt/cni/bin and iptables)
 #
 # What this script installs:
-#   - slirp4netns binary (via apt-get on Debian/Ubuntu, or directly from the
-#     official GitHub release on other distros)
+#   - Official CNI plugins v1.5.1 into /opt/cni/bin
+#     (bridge, host-local, portmap, loopback, and others)
 ################################################################################
 
 set -e
 set -o pipefail
 
-readonly SLIRP4NETNS_FALLBACK_VERSION="v1.3.1"
-readonly SLIRP4NETNS_FALLBACK_URL="https://github.com/rootless-containers/slirp4netns/releases/download/${SLIRP4NETNS_FALLBACK_VERSION}/slirp4netns-x86_64"
+readonly CNI_VERSION="v1.5.1"
+readonly CNI_PLUGINS_URL="https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-amd64-${CNI_VERSION}.tgz"
+readonly CNI_BIN_DIR="/opt/cni/bin"
 
 print_info()    { echo "[INFO] $1"; }
 print_success() { echo "[SUCCESS] $1"; }
 print_error()   { echo "[ERROR] $1" >&2; }
 
-is_slirp4netns_installed() {
-    command -v slirp4netns &>/dev/null
+is_cni_installed() {
+    [ -x "${CNI_BIN_DIR}/bridge" ] && \
+    [ -x "${CNI_BIN_DIR}/portmap" ] && \
+    [ -x "${CNI_BIN_DIR}/host-local" ]
 }
 
-install_slirp4netns_binary() {
-    print_info "Installing slirp4netns binary from ${SLIRP4NETNS_FALLBACK_URL}..."
-    sudo curl -sSL "${SLIRP4NETNS_FALLBACK_URL}" -o /usr/local/bin/slirp4netns
-    sudo chmod +x /usr/local/bin/slirp4netns
-    print_success "slirp4netns binary installed to /usr/local/bin/slirp4netns"
-}
+install_cni_plugins() {
+    print_info "Creating CNI bin directory at ${CNI_BIN_DIR}..."
+    sudo mkdir -p "${CNI_BIN_DIR}"
 
-install_slirp4netns() {
-    if command -v apt-get &>/dev/null; then
-        print_info "Installing slirp4netns via apt-get..."
-        if sudo apt-get install -y slirp4netns; then
-            return 0
-        fi
-        print_info "apt-get install failed, falling back to binary download..."
-    fi
-    install_slirp4netns_binary
+    print_info "Downloading CNI plugins ${CNI_VERSION} from GitHub..."
+    curl -sSL "${CNI_PLUGINS_URL}" | sudo tar -C "${CNI_BIN_DIR}" -xz
+
+    print_success "CNI plugins extracted to ${CNI_BIN_DIR}"
 }
 
 ################################################################################
@@ -54,22 +49,21 @@ install_slirp4netns() {
 ################################################################################
 
 main() {
-    print_info "Starting Container Runtime (slirp4netns) Service Installer"
+    print_info "Starting Container Runtime (CNI) Service Installer"
     echo
 
-    if is_slirp4netns_installed; then
-        print_info "slirp4netns is already installed: $(command -v slirp4netns)"
-        slirp4netns --version || true
+    if is_cni_installed; then
+        print_info "CNI plugins already installed at ${CNI_BIN_DIR}"
+        print_info "  bridge:    $(${CNI_BIN_DIR}/bridge 2>/dev/null | head -1 || true)"
     else
-        install_slirp4netns
-        print_success "slirp4netns installed: $(command -v slirp4netns)"
-        slirp4netns --version || true
+        install_cni_plugins
+        print_success "CNI plugins installed at ${CNI_BIN_DIR}"
     fi
 
     echo
-    print_success "Container Runtime (slirp4netns) setup completed!"
-    print_info "Rootless port forwarding enabled via user-space SLIRP networking"
-    print_info "No root, iptables, or kernel bridge interfaces required"
+    print_success "Container Runtime (CNI) setup completed!"
+    print_info "Port forwarding will be handled by the bridge + portmap CNI plugins"
+    print_info "iptables NAT rules are created automatically on container start"
 }
 
 main "$@"
