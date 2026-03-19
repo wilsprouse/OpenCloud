@@ -108,9 +108,10 @@ export default function ContainerRegistry() {
     setLoading(true)
     try {
       const res = await client.get<Image[]>("/get-images")
-      setImages(res.data)
+      setImages(Array.isArray(res.data) ? res.data : [])
     } catch (err) {
       console.error("Failed to fetch containers:", err)
+      setImages([])
     } finally {
       setLoading(false)
     }
