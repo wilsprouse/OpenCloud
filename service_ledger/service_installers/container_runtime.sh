@@ -113,6 +113,8 @@ create_cni_config() {
   ]
 }
 EOF
+    sudo chmod 755 "${CNI_CONF_DIR}"
+    sudo chmod 644 "${CNI_CONF_FILE}"
 
     print_success "CNI config written to ${CNI_CONF_FILE}"
 }
@@ -130,7 +132,7 @@ verify_cni() {
         fi
     done
 
-    if [ -f "${CNI_CONF_FILE}" ]; then
+    if sudo test -f "${CNI_CONF_FILE}"; then
         print_success "CNI config present: ${CNI_CONF_FILE}"
     else
         print_error "CNI config missing: ${CNI_CONF_FILE}"
@@ -160,7 +162,7 @@ main() {
     echo
 
     # Step 2: CNI network configuration
-    if [ -f "${CNI_CONF_FILE}" ]; then
+    if sudo test -f "${CNI_CONF_FILE}"; then
         print_info "CNI config already exists at ${CNI_CONF_FILE}"
     else
         create_cni_config
