@@ -463,6 +463,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
+	fmt.Println("juice1")
 
 	// All OpenCloud containers live in the "buildkit" namespace so that
 	// GetContainers can list them.
@@ -476,6 +477,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cli.Close()
 
+	fmt.Println("juice2")
 	// Resolve the image reference: prefer images already present in the local
 	// containerd store (visible via `ctr -n buildkit images ls`) before making
 	// any outbound network call. We try the exact ref first, then the
@@ -494,6 +496,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
 	}
 
+	fmt.Println("juice3")
 	// Parse volume mounts ("hostPath:containerPath") into OCI mount entries.
 	var mounts []specs.Mount
 	for _, vol := range req.Volumes {
@@ -520,6 +523,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to read image spec: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("juice4")
 
 	// Determine the process arguments: request command overrides image
 	// defaults; otherwise use ENTRYPOINT+CMD from the image config.
@@ -536,6 +540,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if workDir == "" {
 		workDir = "/"
 	}
+	fmt.Println("juice5")
 
 	// Environment: image defaults first so that request values take precedence.
 	containerEnv := imgSpec.Config.Env
@@ -550,6 +555,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		oci.WithProcessArgs(processArgs...),
 		oci.WithProcessCwd(workDir),
 	}
+	fmt.Println("juice5")
 
 	// Append bind-mount volumes.
 	if len(mounts) > 0 {
@@ -571,6 +577,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
 
+	fmt.Println("juice6")
 	// Create the container record in the containerd metadata store.
 	ctr, err := cli.NewContainer(ctx,
 		containerID,
@@ -580,6 +587,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		containerd.WithContainerLabels(labels),
 	)
 	if err != nil {
+		fmt.Println(err)
 		http.Error(w, fmt.Sprintf("Failed to create container: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -594,6 +602,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to create task: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("juice8")
 
 	// If port mappings are requested, configure CNI networking now that the
 	// task has been created and its PID (and thus network namespace) is known.
@@ -606,6 +615,8 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if len(req.Ports) > 0 {
 		portMappings, parseErr := parsePortMappings(req.Ports)
 		if parseErr != nil {
+			fmt.Println("parseErr")
+			fmt.Println(parseErr)
 			task.Delete(ctx)
 			ctr.Delete(ctx, containerd.WithSnapshotCleanup)
 			http.Error(w, fmt.Sprintf("Failed to parse port mappings: %v", parseErr), http.StatusInternalServerError)
@@ -616,12 +627,15 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		var cniSetupErr error
 		cniNetConf, cniConf, cniSetupErr = setupCNINetworking(ctx, containerID, cniNetnsPath, portMappings)
 		if cniSetupErr != nil {
+			fmt.Println("cniNetConf err")
+			fmt.Println(cniSetupErr)
 			task.Delete(ctx)
 			ctr.Delete(ctx, containerd.WithSnapshotCleanup)
 			http.Error(w, fmt.Sprintf("Failed to setup CNI networking: %v", cniSetupErr), http.StatusInternalServerError)
 			return
 		}
 	}
+	fmt.Println("juice9")
 
 	// Start the task (equivalent to unblocking the container's init process).
 	if err := task.Start(ctx); err != nil {
@@ -634,6 +648,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("juice9")
 
 	// If CNI networking was configured, start a background goroutine that waits
 	// for the container task to exit and then calls CNI DEL to remove the
@@ -649,6 +664,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	}
+	fmt.Println("juice10")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
