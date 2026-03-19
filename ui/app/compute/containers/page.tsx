@@ -110,6 +110,7 @@ export default function ContainersPage() {
   const [runRestartPolicy, setRunRestartPolicy] = useState("no")
   const [runAutoRemove, setRunAutoRemove] = useState(false)
   const [runCommand, setRunCommand] = useState("")
+  const imageOptions = Array.isArray(availableImages) ? availableImages : []
 
   // Fetch containers
   const fetchContainers = async () => {
@@ -163,9 +164,10 @@ export default function ContainersPage() {
     setLoadingImages(true)
     try {
       const res = await client.get<AvailableImage[]>("/get-images")
-      setAvailableImages(res.data)
+      setAvailableImages(Array.isArray(res.data) ? res.data : [])
     } catch (err) {
       console.error("Failed to fetch available images:", err)
+      setAvailableImages([])
     } finally {
       setLoadingImages(false)
     }
@@ -530,17 +532,17 @@ export default function ContainersPage() {
                           />
                         </SelectTrigger>
                         <SelectContent>
-                          {availableImages.map((img) => {
+                          {imageOptions.map((img, index) => {
                             // RepoTags is the preferred display value (e.g. "nginx:latest").
                             // Fall back to Image (short name) then Id if no tags are present.
                             const tag = img.RepoTags?.[0] || img.Image || img.Id
                             return (
-                              <SelectItem key={img.Id} value={tag}>
+                              <SelectItem key={img.Id || tag || index} value={tag}>
                                 {tag}
                               </SelectItem>
                             )
                           })}
-                          {availableImages.length === 0 && !loadingImages && (
+                          {imageOptions.length === 0 && !loadingImages && (
                             <SelectItem value={NO_IMAGES_VALUE} disabled>
                               No images found in registry
                             </SelectItem>
