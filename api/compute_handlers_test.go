@@ -873,3 +873,97 @@ func TestValidateVolumeMount(t *testing.T) {
 		}
 	}
 }
+
+// TestParsePortMappings verifies that port mapping strings are parsed correctly
+// into PortMapping structs for CNI port forwarding.
+func TestParsePortMappings(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []string
+		want    []PortMapping
+		wantErr bool
+	}{
+		{
+			name:  "simple tcp mapping",
+			input: []string{"8080:80"},
+			want: []PortMapping{
+				{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+			},
+		},
+		{
+			name:  "explicit tcp suffix",
+			input: []string{"8080:80/tcp"},
+			want: []PortMapping{
+				{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+			},
+		},
+		{
+			name:  "udp protocol",
+			input: []string{"5353:53/udp"},
+			want: []PortMapping{
+				{HostPort: 5353, ContainerPort: 53, Protocol: "udp"},
+			},
+		},
+		{
+			name:  "hostIP:hostPort:containerPort format",
+			input: []string{"0.0.0.0:8080:80"},
+			want: []PortMapping{
+				{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+			},
+		},
+		{
+			name:  "hostIP:hostPort:containerPort with proto",
+			input: []string{"127.0.0.1:9090:9090/tcp"},
+			want: []PortMapping{
+				{HostPort: 9090, ContainerPort: 9090, Protocol: "tcp"},
+			},
+		},
+		{
+			name:  "multiple mappings",
+			input: []string{"8080:80", "8443:443/tcp", "5353:53/udp"},
+			want: []PortMapping{
+				{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+				{HostPort: 8443, ContainerPort: 443, Protocol: "tcp"},
+				{HostPort: 5353, ContainerPort: 53, Protocol: "udp"},
+			},
+		},
+		{
+			name:    "non-numeric host port",
+			input:   []string{"abc:80"},
+			wantErr: true,
+		},
+		{
+			name:    "non-numeric container port",
+			input:   []string{"8080:xyz"},
+			wantErr: true,
+		},
+		{
+			name:    "too many colons",
+			input:   []string{"a:b:c:d"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parsePortMappings(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parsePortMappings(%v): expected error, got none", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parsePortMappings(%v): unexpected error: %v", tt.input, err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("parsePortMappings(%v): got %d mappings, want %d", tt.input, len(got), len(tt.want))
+			}
+			for i, m := range got {
+				if m != tt.want[i] {
+					t.Errorf("parsePortMappings(%v)[%d]: got %+v, want %+v", tt.input, i, m, tt.want[i])
+				}
+			}
+		})
+	}
+}

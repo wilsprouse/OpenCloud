@@ -1,23 +1,27 @@
 package api
 
 import (
-	"net/http"
+	"bytes"
 	"context"
 	"encoding/json"
-	"time"
-	"os"
-	"io"
-	"os/exec"
-	"bytes"
 	"fmt"
-	"strings"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/containernetworking/cni/libcni"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/remotes/docker"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
+
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
@@ -239,6 +243,210 @@ func validateVolumeMount(mount string) string {
 	return ""
 }
 
+// CNI networking constants.
+const (
+	// cniPluginDir is the directory where CNI plugin binaries are installed.
+	// The container_runtime.sh installer places them here.
+	cniPluginDir = "/opt/cni/bin"
+	// cniConfDir is the directory that the CNI library scans for network configs.
+	cniConfDir = "/etc/cni/net.d"
+	// cniConfPath is the path to the OpenCloud CNI network conflist.
+	cniConfPath = cniConfDir + "/opencloud.conflist"
+)
+
+// opencloudCNIConflist is the CNI network configuration written to cniConfPath
+// on first use. It creates a Linux bridge (ocni0) providing IP masquerading,
+// a loopback interface, and the portmap plugin that installs iptables NAT rules
+// for host-port → container-port forwarding.
+// cniVersion "1.1.0" matches the current spec version supported by the
+// github.com/containernetworking/cni v1.2.3 library (pkg/version.Current()).
+const opencloudCNIConflist = `{
+  "cniVersion": "1.1.0",
+  "name": "opencloud",
+  "plugins": [
+    {
+      "type": "bridge",
+      "bridge": "ocni0",
+      "isGateway": true,
+      "ipMasq": true,
+      "ipam": {
+        "type": "host-local",
+        "subnet": "10.88.0.0/16",
+        "routes": [{ "dst": "0.0.0.0/0" }]
+      }
+    },
+    {
+      "type": "loopback"
+    },
+    {
+      "type": "portmap",
+      "capabilities": { "portMappings": true }
+    }
+  ]
+}`
+
+// PortMapping represents a single host-to-container port mapping.
+type PortMapping struct {
+	// HostPort is the port number on the host machine.
+	HostPort int `json:"hostPort"`
+	// ContainerPort is the port number inside the container.
+	ContainerPort int `json:"containerPort"`
+	// Protocol is the network protocol ("tcp" or "udp").
+	Protocol string `json:"protocol"`
+}
+
+// parsePortMappings converts port mapping strings (e.g. "8080:80" or
+// "0.0.0.0:8080:80/tcp") into PortMapping structs.
+// Accepted formats:
+//   - "hostPort:containerPort"
+//   - "hostPort:containerPort/proto"
+//   - "hostIP:hostPort:containerPort"
+//   - "hostIP:hostPort:containerPort/proto"
+func parsePortMappings(ports []string) ([]PortMapping, error) {
+	mappings := make([]PortMapping, 0, len(ports))
+	for _, p := range ports {
+		// Split off optional protocol suffix (e.g. "/tcp", "/udp").
+		proto := "tcp"
+		if idx := strings.LastIndex(p, "/"); idx != -1 {
+			proto = strings.ToLower(p[idx+1:])
+			p = p[:idx]
+		}
+
+		parts := strings.Split(p, ":")
+		var hostPort, containerPort int
+		switch len(parts) {
+		case 2:
+			// "hostPort:containerPort"
+			hp, err := strconv.Atoi(parts[0])
+			if err != nil {
+				return nil, fmt.Errorf("invalid host port in mapping %q: %v", p, err)
+			}
+			cp, err := strconv.Atoi(parts[1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid container port in mapping %q: %v", p, err)
+			}
+			hostPort, containerPort = hp, cp
+		case 3:
+			// "hostIP:hostPort:containerPort" — host IP is passed to the portmap
+			// plugin; for simplicity we bind on all interfaces (0.0.0.0) by default.
+			hp, err := strconv.Atoi(parts[1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid host port in mapping %q: %v", p, err)
+			}
+			cp, err := strconv.Atoi(parts[2])
+			if err != nil {
+				return nil, fmt.Errorf("invalid container port in mapping %q: %v", p, err)
+			}
+			hostPort, containerPort = hp, cp
+		default:
+			return nil, fmt.Errorf("invalid port mapping format %q", p)
+		}
+
+		mappings = append(mappings, PortMapping{
+			HostPort:      hostPort,
+			ContainerPort: containerPort,
+			Protocol:      proto,
+		})
+	}
+	return mappings, nil
+}
+
+// ensureCNIConf writes the OpenCloud CNI conflist to cniConfPath if it does
+// not already exist.
+func ensureCNIConf() error {
+	if err := os.MkdirAll(cniConfDir, 0755); err != nil {
+		return fmt.Errorf("failed to create CNI config dir %s: %w", cniConfDir, err)
+	}
+	if _, err := os.Stat(cniConfPath); os.IsNotExist(err) {
+		if err := os.WriteFile(cniConfPath, []byte(opencloudCNIConflist), 0644); err != nil {
+			return fmt.Errorf("failed to write CNI config to %s: %w", cniConfPath, err)
+		}
+	}
+	return nil
+}
+
+// cniPortMapping is the struct the portmap CNI plugin expects in the
+// portMappings capability argument.
+type cniPortMapping struct {
+	HostPort      int    `json:"hostPort"`
+	ContainerPort int    `json:"containerPort"`
+	Protocol      string `json:"protocol"`
+}
+
+// containerNetNS returns the path to the network namespace for a container
+// process. The namespace is available at this path as soon as NewTask()
+// returns, before Start() is called.
+func containerNetNS(pid uint32) string {
+	return fmt.Sprintf("/proc/%d/ns/net", pid)
+}
+
+// setupCNINetworking configures CNI networking for a newly created container
+// task. It writes the OpenCloud CNI config if absent, loads the conflist, then
+// calls CNI ADD with the requested port mappings as a capability argument.
+//
+// The CNI bridge + portmap plugins create a veth pair, attach it to the ocni0
+// bridge, assign a container IP from 10.88.0.0/16, and install iptables NAT
+// rules for each port mapping so that host:hostPort → container:containerPort.
+//
+// The caller must invoke teardownCNINetworking when the container task exits.
+func setupCNINetworking(ctx context.Context, containerID string, pid uint32, portMappings []PortMapping) error {
+	if err := ensureCNIConf(); err != nil {
+		return err
+	}
+
+	cniCfg := libcni.NewCNIConfig([]string{cniPluginDir}, nil)
+
+	netConf, err := libcni.ConfListFromFile(cniConfPath)
+	if err != nil {
+		return fmt.Errorf("failed to load CNI config from %s: %w", cniConfPath, err)
+	}
+
+	// Convert our PortMapping slice to the format the portmap plugin expects.
+	cniPorts := make([]cniPortMapping, len(portMappings))
+	for i, pm := range portMappings {
+		cniPorts[i] = cniPortMapping{
+			HostPort:      pm.HostPort,
+			ContainerPort: pm.ContainerPort,
+			Protocol:      pm.Protocol,
+		}
+	}
+
+	rtConf := &libcni.RuntimeConf{
+		ContainerID: containerID,
+		NetNS:       containerNetNS(pid),
+		IfName:      "eth0",
+		CapabilityArgs: map[string]interface{}{
+			"portMappings": cniPorts,
+		},
+	}
+
+	if _, err := cniCfg.AddNetworkList(ctx, netConf, rtConf); err != nil {
+		return fmt.Errorf("CNI ADD failed for container %s: %w", containerID, err)
+	}
+	return nil
+}
+
+// teardownCNINetworking calls CNI DEL to remove the veth pair and iptables NAT
+// rules created by setupCNINetworking. It is called from a goroutine after the
+// container task exits.
+func teardownCNINetworking(ctx context.Context, containerID string, pid uint32) {
+	netConf, err := libcni.ConfListFromFile(cniConfPath)
+	if err != nil {
+		// Config may have been removed; nothing to tear down.
+		return
+	}
+
+	cniCfg := libcni.NewCNIConfig([]string{cniPluginDir}, nil)
+
+	rtConf := &libcni.RuntimeConf{
+		ContainerID: containerID,
+		NetNS:       containerNetNS(pid),
+		IfName:      "eth0",
+	}
+
+	cniCfg.DelNetworkList(ctx, netConf, rtConf) //nolint:errcheck
+}
+
 // resolveLocalImage returns the Image from the local containerd store, trying
 // the exact ref first, then the normalised docker.io/library/… form. If neither
 // is found locally, it falls back to pulling from the registry.
@@ -275,10 +483,11 @@ func resolveLocalImage(ctx context.Context, cli *containerd.Client, ref string) 
 // read by GetContainers). It accepts POST requests with a JSON body matching
 // PullAndRunRequest and returns the new container ID on success.
 //
-// Note: port mappings and restart policies are managed at the container orchestration
-// layer (e.g. CNI/systemd) and are not part of the core containerd API. Those fields
-// in PullAndRunRequest are accepted for forward-compatibility but are stored as
-// container labels only and are not enforced at runtime by this handler.
+// When port mappings are specified, CNI networking is configured after
+// NewTask() returns the container PID. The CNI bridge + portmap plugins create
+// a veth pair, attach it to the ocni0 bridge, assign a container IP, and
+// install iptables NAT rules for each port mapping. CNI DEL is called
+// automatically in a goroutine when the container task exits.
 func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -341,6 +550,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
+	fmt.Println("juice1")
 
 	// All OpenCloud containers live in the "buildkit" namespace so that
 	// GetContainers can list them.
@@ -354,6 +564,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cli.Close()
 
+	fmt.Println("juice2")
 	// Resolve the image reference: prefer images already present in the local
 	// containerd store (visible via `ctr -n buildkit images ls`) before making
 	// any outbound network call. We try the exact ref first, then the
@@ -372,6 +583,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
 	}
 
+	fmt.Println("juice3")
 	// Parse volume mounts ("hostPath:containerPath") into OCI mount entries.
 	var mounts []specs.Mount
 	for _, vol := range req.Volumes {
@@ -398,6 +610,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to read image spec: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("juice4")
 
 	// Determine the process arguments: request command overrides image
 	// defaults; otherwise use ENTRYPOINT+CMD from the image config.
@@ -414,6 +627,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if workDir == "" {
 		workDir = "/"
 	}
+	fmt.Println("juice5")
 
 	// Environment: image defaults first so that request values take precedence.
 	containerEnv := imgSpec.Config.Env
@@ -428,6 +642,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		oci.WithProcessArgs(processArgs...),
 		oci.WithProcessCwd(workDir),
 	}
+	fmt.Println("juice5")
 
 	// Append bind-mount volumes.
 	if len(mounts) > 0 {
@@ -449,6 +664,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
 
+	fmt.Println("juice6")
 	// Create the container record in the containerd metadata store.
 	ctr, err := cli.NewContainer(ctx,
 		containerID,
@@ -458,6 +674,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		containerd.WithContainerLabels(labels),
 	)
 	if err != nil {
+		fmt.Println(err)
 		http.Error(w, fmt.Sprintf("Failed to create container: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -472,14 +689,59 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to create task: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("juice8")
+
+	// If port mappings are requested, set up CNI networking now that the task
+	// has been created and its PID (and thus /proc/<pid>/ns/net) is known.
+	// CNI ADD runs before task.Start() so that the network interface and
+	// iptables NAT rules are in place before the container process starts.
+	taskPID := task.Pid()
+	cniEnabled := len(req.Ports) > 0
+	if cniEnabled {
+		portMappings, parseErr := parsePortMappings(req.Ports)
+		if parseErr != nil {
+			task.Delete(ctx)
+			ctr.Delete(ctx, containerd.WithSnapshotCleanup)
+			http.Error(w, fmt.Sprintf("Failed to parse port mappings: %v", parseErr), http.StatusBadRequest)
+			return
+		}
+
+		if setupErr := setupCNINetworking(ctx, containerID, taskPID, portMappings); setupErr != nil {
+			task.Delete(ctx)
+			ctr.Delete(ctx, containerd.WithSnapshotCleanup)
+			http.Error(w, fmt.Sprintf("Failed to setup CNI networking: %v", setupErr), http.StatusInternalServerError)
+			return
+		}
+	}
+	fmt.Println("juice9")
 
 	// Start the task (equivalent to unblocking the container's init process).
 	if err := task.Start(ctx); err != nil {
+		// CNI was configured but the task failed to start — tear down the
+		// network to avoid orphaned veth pairs and iptables rules.
+		if cniEnabled {
+			teardownCNINetworking(context.Background(), containerID, taskPID)
+		}
 		task.Delete(ctx)
 		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
 		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("juice9")
+
+	// If CNI was configured, start a background goroutine that waits for the
+	// container task to exit and then calls CNI DEL to remove the veth pair
+	// and iptables NAT rules.
+	if cniEnabled {
+		go func() {
+			exitCh, waitErr := task.Wait(context.Background())
+			if waitErr == nil {
+				<-exitCh
+			}
+			teardownCNINetworking(context.Background(), containerID, taskPID)
+		}()
+	}
+	fmt.Println("juice10")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{

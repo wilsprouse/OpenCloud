@@ -33,6 +33,7 @@ import {
   Download,
   Plus,
   X,
+  Power,
 } from "lucide-react"
 
 type ContainerItem = {
@@ -88,6 +89,10 @@ export default function ContainersPage() {
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
 
+  // Service enabled state
+  const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
+  const [enablingService, setEnablingService] = useState(false)
+
   // Available images fetched from the Container Registry for the dropdown
   const [availableImages, setAvailableImages] = useState<AvailableImage[]>([])
   const [loadingImages, setLoadingImages] = useState(false)
@@ -105,6 +110,7 @@ export default function ContainersPage() {
   const [runRestartPolicy, setRunRestartPolicy] = useState("no")
   const [runAutoRemove, setRunAutoRemove] = useState(false)
   const [runCommand, setRunCommand] = useState("")
+  const imageOptions = Array.isArray(availableImages) ? availableImages : []
 
   // Fetch containers
   const fetchContainers = async () => {
@@ -119,22 +125,53 @@ export default function ContainersPage() {
     }
   }
 
+  // Check if the Containers service is enabled in the service ledger
+  const checkServiceStatus = async () => {
+    try {
+      const res = await client.get<{ service: string; enabled: boolean }>("/get-service-status?service=containers")
+      setServiceEnabled(res.data.enabled)
+    } catch (err) {
+      console.error("Failed to check service status:", err)
+      setServiceEnabled(false)
+    }
+  }
+
+  // Enable the Containers service (runs container_registry.sh installer)
+  const handleEnableService = async () => {
+    setEnablingService(true)
+    try {
+      await client.post("/enable-service", { service: "containers" })
+      setServiceEnabled(true)
+    } catch (err) {
+      console.error("Failed to enable service:", err)
+    } finally {
+      setEnablingService(false)
+    }
+  }
+
+  useEffect(() => {
+    checkServiceStatus()
+  }, [])
+
+  useEffect(() => {
+    if (serviceEnabled) {
+      fetchContainers()
+    }
+  }, [serviceEnabled])
+
   // Fetch available images from the Container Registry to populate the image dropdown
   const fetchAvailableImages = async () => {
     setLoadingImages(true)
     try {
       const res = await client.get<AvailableImage[]>("/get-images")
-      setAvailableImages(res.data)
+      setAvailableImages(Array.isArray(res.data) ? res.data : [])
     } catch (err) {
       console.error("Failed to fetch available images:", err)
+      setAvailableImages([])
     } finally {
       setLoadingImages(false)
     }
   }
-
-  useEffect(() => {
-    fetchContainers()
-  }, [])
 
   // Manage container actions
   const handleAction = async (id: string, action: "start" | "stop" | "remove") => {
@@ -242,6 +279,45 @@ export default function ContainersPage() {
   const totalContainers = containers.length
   const runningContainers = containers.filter(c => c.State === "running").length
   const stoppedContainers = containers.filter(c => c.State !== "running").length
+
+  // Show loading state while checking service status
+  if (serviceEnabled === null) {
+    return (
+      <DashboardShell>
+        <div className="flex items-center justify-center h-64">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </DashboardShell>
+    )
+  }
+
+  // Show enable prompt if service is not enabled
+  if (!serviceEnabled) {
+    return (
+      <DashboardShell>
+        <DashboardHeader heading="Containers" text="Manage your containers" />
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Card className="max-w-md w-full">
+            <CardHeader className="text-center">
+              <div className="mx-auto p-3 rounded-full bg-blue-50 w-fit mb-4">
+                <Container className="h-8 w-8 text-blue-600" />
+              </div>
+              <CardTitle>Enable Containers Service</CardTitle>
+              <CardDescription>
+                The Containers service is not yet enabled. Enable it to start pulling and running containers.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex justify-center">
+              <Button onClick={handleEnableService} disabled={enablingService} size="lg">
+                <Power className="mr-2 h-4 w-4" />
+                {enablingService ? "Enabling..." : "Enable Containers"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardShell>
+    )
+  }
 
   return (
     <DashboardShell>
@@ -456,17 +532,17 @@ export default function ContainersPage() {
                           />
                         </SelectTrigger>
                         <SelectContent>
-                          {availableImages.map((img) => {
+                          {imageOptions.map((img, index) => {
                             // RepoTags is the preferred display value (e.g. "nginx:latest").
                             // Fall back to Image (short name) then Id if no tags are present.
                             const tag = img.RepoTags?.[0] || img.Image || img.Id
                             return (
-                              <SelectItem key={img.Id} value={tag}>
+                              <SelectItem key={img.Id || tag || index} value={tag}>
                                 {tag}
                               </SelectItem>
                             )
                           })}
-                          {availableImages.length === 0 && !loadingImages && (
+                          {imageOptions.length === 0 && !loadingImages && (
                             <SelectItem value={NO_IMAGES_VALUE} disabled>
                               No images found in registry
                             </SelectItem>
