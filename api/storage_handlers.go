@@ -466,7 +466,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !hasAvailablePodmanSocket() {
+	if !hasPodmanSocket() {
 		http.Error(
 			w,
 			"Podman is not available. Start or enable the container registry service and try again.",
