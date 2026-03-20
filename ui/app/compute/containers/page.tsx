@@ -105,6 +105,7 @@ export default function ContainersPage() {
   const [runRestartPolicy, setRunRestartPolicy] = useState("no")
   const [runAutoRemove, setRunAutoRemove] = useState(false)
   const [runCommand, setRunCommand] = useState("")
+  const resolvedRunImage = runImage === CUSTOM_IMAGE_VALUE ? runCustomImage.trim() : runImage
 
   // Fetch containers
   const fetchContainers = async () => {
@@ -136,6 +137,31 @@ export default function ContainersPage() {
     fetchContainers()
   }, [])
 
+  useEffect(() => {
+    const image = resolvedRunImage.toLowerCase()
+    if (!image.includes("minio")) {
+      return
+    }
+
+    if (runPorts.every((p) => !p.hostPort && !p.containerPort)) {
+      setRunPorts([
+        { hostPort: "9000", containerPort: "9000" },
+        { hostPort: "9001", containerPort: "9001" },
+      ])
+    }
+
+    if (runEnvVars.every((e) => !e.key && !e.value)) {
+      setRunEnvVars([
+        { key: "MINIO_ROOT_USER", value: "minioadmin" },
+        { key: "MINIO_ROOT_PASSWORD", value: "minioadmin" },
+      ])
+    }
+
+    if (!runCommand.trim()) {
+      setRunCommand("server /data --address :9000 --console-address :9001")
+    }
+  }, [resolvedRunImage, runPorts, runEnvVars, runCommand])
+
   // Manage container actions
   const handleAction = async (id: string, action: "start" | "stop" | "remove") => {
     try {
@@ -166,7 +192,7 @@ export default function ContainersPage() {
   // Submit handler for pulling and running a container
   const handlePullAndRun = async () => {
     // Resolve the actual image: use custom input when CUSTOM_IMAGE_VALUE is selected
-    const resolvedImage = runImage === CUSTOM_IMAGE_VALUE ? runCustomImage : runImage
+    const resolvedImage = resolvedRunImage
     if (!resolvedImage) {
       alert("Please select or enter an image name to pull and run")
       return
@@ -204,7 +230,12 @@ export default function ContainersPage() {
       alert("Container pulled and started successfully!")
     } catch (err) {
       console.error("Failed to pull and run container:", err)
-      alert("Failed to pull and run container. Please check the logs.")
+      const message = axios.isAxiosError(err)
+        ? (typeof err.response?.data === "string" && err.response.data) ||
+          err.response?.data?.message ||
+          err.message
+        : "Failed to pull and run container."
+      alert(`Failed to pull and run container: ${message}`)
     } finally {
       setIsPullingAndRunning(false)
     }

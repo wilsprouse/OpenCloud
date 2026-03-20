@@ -137,6 +137,23 @@ else
     fi
 fi
 
+# Step 3.5: Check for and install slirp4netns for rootless container networking
+print_info "Checking for slirp4netns installation..."
+if command -v slirp4netns &> /dev/null; then
+    print_info "slirp4netns is already installed"
+else
+    print_info "slirp4netns not found. Installing slirp4netns..."
+    sudo apt-get update -qq
+    sudo apt-get install -y slirp4netns
+
+    if command -v slirp4netns &> /dev/null; then
+        print_info "slirp4netns installed successfully"
+    else
+        print_error "Failed to install slirp4netns. Please install it manually."
+        exit 1
+    fi
+fi
+
 # Step 4: Install TypeScript dependencies for the UI
 print_info "Installing TypeScript dependencies in ui/ directory..."
 cd "${SCRIPT_DIR}/ui"

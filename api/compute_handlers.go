@@ -1,24 +1,27 @@
 package api
 
 import (
-	"net/http"
+	"bytes"
 	"context"
 	"encoding/json"
-	"time"
-	"os"
-	"io"
-	"os/exec"
-	"bytes"
 	"fmt"
-	"strings"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/WavexSoftware/OpenCloud/service_ledger"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/remotes/docker"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 type FunctionItem struct {
@@ -121,9 +124,14 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
 				ci.State = string(status.Status)
 				ci.PID = task.Pid()
 				ci.Status = fmt.Sprintf("%s (pid: %d)", status.Status, task.Pid())
+				if status.Status != containerd.Running {
+					cleanupRootlessPortForwarding(c.ID())
+				}
 			}
 			// Read the resident set size of the container's main process.
 			ci.MemoryUsageBytes = containerMemoryUsageBytes(ci.PID)
+		} else {
+			cleanupRootlessPortForwarding(c.ID())
 		}
 
 		result = append(result, ci)
@@ -227,6 +235,229 @@ func validatePortMapping(mapping string) string {
 	return ""
 }
 
+type parsedPortMapping struct {
+	HostAddr      string
+	HostPort      int
+	ContainerPort int
+	Protocol      string
+}
+
+type slirpAPIResponse struct {
+	Return json.RawMessage `json:"return"`
+	Error  *struct {
+		Desc string `json:"desc"`
+	} `json:"error,omitempty"`
+}
+
+func parsePortMapping(mapping string) (parsedPortMapping, error) {
+	parts := strings.Split(mapping, ":")
+	if len(parts) != 2 && len(parts) != 3 {
+		return parsedPortMapping{}, fmt.Errorf("invalid port mapping %q: expected hostPort:containerPort or hostIP:hostPort:containerPort", mapping)
+	}
+
+	result := parsedPortMapping{
+		HostAddr: "0.0.0.0",
+		Protocol: "tcp",
+	}
+	if len(parts) == 3 {
+		result.HostAddr = parts[0]
+		parts = parts[1:]
+	}
+
+	containerPart := parts[1]
+	if protoParts := strings.SplitN(containerPart, "/", 2); len(protoParts) == 2 {
+		containerPart = protoParts[0]
+		result.Protocol = strings.ToLower(protoParts[1])
+	}
+
+	if result.Protocol != "tcp" && result.Protocol != "udp" {
+		return parsedPortMapping{}, fmt.Errorf("invalid port mapping %q: unsupported protocol %q", mapping, result.Protocol)
+	}
+
+	hostPort, err := strconv.Atoi(parts[0])
+	if err != nil || hostPort < 0 || hostPort > 65535 {
+		return parsedPortMapping{}, fmt.Errorf("invalid port mapping %q: invalid host port %q", mapping, parts[0])
+	}
+	containerPort, err := strconv.Atoi(containerPart)
+	if err != nil || containerPort < 1 || containerPort > 65535 {
+		return parsedPortMapping{}, fmt.Errorf("invalid port mapping %q: invalid container port %q", mapping, containerPart)
+	}
+
+	result.HostPort = hostPort
+	result.ContainerPort = containerPort
+	return result, nil
+}
+
+func openCloudRuntimeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "opencloud")
+	}
+	return filepath.Join(home, ".opencloud")
+}
+
+func rootlessStateDir(containerID string) string {
+	return filepath.Join(openCloudRuntimeDir(), "containers", containerID)
+}
+
+func cleanupRootlessPortForwarding(containerID string) {
+	stateDir := rootlessStateDir(containerID)
+	pidPath := filepath.Join(stateDir, "slirp4netns.pid")
+	apiSocketPath := filepath.Join(stateDir, "slirp4netns.sock")
+
+	if pidBytes, err := os.ReadFile(pidPath); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes))); err == nil && pid > 0 {
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Kill()
+			}
+		}
+	}
+
+	_ = os.Remove(pidPath)
+	_ = os.Remove(apiSocketPath)
+}
+
+func setupRootlessPortForwarding(containerID string, taskPID uint32, portMappings []string) error {
+	if len(portMappings) == 0 {
+		return nil
+	}
+	if taskPID == 0 {
+		return fmt.Errorf("container task PID is zero")
+	}
+
+	slirpPath, err := exec.LookPath("slirp4netns")
+	if err != nil {
+		return fmt.Errorf("slirp4netns is required for rootless port mapping but was not found in PATH")
+	}
+
+	cleanupRootlessPortForwarding(containerID)
+
+	stateDir := rootlessStateDir(containerID)
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return fmt.Errorf("failed to create slirp4netns state directory: %w", err)
+	}
+
+	apiSocketPath := filepath.Join(stateDir, "slirp4netns.sock")
+	logPath := filepath.Join(stateDir, "slirp4netns.log")
+	pidPath := filepath.Join(stateDir, "slirp4netns.pid")
+	_ = os.Remove(apiSocketPath)
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to open slirp4netns log file: %w", err)
+	}
+	defer logFile.Close()
+
+	readyReader, readyWriter, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("failed to create slirp4netns ready pipe: %w", err)
+	}
+	defer readyReader.Close()
+
+	cmd := exec.Command(
+		slirpPath,
+		"--configure",
+		"--mtu=65520",
+		"--disable-host-loopback",
+		"--api-socket", apiSocketPath,
+		"--ready-fd=3",
+		strconv.Itoa(int(taskPID)),
+		"tap0",
+	)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.ExtraFiles = []*os.File{readyWriter}
+
+	if err := cmd.Start(); err != nil {
+		readyWriter.Close()
+		return fmt.Errorf("failed to start slirp4netns: %w", err)
+	}
+	_ = readyWriter.Close()
+
+	readyCh := make(chan error, 1)
+	go func() {
+		var buf [1]byte
+		_, err := readyReader.Read(buf[:])
+		readyCh <- err
+	}()
+
+	select {
+	case err := <-readyCh:
+		if err != nil {
+			_ = cmd.Process.Kill()
+			return fmt.Errorf("slirp4netns did not become ready: %w", err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		return fmt.Errorf("timed out waiting for slirp4netns to initialize")
+	}
+
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+		_ = cmd.Process.Kill()
+		return fmt.Errorf("failed to persist slirp4netns PID: %w", err)
+	}
+
+	for _, mapping := range portMappings {
+		parsed, err := parsePortMapping(mapping)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			return err
+		}
+		if err := addSlirpHostForward(apiSocketPath, parsed); err != nil {
+			_ = cmd.Process.Kill()
+			return err
+		}
+	}
+
+	return cmd.Process.Release()
+}
+
+func addSlirpHostForward(apiSocketPath string, mapping parsedPortMapping) error {
+	conn, err := net.Dial("unix", apiSocketPath)
+	if err != nil {
+		return fmt.Errorf("failed to connect to slirp4netns API socket: %w", err)
+	}
+	defer conn.Close()
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"execute": "add_hostfwd",
+		"arguments": map[string]interface{}{
+			"proto":      mapping.Protocol,
+			"host_addr":  mapping.HostAddr,
+			"host_port":  mapping.HostPort,
+			"guest_port": mapping.ContainerPort,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to encode slirp4netns API request: %w", err)
+	}
+
+	if _, err := conn.Write(payload); err != nil {
+		return fmt.Errorf("failed to send slirp4netns API request: %w", err)
+	}
+
+	if unixConn, ok := conn.(*net.UnixConn); ok {
+		if err := unixConn.CloseWrite(); err != nil {
+			return fmt.Errorf("failed to finalize slirp4netns API request: %w", err)
+		}
+	}
+
+	responseBytes, err := io.ReadAll(conn)
+	if err != nil {
+		return fmt.Errorf("failed to read slirp4netns API response: %w", err)
+	}
+
+	var response slirpAPIResponse
+	if err := json.Unmarshal(responseBytes, &response); err != nil {
+		return fmt.Errorf("failed to decode slirp4netns API response: %w", err)
+	}
+	if response.Error != nil {
+		return fmt.Errorf("slirp4netns port forward setup failed: %s", response.Error.Desc)
+	}
+
+	return nil
+}
+
 // validateVolumeMount checks a volume mount string for path traversal or missing separators.
 // Volume mounts must be in "hostPath:containerPath" format.
 func validateVolumeMount(mount string) string {
@@ -275,10 +506,9 @@ func resolveLocalImage(ctx context.Context, cli *containerd.Client, ref string) 
 // read by GetContainers). It accepts POST requests with a JSON body matching
 // PullAndRunRequest and returns the new container ID on success.
 //
-// Note: port mappings and restart policies are managed at the container orchestration
-// layer (e.g. CNI/systemd) and are not part of the core containerd API. Those fields
-// in PullAndRunRequest are accepted for forward-compatibility but are stored as
-// container labels only and are not enforced at runtime by this handler.
+// Port mappings are implemented rootlessly by starting slirp4netns against the
+// container task's network namespace and programming host forwards through its
+// API socket after the task starts.
 func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -399,11 +629,18 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine the process arguments: request command overrides image
-	// defaults; otherwise use ENTRYPOINT+CMD from the image config.
+	// Determine the process arguments. When a request command is supplied, treat
+	// it like Docker's trailing command: preserve the image entrypoint and replace
+	// only the default CMD. If the image has no entrypoint, execute the request
+	// command directly.
 	processArgs := append(imgSpec.Config.Entrypoint, imgSpec.Config.Cmd...)
 	if req.Command != "" {
-		processArgs = strings.Fields(req.Command)
+		commandArgs := strings.Fields(req.Command)
+		if len(imgSpec.Config.Entrypoint) > 0 {
+			processArgs = append(append([]string{}, imgSpec.Config.Entrypoint...), commandArgs...)
+		} else {
+			processArgs = commandArgs
+		}
 	}
 	if len(processArgs) == 0 {
 		processArgs = []string{"/bin/sh"}
@@ -478,6 +715,13 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		task.Delete(ctx)
 		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
 		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := setupRootlessPortForwarding(containerID, task.Pid(), req.Ports); err != nil {
+		task.Delete(ctx)
+		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
+		http.Error(w, fmt.Sprintf("Failed to configure rootless networking: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -642,7 +886,7 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("Warning: failed to write log file: %v\n", writeErr)
 		}
 	}
-	
+
 	fmt.Print(out.String() + stderr.String())
 
 	// Send JSON response
@@ -695,7 +939,7 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 
 	// Remove log files
 	logsDir := filepath.Join(home, ".opencloud", "logs")
-	
+
 	// Remove execution log file (~/.opencloud/logs/functions/{baseName}.log)
 	// Strip extension from function name to match how logs are created
 	baseName := strings.TrimSuffix(fnName, filepath.Ext(fnName))
@@ -773,7 +1017,7 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"name":         fnName,
 		"path":         fnPath,
-		"Invocations":	0,
+		"Invocations":  0,
 		"runtime":      detectRuntime(fnName),
 		"lastModified": info.ModTime().Format(time.RFC3339),
 		"sizeBytes":    info.Size(),
@@ -826,9 +1070,9 @@ func addCron(filePath string, schedule string) error {
 	//baseName := strings.TrimSuffix(fileName, logFile.Ext(fileName))
 	//fmt.Sprint("%s", baseName)
 
-	fileName := filepath.Base(filePath)                 // hello.py
+	fileName := filepath.Base(filePath)                              // hello.py
 	baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName)) // hello
-	logFile := filepath.Join(fnDir, baseName + ".log")  // hello.log
+	logFile := filepath.Join(fnDir, baseName+".log")                 // hello.log
 
 	newCronJob := fmt.Sprintf("%s %s %s >> %s 2>&1", schedule, detectRuntime(filePath), filePath, logFile)
 
@@ -1128,7 +1372,7 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		newBaseName := strings.TrimSuffix(newFileName, filepath.Ext(newFileName))
 		oldLogPath := filepath.Join(logsDir, oldBaseName+".log")
 		newLogPath := filepath.Join(logsDir, newBaseName+".log")
-		
+
 		if _, err := os.Stat(oldLogPath); err == nil {
 			if err := os.Rename(oldLogPath, newLogPath); err != nil {
 				fmt.Printf("Warning: Failed to rename log file: %v\n", err)
@@ -1215,47 +1459,47 @@ func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
 	// Each execution is wrapped with ===EXECUTION_START:<timestamp>|<status>=== and ===EXECUTION_END===
 	logText := string(logContent)
 	executions := []service_ledger.FunctionLog{}
-	
+
 	// Split by execution markers
 	parts := strings.Split(logText, "===EXECUTION_START:")
 	for _, part := range parts {
 		if part == "" {
 			continue
 		}
-		
+
 		// Find the end marker
 		endIdx := strings.Index(part, "===EXECUTION_END===")
 		if endIdx == -1 {
 			continue
 		}
-		
+
 		// Extract timestamp and status from header: <timestamp>|<status>===\n
 		headerEndMarker := "===\n"
 		timestampEndIdx := strings.Index(part, headerEndMarker)
 		if timestampEndIdx == -1 {
 			continue
 		}
-		
+
 		// Parse header: "timestamp|status"
 		header := strings.TrimSpace(part[:timestampEndIdx])
 		headerParts := strings.Split(header, "|")
 		if len(headerParts) < 2 {
 			continue
 		}
-		
+
 		timestamp := headerParts[0]
 		status := strings.ToLower(headerParts[1])
-		
+
 		// Extract output (everything between header and end marker)
-		output := part[timestampEndIdx+len(headerEndMarker):endIdx]
-		
+		output := part[timestampEndIdx+len(headerEndMarker) : endIdx]
+
 		executions = append(executions, service_ledger.FunctionLog{
 			Timestamp: timestamp,
 			Output:    output,
 			Status:    status,
 		})
 	}
-	
+
 	// Return only the last execution (most recent one)
 	var logs []service_ledger.FunctionLog
 	if len(executions) > 0 {
