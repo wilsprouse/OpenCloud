@@ -8,11 +8,15 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
@@ -249,6 +253,18 @@ type slirpAPIResponse struct {
 	} `json:"error,omitempty"`
 }
 
+type containerProxyTarget struct {
+	HostPort int
+	Path     string
+}
+
+var rootlessForwardLocks sync.Map
+
+func rootlessForwardLock(containerID string) *sync.Mutex {
+	lock, _ := rootlessForwardLocks.LoadOrStore(containerID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 func parsePortMapping(mapping string) (parsedPortMapping, error) {
 	parts := strings.Split(mapping, ":")
 	if len(parts) != 2 && len(parts) != 3 {
@@ -288,6 +304,44 @@ func parsePortMapping(mapping string) (parsedPortMapping, error) {
 	return result, nil
 }
 
+func resolveContainerProxyTarget(rawPath string, labels map[string]string) (containerProxyTarget, error) {
+	trimmed := strings.TrimPrefix(rawPath, "/")
+	parts := strings.SplitN(trimmed, "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return containerProxyTarget{}, fmt.Errorf("expected /containerID/hostPort[/path]")
+	}
+
+	hostPort, err := strconv.Atoi(parts[1])
+	if err != nil || hostPort < 1 || hostPort > 65535 {
+		return containerProxyTarget{}, fmt.Errorf("invalid host port %q", parts[1])
+	}
+
+	for _, mapping := range strings.Fields(labels["opencloud/ports"]) {
+		parsed, err := parsePortMapping(mapping)
+		if err != nil {
+			continue
+		}
+		if parsed.Protocol != "tcp" {
+			continue
+		}
+		if parsed.HostPort != hostPort {
+			continue
+		}
+
+		targetPath := "/"
+		if len(parts) == 3 && parts[2] != "" {
+			targetPath = "/" + parts[2]
+		}
+
+		return containerProxyTarget{
+			HostPort: hostPort,
+			Path:     targetPath,
+		}, nil
+	}
+
+	return containerProxyTarget{}, fmt.Errorf("host port %d is not published by this container", hostPort)
+}
+
 func openCloudRuntimeDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -317,12 +371,46 @@ func cleanupRootlessPortForwarding(containerID string) {
 	_ = os.Remove(apiSocketPath)
 }
 
-func setupRootlessPortForwarding(containerID string, taskPID uint32, portMappings []string) error {
+func isRootlessPortForwardingActive(containerID string) bool {
+	stateDir := rootlessStateDir(containerID)
+	pidPath := filepath.Join(stateDir, "slirp4netns.pid")
+	apiSocketPath := filepath.Join(stateDir, "slirp4netns.sock")
+
+	pidBytes, err := os.ReadFile(pidPath)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	if _, err := os.Stat(apiSocketPath); err != nil {
+		return false
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	return true
+}
+
+func setupRootlessPortForwarding(containerID string, taskPID uint32, portMappings []string, force bool) error {
+	lock := rootlessForwardLock(containerID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	if len(portMappings) == 0 {
 		return nil
 	}
 	if taskPID == 0 {
 		return fmt.Errorf("container task PID is zero")
+	}
+	if !force && isRootlessPortForwardingActive(containerID) {
+		return nil
 	}
 
 	slirpPath, err := exec.LookPath("slirp4netns")
@@ -457,6 +545,227 @@ func addSlirpHostForward(apiSocketPath string, mapping parsedPortMapping) error 
 
 	return nil
 }
+
+// ProxyContainerPort exposes a running container's published TCP port through a
+// same-origin HTTP path so browser clients can reach mapped services from the
+// OpenCloud website without depending on direct host:port access or CORS.
+func ProxyContainerPort(w http.ResponseWriter, r *http.Request) {
+	const routePrefix = "/container-proxy/"
+
+	if !strings.HasPrefix(r.URL.Path, routePrefix) {
+		http.NotFound(w, r)
+		return
+	}
+
+	remainder := strings.TrimPrefix(r.URL.Path, routePrefix)
+	pathParts := strings.SplitN(remainder, "/", 3)
+	if len(pathParts) < 2 || pathParts[0] == "" || pathParts[1] == "" {
+		http.Error(w, "container proxy path must be /container-proxy/{containerID}/{hostPort}[/path]", http.StatusBadRequest)
+		return
+	}
+
+	containerID, err := url.PathUnescape(pathParts[0])
+	if err != nil || containerID == "" {
+		http.Error(w, "invalid container ID", http.StatusBadRequest)
+		return
+	}
+
+	ctx := namespaces.WithNamespace(r.Context(), "buildkit")
+
+	cli, err := containerd.New(containerdSocket)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer cli.Close()
+
+	ctr, err := cli.LoadContainer(ctx, containerID)
+	if err != nil {
+		http.Error(w, "container not found", http.StatusNotFound)
+		return
+	}
+
+	info, err := ctr.Info(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to inspect container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	startedTask, taskPID, err := ensureContainerTaskRunning(ctx, ctr)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to ensure container task is running: %v", err), http.StatusConflict)
+		return
+	}
+	target, err := resolveContainerProxyTarget(remainder, info.Labels)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := setupRootlessPortForwarding(containerID, taskPID, strings.Fields(info.Labels["opencloud/ports"]), startedTask); err != nil {
+		http.Error(w, fmt.Sprintf("failed to configure rootless networking: %v", err), http.StatusBadGateway)
+		return
+	}
+	if startedTask {
+		if err := waitForTCPPort(target.HostPort, 5*time.Second); err != nil {
+			if task, taskErr := ctr.Task(ctx, nil); taskErr == nil {
+				if status, statusErr := task.Status(ctx); statusErr == nil && status.Status != containerd.Running {
+					http.Error(w, "container exited before published port became ready", http.StatusConflict)
+					return
+				}
+			}
+			http.Error(w, fmt.Sprintf("published port %d did not become ready: %v", target.HostPort, err), http.StatusBadGateway)
+			return
+		}
+	}
+
+	targetURL := &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort("127.0.0.1", strconv.Itoa(target.HostPort)),
+	}
+	proxyBasePath := fmt.Sprintf("/api/container-proxy/%s/%d/", url.PathEscape(containerID), target.HostPort)
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+		http.Error(rw, fmt.Sprintf("failed to proxy container port: %v", proxyErr), http.StatusBadGateway)
+	}
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		// Avoid stale cached assets/pages from prior proxy failures (e.g. cached
+		// text/plain 502 bodies served under JS/CSS URLs).
+		resp.Header.Set("Cache-Control", "no-store")
+
+		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+		shouldRewriteHTML := strings.HasPrefix(contentType, "text/html")
+		shouldRewriteJS := strings.Contains(contentType, "javascript")
+		if !shouldRewriteHTML && !shouldRewriteJS {
+			return nil
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+
+		rewrittenBody := body
+		if shouldRewriteHTML {
+			rewrittenBody = rewriteProxyHTMLBaseHref(rewrittenBody, proxyBasePath)
+		}
+		if shouldRewriteJS {
+			rewrittenBody = rewriteProxyJSBaseAPI(rewrittenBody)
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(rewrittenBody))
+		resp.ContentLength = int64(len(rewrittenBody))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(rewrittenBody)))
+		return nil
+	}
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = target.Path
+		req.URL.RawPath = ""
+		req.Host = targetURL.Host
+		// Ensure upstream responses are not compressed so content rewriting can
+		// safely inspect and patch HTML/JS payloads.
+		req.Header.Del("Accept-Encoding")
+	}
+
+	proxy.ServeHTTP(w, r)
+}
+
+// ensureContainerTaskRunning makes sure the container has a running task. It
+// starts a new task when one does not exist, and recreates the task when a
+// previous task exists but is no longer running.
+func ensureContainerTaskRunning(ctx context.Context, ctr containerd.Container) (started bool, pid uint32, err error) {
+	task, err := ctr.Task(ctx, nil)
+	if err != nil {
+		newTask, newTaskErr := ctr.NewTask(ctx, cio.NullIO)
+		if newTaskErr != nil {
+			return false, 0, fmt.Errorf("failed to create container task: %w", newTaskErr)
+		}
+		if startErr := newTask.Start(ctx); startErr != nil {
+			_, _ = newTask.Delete(ctx, containerd.WithProcessKill)
+			return false, 0, fmt.Errorf("failed to start container task: %w", startErr)
+		}
+		return true, newTask.Pid(), nil
+	}
+
+	status, err := task.Status(ctx)
+	if err != nil {
+		return false, 0, fmt.Errorf("failed to inspect container task: %w", err)
+	}
+	if status.Status == containerd.Running {
+		return false, task.Pid(), nil
+	}
+
+	if _, err := task.Delete(ctx, containerd.WithProcessKill); err != nil {
+		return false, 0, fmt.Errorf("failed to delete stale container task: %w", err)
+	}
+
+	newTask, err := ctr.NewTask(ctx, cio.NullIO)
+	if err != nil {
+		return false, 0, fmt.Errorf("failed to recreate container task: %w", err)
+	}
+	if err := newTask.Start(ctx); err != nil {
+		_, _ = newTask.Delete(ctx, containerd.WithProcessKill)
+		return false, 0, fmt.Errorf("failed to start recreated task: %w", err)
+	}
+
+	return true, newTask.Pid(), nil
+}
+
+func waitForTCPPort(hostPort int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(hostPort))
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("timeout waiting for %s", address)
+	}
+	return lastErr
+}
+
+func rewriteProxyHTMLBaseHref(body []byte, proxyBasePath string) []byte {
+	lower := bytes.ToLower(body)
+	baseIdx := bytes.Index(lower, []byte("<base href="))
+	if baseIdx == -1 {
+		return body
+	}
+
+	segment := body[baseIdx:]
+	endIdx := bytes.IndexByte(segment, '>')
+	if endIdx == -1 {
+		return body
+	}
+
+	replacement := []byte(`<base href="` + proxyBasePath + `">`)
+	rewritten := make([]byte, 0, len(body)-endIdx+len(replacement))
+	rewritten = append(rewritten, body[:baseIdx]...)
+	rewritten = append(rewritten, replacement...)
+	rewritten = append(rewritten, segment[endIdx+1:]...)
+	return rewritten
+}
+
+// rewriteProxyJSBaseAPI applies a narrow replacement for MinIO bundles so API
+// calls resolve relative to the proxied document base path rather than host
+// root (/api/v1), without broad JS string rewriting.
+func rewriteProxyJSBaseAPI(body []byte) []byte {
+	return bytes.ReplaceAll(
+		body,
+		[]byte(`this.baseUrl="/api/v1"`),
+		[]byte(`this.baseUrl="".concat(new URL(document.baseURI).pathname,"api/v1")`),
+	)
+}
+
 
 // validateVolumeMount checks a volume mount string for path traversal or missing separators.
 // Volume mounts must be in "hostPath:containerPath" format.
@@ -718,7 +1027,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := setupRootlessPortForwarding(containerID, task.Pid(), req.Ports); err != nil {
+	if err := setupRootlessPortForwarding(containerID, task.Pid(), req.Ports, true); err != nil {
 		task.Delete(ctx)
 		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
 		http.Error(w, fmt.Sprintf("Failed to configure rootless networking: %v", err), http.StatusInternalServerError)

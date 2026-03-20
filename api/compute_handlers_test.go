@@ -898,6 +898,79 @@ func TestParsePortMapping(t *testing.T) {
 	}
 }
 
+func TestResolveContainerProxyTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		labels  map[string]string
+		want    containerProxyTarget
+		wantErr bool
+	}{
+		{
+			name: "root path for published tcp port",
+			path: "my-container/8080",
+			labels: map[string]string{
+				"opencloud/ports": "8080:80 127.0.0.1:9000:9000/udp",
+			},
+			want: containerProxyTarget{
+				HostPort: 8080,
+				Path:     "/",
+			},
+		},
+		{
+			name: "nested path for published tcp port",
+			path: "my-container/8080/assets/app.js",
+			labels: map[string]string{
+				"opencloud/ports": "8080:80/tcp",
+			},
+			want: containerProxyTarget{
+				HostPort: 8080,
+				Path:     "/assets/app.js",
+			},
+		},
+		{
+			name: "reject non-published port",
+			path: "my-container/8081",
+			labels: map[string]string{
+				"opencloud/ports": "8080:80",
+			},
+			wantErr: true,
+		},
+		{
+			name: "reject udp-only mapping",
+			path: "my-container/9000",
+			labels: map[string]string{
+				"opencloud/ports": "9000:9000/udp",
+			},
+			wantErr: true,
+		},
+		{
+			name:    "reject malformed path",
+			path:    "my-container",
+			labels:  map[string]string{"opencloud/ports": "8080:80"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveContainerProxyTarget(tt.path, tt.labels)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("resolveContainerProxyTarget(%q): expected error, got none", tt.path)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveContainerProxyTarget(%q): unexpected error: %v", tt.path, err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveContainerProxyTarget(%q): got %+v, want %+v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestValidateVolumeMount verifies valid and invalid volume mount strings.
 func TestValidateVolumeMount(t *testing.T) {
 	tests := []struct {

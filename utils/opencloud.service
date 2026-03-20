@@ -13,8 +13,8 @@ RestartSec=5
 User=ubuntu
 Group=ubuntu
 
-# Add supplementary groups so the service can access containerd and buildkit sockets
-SupplementaryGroups=containerd
+# Add supplementary groups so the service can access containerd and BuildKit sockets
+SupplementaryGroups=containerd default
 
 # Grant the minimum capabilities needed to enter a container task's namespaces
 # when wiring rootless slirp4netns port forwarding onto a containerd-managed task.

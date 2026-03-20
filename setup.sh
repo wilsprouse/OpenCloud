@@ -318,7 +318,31 @@ fi
 
 print_info "containerd socket group access configured"
 
-# Step 12: Start the services
+# Step 12: Ensure container build services are available when installed
+print_info "Ensuring container build services are running..."
+
+if command -v containerd &> /dev/null; then
+    sudo systemctl enable containerd
+    sudo systemctl start containerd
+    print_info "containerd is running"
+fi
+
+if command -v buildkitd &> /dev/null && [ -f /etc/systemd/system/buildkit.service ]; then
+    sudo systemctl enable buildkit
+    sudo systemctl start buildkit
+
+    if sudo systemctl is-active --quiet buildkit && [ -S /run/buildkit/buildkitd.sock ]; then
+        print_info "buildkit is running and socket is available"
+    else
+        print_error "buildkit is installed but the socket is not available"
+        sudo systemctl status buildkit --no-pager || true
+        exit 1
+    fi
+else
+    print_warning "buildkit is not installed; image builds from Dockerfile will be unavailable until the container registry service is installed"
+fi
+
+# Step 13: Start the services
 print_info "Starting OpenCloud services..."
 
 # Reload systemd daemon to pick up new service

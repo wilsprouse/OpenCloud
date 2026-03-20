@@ -31,6 +31,7 @@ import {
   Package,
   Image as ImageIcon,
   Download,
+  ExternalLink,
   Plus,
   X,
 } from "lucide-react"
@@ -43,6 +44,7 @@ type ContainerItem = {
   Status: string
   Pid: number
   MemoryUsageBytes: number
+  Labels?: Record<string, string>
 }
 
 // Represents an image returned by /get-images (Container Registry)
@@ -70,9 +72,120 @@ type VolumeMount = {
   containerPath: string
 }
 
+type ContainerRunPreset = {
+  imagePatterns: string[]
+  ports?: PortMapping[]
+  envVars?: EnvVar[]
+  volumes?: VolumeMount[]
+  command?: string
+}
+
 // Sentinel values used in the image Select dropdown
 const CUSTOM_IMAGE_VALUE = "__custom__"
 const NO_IMAGES_VALUE = "__no_images__"
+
+function parseContainerRunPresets(rawPresets: string | undefined): ContainerRunPreset[] {
+  if (!rawPresets) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(rawPresets)
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed.flatMap((preset): ContainerRunPreset[] => {
+      if (!preset || typeof preset !== "object") {
+        return []
+      }
+
+      const typedPreset = preset as Partial<ContainerRunPreset>
+
+      const imagePatterns = Array.isArray(typedPreset.imagePatterns)
+        ? typedPreset.imagePatterns.filter(
+            (pattern): pattern is string => typeof pattern === "string" && pattern.trim().length > 0
+          )
+        : []
+
+      if (imagePatterns.length === 0) {
+        return []
+      }
+
+      const ports = Array.isArray(typedPreset.ports)
+        ? typedPreset.ports.filter(
+            (port): port is PortMapping =>
+              !!port &&
+              typeof port.hostPort === "string" &&
+              typeof port.containerPort === "string"
+          )
+        : undefined
+
+      const envVars = Array.isArray(typedPreset.envVars)
+        ? typedPreset.envVars.filter(
+            (envVar): envVar is EnvVar =>
+              !!envVar &&
+              typeof envVar.key === "string" &&
+              typeof envVar.value === "string"
+          )
+        : undefined
+
+      const volumes = Array.isArray(typedPreset.volumes)
+        ? typedPreset.volumes.filter(
+            (volume): volume is VolumeMount =>
+              !!volume &&
+              typeof volume.hostPath === "string" &&
+              typeof volume.containerPath === "string"
+          )
+        : undefined
+
+      return [
+        {
+          imagePatterns,
+          ports,
+          envVars,
+          volumes,
+          command: typeof typedPreset.command === "string" ? typedPreset.command : undefined,
+        },
+      ]
+    })
+  } catch (error) {
+    console.error("Failed to parse REACT_APP_CONTAINER_RUN_PRESETS:", error)
+    return []
+  }
+}
+
+const containerRunPresets = parseContainerRunPresets(process.env.REACT_APP_CONTAINER_RUN_PRESETS)
+
+function getPublishedTcpPorts(container: ContainerItem): number[] {
+  const rawMappings = container.Labels?.["opencloud/ports"]
+  if (!rawMappings) {
+    return []
+  }
+
+  const ports = rawMappings
+    .split(/\s+/)
+    .flatMap((mapping) => {
+      const match = mapping.match(/^(?:(?:\d{1,3}\.){3}\d{1,3}:)?(\d+):\d+(?:\/(tcp|udp))?$/i)
+      if (!match) {
+        return []
+      }
+
+      const protocol = (match[2] || "tcp").toLowerCase()
+      if (protocol !== "tcp") {
+        return []
+      }
+
+      const hostPort = Number.parseInt(match[1], 10)
+      return Number.isFinite(hostPort) && hostPort > 0 ? [hostPort] : []
+    })
+
+  return [...new Set(ports)].sort((a, b) => a - b)
+}
+
+function buildContainerProxyHref(containerId: string, hostPort: number): string {
+  return `/api/container-proxy/${encodeURIComponent(containerId)}/${hostPort}/`
+}
 
 // formatBytes converts a byte count into a human-readable string
 // (e.g. 1048576 → "1.0 MB").
@@ -139,28 +252,34 @@ export default function ContainersPage() {
 
   useEffect(() => {
     const image = resolvedRunImage.toLowerCase()
-    if (!image.includes("minio")) {
+    if (!image) {
       return
     }
 
-    if (runPorts.every((p) => !p.hostPort && !p.containerPort)) {
-      setRunPorts([
-        { hostPort: "9000", containerPort: "9000" },
-        { hostPort: "9001", containerPort: "9001" },
-      ])
+    const matchingPreset = containerRunPresets.find((preset) =>
+      preset.imagePatterns.some((pattern) => image.includes(pattern.toLowerCase()))
+    )
+
+    if (!matchingPreset) {
+      return
     }
 
-    if (runEnvVars.every((e) => !e.key && !e.value)) {
-      setRunEnvVars([
-        { key: "MINIO_ROOT_USER", value: "minioadmin" },
-        { key: "MINIO_ROOT_PASSWORD", value: "minioadmin" },
-      ])
+    if (matchingPreset.ports?.length && runPorts.every((p) => !p.hostPort && !p.containerPort)) {
+      setRunPorts(matchingPreset.ports.map((port) => ({ ...port })))
     }
 
-    if (!runCommand.trim()) {
-      setRunCommand("server /data --address :9000 --console-address :9001")
+    if (matchingPreset.envVars?.length && runEnvVars.every((e) => !e.key && !e.value)) {
+      setRunEnvVars(matchingPreset.envVars.map((envVar) => ({ ...envVar })))
     }
-  }, [resolvedRunImage, runPorts, runEnvVars, runCommand])
+
+    if (matchingPreset.volumes?.length && runVolumes.every((v) => !v.hostPath && !v.containerPath)) {
+      setRunVolumes(matchingPreset.volumes.map((volume) => ({ ...volume })))
+    }
+
+    if (matchingPreset.command && !runCommand.trim()) {
+      setRunCommand(matchingPreset.command)
+    }
+  }, [resolvedRunImage, runPorts, runEnvVars, runVolumes, runCommand])
 
   // Manage container actions
   const handleAction = async (id: string, action: "start" | "stop" | "remove") => {
@@ -355,7 +474,7 @@ export default function ContainersPage() {
                       <div className={`p-2 rounded-lg ${c.State === "running" ? "bg-green-50" : "bg-gray-50"}`}>
                         <Container className={`h-5 w-5 ${c.State === "running" ? "text-green-600" : "text-gray-600"}`} />
                       </div>
-                      <div className="space-y-1 flex-1 min-w-0">
+                      <div className="space-y-2 flex-1 min-w-0">
                         <div className="flex items-center space-x-2">
                           <h4 className="font-medium truncate">
                             {c.Names?.[0]?.replace(/^\//, "") || "Unnamed"}
@@ -385,6 +504,22 @@ export default function ContainersPage() {
                             </>
                           )}
                         </div>
+                        {c.State === "running" && getPublishedTcpPorts(c).length > 0 && (
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            {getPublishedTcpPorts(c).map((hostPort) => (
+                              <a
+                                key={hostPort}
+                                href={buildContainerProxyHref(c.Id, hostPort)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 font-medium text-blue-700 transition-colors hover:bg-blue-100"
+                              >
+                                Open :{hostPort}
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center space-x-2 ml-4">
