@@ -265,41 +265,31 @@ fi
 
 print_info "nginx configured successfully"
 
-# Step 11: Configure containerd socket group access so OpenCloud can list built images
-# The 'containerd' group allows non-root users to access /run/containerd/containerd.sock.
-# This is the same pattern Docker uses with the 'docker' group.
-print_info "Configuring containerd socket group access..."
+# Step 11: Configure Podman socket group access so OpenCloud can manage images and containers
+print_info "Configuring Podman socket group access..."
 
-# Create the containerd group if it doesn't exist
-sudo groupadd -f containerd
+sudo groupadd -f podman
+sudo usermod -aG podman "$USER"
+print_info "Added $USER to the 'podman' group"
 
-# Add the OpenCloud service user to the containerd group
-sudo usermod -aG containerd "$USER"
-print_info "Added $USER to the 'containerd' group"
-
-# Create a containerd systemd drop-in so the socket gets proper group permissions
-# on every start — ensures the fix survives reboots.
-sudo mkdir -p /etc/systemd/system/containerd.service.d
-cat <<'DROPIN' | sudo tee /etc/systemd/system/containerd.service.d/opencloud-socket-group.conf > /dev/null
-[Service]
-# After the socket is created, set its group to 'containerd' and allow group r/w.
-# This lets the OpenCloud backend (running as a non-root user in the 'containerd' group)
-# connect to the containerd API without requiring root privileges.
-ExecStartPost=/bin/sh -c 'i=0; until [ -S /run/containerd/containerd.sock ] || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done; chown root:containerd /run/containerd/containerd.sock; chmod 660 /run/containerd/containerd.sock'
+sudo mkdir -p /etc/systemd/system/podman.socket.d
+cat <<'DROPIN' | sudo tee /etc/systemd/system/podman.socket.d/opencloud-group.conf > /dev/null
+[Socket]
+SocketGroup=podman
+SocketMode=0660
 DROPIN
 
 sudo systemctl daemon-reload
+sudo systemctl enable podman.socket
+sudo systemctl start podman.socket
 
-# Apply socket permissions immediately if containerd is already running
-if sudo systemctl is-active --quiet containerd; then
-    sudo chown root:containerd /run/containerd/containerd.sock 2>/dev/null || true
-    sudo chmod 660 /run/containerd/containerd.sock 2>/dev/null || true
-    print_info "containerd socket permissions applied"
+if [ -S /run/podman/podman.sock ]; then
+    print_info "Podman socket permissions applied"
 else
-    print_warning "containerd is not running — socket permissions will be applied on next containerd start"
+    print_warning "Podman socket is not available yet — it will be created by podman.socket"
 fi
 
-print_info "containerd socket group access configured"
+print_info "Podman socket group access configured"
 
 # Step 12: Start the services
 print_info "Starting OpenCloud services..."
