@@ -375,6 +375,20 @@ type BuildImageRequest struct {
 	Platform   string `json:"platform"`  // optional
 }
 
+func logBuildImageError(stage string, req BuildImageRequest, err error, extra string) {
+	log.Printf(
+		"BuildImage error stage=%s image=%q platform=%q nocache=%t dockerfile_bytes=%d context_bytes=%d err=%v extra=%s",
+		stage,
+		req.ImageName,
+		req.Platform,
+		req.NoCache,
+		len(req.Dockerfile),
+		len(req.Context),
+		err,
+		extra,
+	)
+}
+
 // normalizeImageRef adds docker.io registry prefix if no registry is specified
 func normalizeImageRef(imageRef string) string {
         if strings.Contains(imageRef, "/") {
@@ -434,28 +448,44 @@ func hasFromInstruction(dockerfile string) bool {
 // BuildImage handles building a container image using buildkitd and registers it with Containerd.
 func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		log.Printf("BuildImage rejected method=%s path=%s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req BuildImageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logBuildImageError("decode_request", req, err, "")
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
+
+	log.Printf(
+		"BuildImage requested image=%q platform=%q nocache=%t dockerfile_bytes=%d context_bytes=%d remote=%s",
+		req.ImageName,
+		req.Platform,
+		req.NoCache,
+		len(req.Dockerfile),
+		len(req.Context),
+		r.RemoteAddr,
+	)
+
 	if req.Dockerfile == "" || req.ImageName == "" {
+		logBuildImageError("validate_required_fields", req, fmt.Errorf("dockerfile and imageName are required"), "")
 		http.Error(w, "dockerfile and imageName are required", http.StatusBadRequest)
 		return
 	}
 
 	// Validate that the Dockerfile contains a FROM instruction
 	if !hasFromInstruction(req.Dockerfile) {
+		logBuildImageError("validate_dockerfile_from", req, fmt.Errorf("dockerfile must contain a FROM instruction"), "")
 		http.Error(w, "dockerfile must contain a FROM instruction", http.StatusBadRequest)
 		return
 	}
 
 	// Validate that the image name is safe and properly formatted
 	if errMsg := validateImageName(req.ImageName); errMsg != "" {
+		logBuildImageError("validate_image_name", req, fmt.Errorf("%s", errMsg), "")
 		http.Error(w, errMsg, http.StatusBadRequest)
 		return
 	}
@@ -463,6 +493,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	// Create temp directory for build
 	tmpDir, err := os.MkdirTemp("", "opencloud-build-*")
 	if err != nil {
+		logBuildImageError("mkdir_temp", req, err, "")
 		http.Error(w, fmt.Sprintf("Failed to create temp dir: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -471,11 +502,13 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	// Write Dockerfile exactly as provided
 	dfPath := filepath.Join(tmpDir, "Dockerfile")
 	if err := os.WriteFile(dfPath, []byte(req.Dockerfile), 0644); err != nil {
+		logBuildImageError("write_dockerfile", req, err, fmt.Sprintf("path=%s", dfPath))
 		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	if _, err := os.Stat(buildkitSocket); err != nil {
+		logBuildImageError("check_buildkit_socket", req, err, fmt.Sprintf("socket=%s", buildkitSocket))
 		http.Error(
 			w,
 			"BuildKit is not available. Start or enable the container registry build service and try again.",
@@ -489,6 +522,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if req.Context != "" {
 		ctxPath := filepath.Join(tmpDir, "context.txt")
 		if err := os.WriteFile(ctxPath, []byte(req.Context), 0644); err != nil {
+			logBuildImageError("write_context", req, err, fmt.Sprintf("path=%s", ctxPath))
 			http.Error(w, fmt.Sprintf("Failed to write context: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -516,11 +550,12 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "--no-cache")
 	}
 
+	log.Printf("BuildImage executing image=%q buildctl_args=%q", req.ImageName, args)
 	buildCmd := exec.Command("buildctl", args...)
 
 	out, err := buildCmd.CombinedOutput()
 	if err != nil {
-		log.Printf("BuildImage failed for %s: %v\n%s", req.ImageName, err, string(out))
+		logBuildImageError("buildctl", req, err, fmt.Sprintf("args=%q output=%s", args, string(out)))
 		http.Error(
 			w,
 			fmt.Sprintf("Build failed: %v\nOutput:\n%s", err, string(out)),
@@ -538,7 +573,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		req.NoCache,
 		time.Now().UTC().Format(time.RFC3339),
 	); ledgerErr != nil {
-		log.Printf("Warning: failed to record image %s in service ledger: %v", req.ImageName, ledgerErr)
+		logBuildImageError("update_service_ledger", req, ledgerErr, "")
 	}
 
 	resp := map[string]string{
@@ -548,7 +583,9 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logBuildImageError("encode_response", req, err, "")
+	}
 
 
 }

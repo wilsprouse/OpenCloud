@@ -18,7 +18,7 @@ func setupCrontabTest(t *testing.T) (cleanup func()) {
 	origCrontabCmd := exec.Command("crontab", "-l")
 	origCrontabOutput, _ := origCrontabCmd.CombinedOutput()
 	origCrontab := string(origCrontabOutput)
-	
+
 	// Clear crontab for test
 	cmd := exec.Command("crontab", "-r")
 	if err := cmd.Run(); err != nil {
@@ -27,7 +27,7 @@ func setupCrontabTest(t *testing.T) (cleanup func()) {
 			t.Logf("Warning: Failed to clear crontab: %v", err)
 		}
 	}
-	
+
 	// Return cleanup function
 	return func() {
 		// Restore original crontab
@@ -167,7 +167,7 @@ func TestAddCronDuplicatePrevention(t *testing.T) {
 
 	crontabContent := string(output)
 	lines := strings.Split(strings.TrimSpace(crontabContent), "\n")
-	
+
 	// Filter out empty lines
 	nonEmptyLines := 0
 	for _, line := range lines {
@@ -305,7 +305,7 @@ func TestRemoveCron(t *testing.T) {
 	cmd = exec.Command("crontab", "-l")
 	output, err = cmd.CombinedOutput()
 	crontabContent := string(output)
-	
+
 	// Check if crontab is empty or doesn't contain the function
 	if err == nil && strings.Contains(crontabContent, testFuncPath) {
 		t.Errorf("Cron job was not removed. Crontab content:\n%s", crontabContent)
@@ -433,18 +433,18 @@ func TestRemoveCronNonExistent(t *testing.T) {
 func TestExecutionLogFileNaming(t *testing.T) {
 	// This test verifies that execution log files are named correctly
 	// by stripping the extension from the function name
-	
+
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
 	defer os.Setenv("HOME", origHome)
-	
+
 	// Create logs/functions directory
 	logsDir := filepath.Join(tmpHome, ".opencloud", "logs", "functions")
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
 		t.Fatalf("Failed to create logs directory: %v", err)
 	}
-	
+
 	// Test cases for different function extensions
 	testCases := []struct {
 		functionName string
@@ -455,32 +455,32 @@ func TestExecutionLogFileNaming(t *testing.T) {
 		{"script.go", "script.log"},
 		{"function.sh", "function.log"},
 	}
-	
+
 	for _, tc := range testCases {
 		// Create a test log file as it would be created by RunFunction
 		baseName := strings.TrimSuffix(tc.functionName, filepath.Ext(tc.functionName))
 		logFileName := baseName + ".log"
 		logFilePath := filepath.Join(logsDir, logFileName)
-		
+
 		// Create the log file
 		if err := os.WriteFile(logFilePath, []byte("test log content"), 0644); err != nil {
 			t.Fatalf("Failed to create test log file for %s: %v", tc.functionName, err)
 		}
-		
+
 		// Verify the file exists at the expected path
 		if _, err := os.Stat(logFilePath); os.IsNotExist(err) {
 			t.Errorf("Expected log file not found: %s", logFilePath)
 		}
-		
+
 		// Now simulate deletion using the same logic as DeleteFunction
 		fnName := tc.functionName
 		baseName = strings.TrimSuffix(fnName, filepath.Ext(fnName))
 		deletionPath := filepath.Join(logsDir, baseName+".log")
-		
+
 		if err := os.Remove(deletionPath); err != nil {
 			t.Errorf("Failed to remove log file for %s: %v", tc.functionName, err)
 		}
-		
+
 		// Verify the file was deleted
 		if _, err := os.Stat(deletionPath); !os.IsNotExist(err) {
 			t.Errorf("Log file should have been deleted but still exists: %s", deletionPath)
@@ -490,24 +490,24 @@ func TestExecutionLogFileNaming(t *testing.T) {
 
 func TestFunctionRename(t *testing.T) {
 	// This test verifies that renaming a function updates the file, service ledger, and logs
-	
+
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
 	defer os.Setenv("HOME", origHome)
-	
+
 	// Create functions directory
 	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
 	if err := os.MkdirAll(funcDir, 0755); err != nil {
 		t.Fatalf("Failed to create functions directory: %v", err)
 	}
-	
+
 	// Create logs directory
 	logsDir := filepath.Join(tmpHome, ".opencloud", "logs", "functions")
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
 		t.Fatalf("Failed to create logs directory: %v", err)
 	}
-	
+
 	// Create initial function file
 	oldFileName := "old_function.py"
 	oldFilePath := filepath.Join(funcDir, oldFileName)
@@ -515,13 +515,13 @@ func TestFunctionRename(t *testing.T) {
 	if err := os.WriteFile(oldFilePath, []byte(initialCode), 0644); err != nil {
 		t.Fatalf("Failed to create initial function file: %v", err)
 	}
-	
+
 	// Create a log file for the old function
 	oldLogPath := filepath.Join(logsDir, "old_function.log")
 	if err := os.WriteFile(oldLogPath, []byte("old log content"), 0644); err != nil {
 		t.Fatalf("Failed to create old log file: %v", err)
 	}
-	
+
 	// Verify initial state
 	if _, err := os.Stat(oldFilePath); os.IsNotExist(err) {
 		t.Fatal("Old function file should exist")
@@ -529,22 +529,22 @@ func TestFunctionRename(t *testing.T) {
 	if _, err := os.Stat(oldLogPath); os.IsNotExist(err) {
 		t.Fatal("Old log file should exist")
 	}
-	
+
 	// Simulate the rename operation (as would happen in UpdateFunction)
 	newFileName := "new_function.py"
 	newFilePath := filepath.Join(funcDir, newFileName)
 	newCode := "print('new function')"
-	
+
 	// Write updated code to old file first
 	if err := os.WriteFile(oldFilePath, []byte(newCode), 0644); err != nil {
 		t.Fatalf("Failed to update function code: %v", err)
 	}
-	
+
 	// Rename the file
 	if err := os.Rename(oldFilePath, newFilePath); err != nil {
 		t.Fatalf("Failed to rename function file: %v", err)
 	}
-	
+
 	// Rename the log file
 	newLogPath := filepath.Join(logsDir, "new_function.log")
 	if _, err := os.Stat(oldLogPath); err == nil {
@@ -552,12 +552,12 @@ func TestFunctionRename(t *testing.T) {
 			t.Fatalf("Failed to rename log file: %v", err)
 		}
 	}
-	
+
 	// Verify new state
 	if _, err := os.Stat(oldFilePath); !os.IsNotExist(err) {
 		t.Error("Old function file should not exist after rename")
 	}
-	
+
 	if _, err := os.Stat(newFilePath); os.IsNotExist(err) {
 		t.Error("New function file should exist after rename")
 	} else {
@@ -570,11 +570,11 @@ func TestFunctionRename(t *testing.T) {
 			t.Errorf("New function file has wrong content. Expected: %s, Got: %s", newCode, string(content))
 		}
 	}
-	
+
 	if _, err := os.Stat(oldLogPath); !os.IsNotExist(err) {
 		t.Error("Old log file should not exist after rename")
 	}
-	
+
 	if _, err := os.Stat(newLogPath); os.IsNotExist(err) {
 		t.Error("New log file should exist after rename")
 	}
@@ -836,10 +836,10 @@ func TestValidatePortMapping(t *testing.T) {
 		{"0:80", false},
 		{"8080:80/tcp", false},
 		{"0.0.0.0:8080:80", false},
-		{"8080", true},      // no colon
-		{"../80:80", true},  // path traversal
-		{"8080;80", true},   // semicolon
-		{"8080 80", true},   // space
+		{"8080", true},     // no colon
+		{"../80:80", true}, // path traversal
+		{"8080;80", true},  // semicolon
+		{"8080 80", true},  // space
 	}
 	for _, tt := range tests {
 		result := validatePortMapping(tt.input)
@@ -848,6 +848,126 @@ func TestValidatePortMapping(t *testing.T) {
 		} else if !tt.wantErr && result != "" {
 			t.Errorf("validatePortMapping(%q): expected no error, got %q", tt.input, result)
 		}
+	}
+}
+
+func TestParsePortMapping(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    parsedPortMapping
+		wantErr bool
+	}{
+		{
+			input: "9000:9000",
+			want: parsedPortMapping{
+				HostAddr:      "0.0.0.0",
+				HostPort:      9000,
+				ContainerPort: 9000,
+				Protocol:      "tcp",
+			},
+		},
+		{
+			input: "127.0.0.1:8080:80/udp",
+			want: parsedPortMapping{
+				HostAddr:      "127.0.0.1",
+				HostPort:      8080,
+				ContainerPort: 80,
+				Protocol:      "udp",
+			},
+		},
+		{input: "bad", wantErr: true},
+		{input: "8080:notaport", wantErr: true},
+		{input: "8080:80/sctp", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		got, err := parsePortMapping(tt.input)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("parsePortMapping(%q): expected error, got none", tt.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parsePortMapping(%q): unexpected error: %v", tt.input, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("parsePortMapping(%q): got %+v, want %+v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestResolveContainerProxyTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		labels  map[string]string
+		want    containerProxyTarget
+		wantErr bool
+	}{
+		{
+			name: "root path for published tcp port",
+			path: "my-container/8080",
+			labels: map[string]string{
+				"opencloud/ports": "8080:80 127.0.0.1:9000:9000/udp",
+			},
+			want: containerProxyTarget{
+				HostPort: 8080,
+				Path:     "/",
+			},
+		},
+		{
+			name: "nested path for published tcp port",
+			path: "my-container/8080/assets/app.js",
+			labels: map[string]string{
+				"opencloud/ports": "8080:80/tcp",
+			},
+			want: containerProxyTarget{
+				HostPort: 8080,
+				Path:     "/assets/app.js",
+			},
+		},
+		{
+			name: "reject non-published port",
+			path: "my-container/8081",
+			labels: map[string]string{
+				"opencloud/ports": "8080:80",
+			},
+			wantErr: true,
+		},
+		{
+			name: "reject udp-only mapping",
+			path: "my-container/9000",
+			labels: map[string]string{
+				"opencloud/ports": "9000:9000/udp",
+			},
+			wantErr: true,
+		},
+		{
+			name:    "reject malformed path",
+			path:    "my-container",
+			labels:  map[string]string{"opencloud/ports": "8080:80"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveContainerProxyTarget(tt.path, tt.labels)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("resolveContainerProxyTarget(%q): expected error, got none", tt.path)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveContainerProxyTarget(%q): unexpected error: %v", tt.path, err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveContainerProxyTarget(%q): got %+v, want %+v", tt.path, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -860,9 +980,9 @@ func TestValidateVolumeMount(t *testing.T) {
 		{"/host/data:/container/data", false},
 		{"/tmp:/data", false},
 		{"data:/container/data", false},
-		{"../../etc:/container/data", true},  // path traversal in host
-		{"/host/data:../../etc", true},        // path traversal in container
-		{"/host/data", true},                  // no colon
+		{"../../etc:/container/data", true}, // path traversal in host
+		{"/host/data:../../etc", true},      // path traversal in container
+		{"/host/data", true},                // no colon
 	}
 	for _, tt := range tests {
 		result := validateVolumeMount(tt.input)

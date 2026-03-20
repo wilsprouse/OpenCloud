@@ -13,8 +13,13 @@ RestartSec=5
 User=ubuntu
 Group=ubuntu
 
-# Add supplementary groups so the service can access containerd and buildkit sockets
-SupplementaryGroups=containerd
+# Add supplementary groups so the service can access containerd and BuildKit sockets
+SupplementaryGroups=containerd default
+
+# Grant the minimum capabilities needed to enter a container task's namespaces
+# when wiring rootless slirp4netns port forwarding onto a containerd-managed task.
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
 
 # Environment variables for your app
 Environment=PORT=3030

@@ -12,6 +12,7 @@ const nextConfig = {
     },
     env: {
       REACT_APP_BACKEND: process.env.REACT_APP_BACKEND,
+      REACT_APP_CONTAINER_RUN_PRESETS: process.env.REACT_APP_CONTAINER_RUN_PRESETS,
     },
     async rewrites() {
       // Use environment variable for backend URL, fallback to localhost:3030

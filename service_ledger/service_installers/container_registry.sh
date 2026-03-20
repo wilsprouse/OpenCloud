@@ -39,6 +39,7 @@ print_error() { echo "[ERROR] $1" >&2; }
 
 check_containerd_installed() { command -v containerd &> /dev/null; }
 check_buildkit_installed() { command -v buildkitd &> /dev/null; }
+check_slirp4netns_installed() { command -v slirp4netns &> /dev/null; }
 
 # Ensure BuildKit group exists and users have access
 ensure_buildkit_group_access() {
@@ -80,6 +81,12 @@ install_containerd() {
     print_info "Installing ${CONTAINERD_PACKAGE_NAME}..."
     sudo apt-get install -y "${CONTAINERD_PACKAGE_NAME}"
     print_success "${CONTAINERD_PACKAGE_NAME} installed successfully"
+}
+
+install_slirp4netns() {
+    print_info "Installing slirp4netns for rootless container port forwarding..."
+    sudo apt-get install -y slirp4netns
+    print_success "slirp4netns installed successfully"
 }
 
 # Install BuildKit
@@ -199,6 +206,13 @@ main() {
         configure_containerd_service
     fi
     verify_containerd
+    echo
+
+    if check_slirp4netns_installed; then
+        print_info "slirp4netns already installed"
+    else
+        install_slirp4netns
+    fi
     echo
 
     # Step 2: BuildKit
