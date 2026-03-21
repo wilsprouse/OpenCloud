@@ -13,13 +13,13 @@ RestartSec=5
 User=ubuntu
 Group=ubuntu
 
-# Add supplementary groups so the service can access containerd and buildkit sockets
-SupplementaryGroups=containerd
-
 # Environment variables for your app
 Environment=PORT=3030
 Environment=ENV=production
 Environment=LOG_LEVEL=info
+# %U expands to the numeric UID for User=, so Podman uses that user's runtime dir.
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=CONTAINER_HOST=unix:///run/user/%U/podman/podman.sock
 
 # Optional: redirect logs to journald
 StandardOutput=journal

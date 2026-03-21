@@ -56,7 +56,7 @@ func TestBuildImageMissingDockerfile(t *testing.T) {
 		ImageName: "test-image",
 		Context:   ".",
 	}
-	
+
 	body, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/build-image", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
@@ -75,7 +75,7 @@ func TestBuildImageMissingImageName(t *testing.T) {
 		Dockerfile: "FROM alpine:latest\nRUN echo 'test'",
 		Context:    ".",
 	}
-	
+
 	body, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/build-image", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
@@ -105,7 +105,7 @@ func TestBuildImageRequestValidation(t *testing.T) {
 				NoCache:    true,
 				Platform:   "linux/amd64",
 			},
-			expectedStatus: 0, // Any status is acceptable - will fail at buildkit/containerd connection
+			expectedStatus: 0, // Any status is acceptable - may fail at Podman connection
 			description:    "Should pass validation",
 		},
 		{
@@ -114,7 +114,7 @@ func TestBuildImageRequestValidation(t *testing.T) {
 				Dockerfile: "FROM alpine:latest",
 				ImageName:  "test-image",
 			},
-			expectedStatus: 0, // Any status is acceptable - will fail at buildkit/containerd connection
+			expectedStatus: 0, // Any status is acceptable - may fail at Podman connection
 			description:    "Should use default values for context and platform",
 		},
 		{
@@ -159,7 +159,7 @@ func TestBuildImageRequestValidation(t *testing.T) {
 				Dockerfile: "# This is a comment\n# syntax=docker/dockerfile:1\nFROM alpine:latest\nRUN echo test",
 				ImageName:  "test-image",
 			},
-			expectedStatus: 0, // Valid, will fail at buildkit connection
+			expectedStatus: 0, // Valid, may fail at Podman connection
 			description:    "Should accept dockerfile with comments before FROM",
 		},
 		{
@@ -168,7 +168,7 @@ func TestBuildImageRequestValidation(t *testing.T) {
 				Dockerfile: "from alpine:latest\nRUN echo test",
 				ImageName:  "test-image",
 			},
-			expectedStatus: 0, // Valid, will fail at buildkit connection
+			expectedStatus: 0, // Valid, may fail at Podman connection
 			description:    "Should accept dockerfile with lowercase from",
 		},
 		{
@@ -213,7 +213,7 @@ func TestBuildImageRequestValidation(t *testing.T) {
 				Dockerfile: "FROM alpine:latest",
 				ImageName:  "registry.io/namespace/myapp:v1.0",
 			},
-			expectedStatus: 0, // Valid, will fail at buildkit connection
+			expectedStatus: 0, // Valid, may fail at Podman connection
 			description:    "Should accept properly formatted image with registry",
 		},
 	}
@@ -231,7 +231,7 @@ func TestBuildImageRequestValidation(t *testing.T) {
 			BuildImage(w, req)
 
 			resp := w.Result()
-			// For valid requests, we accept any status since buildkit/containerd may not be available in test
+			// For valid requests, we accept any status since Podman may not be available in test
 			// For invalid requests, we check for BadRequest
 			if tc.expectedStatus != 0 && resp.StatusCode != tc.expectedStatus {
 				t.Errorf("%s: Expected status %d, got %d", tc.description, tc.expectedStatus, resp.StatusCode)
@@ -247,11 +247,11 @@ func TestGetContainerRegistryHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/get-containers", nil)
 	w := httptest.NewRecorder()
 
-	// This will fail to connect to containerd in test environment, but we're testing the handler setup
+	// This may fail to connect to Podman in the test environment, but we're testing the handler setup
 	GetContainerRegistry(w, req)
 
 	resp := w.Result()
-	// In a test environment without containerd, we expect an error
+	// In a test environment without Podman, we expect an error
 	// This test verifies the handler doesn't panic
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusInternalServerError {
 		t.Logf("Handler returned status %d (expected OK or Internal Server Error in test env)", resp.StatusCode)
@@ -422,8 +422,8 @@ func TestDeleteImageMissingImageName(t *testing.T) {
 	}
 }
 
-// TestDeleteImageConnectsToContainerd tests that a valid request reaches the containerd connection step
-func TestDeleteImageConnectsToContainerd(t *testing.T) {
+// TestDeleteImageConnectsToPodman tests that a valid request reaches the Podman connection step
+func TestDeleteImageConnectsToPodman(t *testing.T) {
 	body, _ := json.Marshal(DeleteImageRequest{ImageName: "my-app:latest"})
 	req := httptest.NewRequest(http.MethodPost, "/delete-image", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
@@ -431,7 +431,7 @@ func TestDeleteImageConnectsToContainerd(t *testing.T) {
 	DeleteImage(w, req)
 
 	resp := w.Result()
-	// In a test environment without containerd, we expect an InternalServerError at the connection step.
+	// In a test environment without Podman, we expect an InternalServerError at the connection step.
 	// A BadRequest here would indicate incorrect validation logic.
 	if resp.StatusCode == http.StatusBadRequest {
 		t.Errorf("Valid request should not return BadRequest; got %d", resp.StatusCode)
