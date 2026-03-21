@@ -32,6 +32,13 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+run_target_user_systemctl() {
+    sudo -u "$TARGET_USER" env \
+        XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=${PODMAN_RUNTIME_DIR}/bus" \
+        systemctl --user "$@"
+}
+
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -39,6 +46,10 @@ cd "$SCRIPT_DIR"
 TARGET_USER="${SUDO_USER:-$USER}"
 if [ -z "$TARGET_USER" ]; then
     TARGET_USER="$(id -un)"
+fi
+if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" = "root" ]; then
+    print_error "Could not determine the target user. Run this script as the target user, or invoke it with sudo from that user account."
+    exit 1
 fi
 TARGET_USER_ID="$(id -u "$TARGET_USER")"
 
@@ -289,9 +300,9 @@ export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${PODMAN_
 
 sudo loginctl enable-linger "$TARGET_USER"
 sudo systemctl start "user@${TARGET_USER_ID}.service"
-systemctl --user daemon-reload
-systemctl --user enable podman.socket
-systemctl --user start podman.socket
+run_target_user_systemctl daemon-reload
+run_target_user_systemctl enable podman.socket
+run_target_user_systemctl start podman.socket
 
 if [ -S "${PODMAN_RUNTIME_DIR}/podman/podman.sock" ]; then
     print_info "Rootless Podman socket is available at ${PODMAN_RUNTIME_DIR}/podman/podman.sock"

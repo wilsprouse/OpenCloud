@@ -17,13 +17,13 @@ set -o pipefail
 
 readonly PODMAN_PACKAGE_NAME="podman"
 readonly PODMAN_SERVICE_NAME="podman.socket"
-PODMAN_USER_NAME="${SUDO_USER:-}"
+PODMAN_USER_NAME="${SUDO_USER:-$USER}"
 if [ -z "${PODMAN_USER_NAME}" ]; then
-    if [ "$(id -u)" -eq 0 ]; then
-        echo "[ERROR] Could not determine the target user. Run this script as the target user, or invoke it with sudo from that user account." >&2
-        exit 1
-    fi
     PODMAN_USER_NAME="$(id -un)"
+fi
+if [ "$(id -u)" -eq 0 ] && [ "${PODMAN_USER_NAME}" = "root" ]; then
+    echo "[ERROR] Could not determine the target user. Run this script as the target user, or invoke it with sudo from that user account." >&2
+    exit 1
 fi
 PODMAN_USER_ID="$(id -u "${PODMAN_USER_NAME}")"
 PODMAN_RUNTIME_DIR="/run/user/${PODMAN_USER_ID}"
