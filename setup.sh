@@ -268,6 +268,15 @@ print_info "nginx configured successfully"
 # Step 11: Configure Podman socket group access so OpenCloud can manage images and containers
 print_info "Configuring Podman socket group access..."
 
+if command -v podman &> /dev/null; then
+    print_info "podman is already installed"
+else
+    print_info "podman not found. Installing podman..."
+    sudo apt-get update -qq
+    sudo apt-get install -y podman
+    print_info "podman installed successfully"
+fi
+
 sudo groupadd -f podman
 sudo usermod -aG podman "$USER"
 print_info "Added $USER to the 'podman' group"
