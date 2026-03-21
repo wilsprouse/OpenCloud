@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	buildahDefine "github.com/containers/buildah/define"
 	"github.com/containers/podman/v5/pkg/bindings"
@@ -23,7 +24,7 @@ func main() {
 		cli.StringFlag{
 			Name:  "podman-socket",
 			Usage: "Podman API socket",
-			Value: "unix:///run/podman/podman.sock",
+			Value: "unix:/run/user/" + strconv.Itoa(os.Getuid()) + "/podman/podman.sock",
 		},
 		cli.StringFlag{
 			Name:  "file, f",

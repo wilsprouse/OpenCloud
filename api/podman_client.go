@@ -65,18 +65,22 @@ func podmanSocketCandidates() []string {
 	}
 
 	if xdgRuntimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); xdgRuntimeDir != "" {
-		add("unix://" + filepath.Join(xdgRuntimeDir, "podman", "podman.sock"))
+		add(podmanSocketURI(filepath.Join(xdgRuntimeDir, "podman", "podman.sock")))
 	}
 
-	add("unix:///run/user/" + strconv.Itoa(os.Getuid()) + "/podman/podman.sock")
+	add(podmanSocketURI(filepath.Join("/run/user", strconv.Itoa(os.Getuid()), "podman", "podman.sock")))
 	// Root can also manage the shared system Podman service at
 	// /run/podman/podman.sock. Non-root callers stay on their rootless store
 	// unless they explicitly override CONTAINER_HOST.
 	if os.Geteuid() == 0 {
-		add("unix://" + rootfulPodmanSocketPath)
+		add(podmanSocketURI(rootfulPodmanSocketPath))
 	}
 
 	return candidates
+}
+
+func podmanSocketURI(socketPath string) string {
+	return "unix:" + socketPath
 }
 
 func podmanSocketPath(uri string) string {
