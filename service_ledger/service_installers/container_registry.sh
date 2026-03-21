@@ -32,6 +32,13 @@ print_error() { echo "[ERROR] $1" >&2; }
 
 check_podman_installed() { command -v podman &> /dev/null; }
 
+run_user_systemctl() {
+    sudo -u "${PODMAN_USER_NAME}" env \
+        XDG_RUNTIME_DIR="${PODMAN_RUNTIME_DIR}" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=${PODMAN_RUNTIME_DIR}/bus" \
+        systemctl --user "$@"
+}
+
 install_podman() {
     print_info "Updating package index..."
     sudo apt-get update
@@ -44,18 +51,9 @@ configure_podman_socket() {
     print_info "Configuring rootless Podman socket for ${PODMAN_USER_NAME}..."
     sudo loginctl enable-linger "${PODMAN_USER_NAME}"
     sudo systemctl start "user@${PODMAN_USER_ID}.service"
-    sudo -u "${PODMAN_USER_NAME}" env \
-        XDG_RUNTIME_DIR="${PODMAN_RUNTIME_DIR}" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=${PODMAN_RUNTIME_DIR}/bus" \
-        systemctl --user daemon-reload
-    sudo -u "${PODMAN_USER_NAME}" env \
-        XDG_RUNTIME_DIR="${PODMAN_RUNTIME_DIR}" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=${PODMAN_RUNTIME_DIR}/bus" \
-        systemctl --user enable "${PODMAN_SERVICE_NAME}"
-    sudo -u "${PODMAN_USER_NAME}" env \
-        XDG_RUNTIME_DIR="${PODMAN_RUNTIME_DIR}" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=${PODMAN_RUNTIME_DIR}/bus" \
-        systemctl --user start "${PODMAN_SERVICE_NAME}"
+    run_user_systemctl daemon-reload
+    run_user_systemctl enable "${PODMAN_SERVICE_NAME}"
+    run_user_systemctl start "${PODMAN_SERVICE_NAME}"
     sleep 2
     print_success "Rootless Podman socket running and enabled"
 }
