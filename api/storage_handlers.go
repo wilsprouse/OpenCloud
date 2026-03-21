@@ -462,41 +462,57 @@ func marshalFilesForLedger(files map[string]string, legacyContext string) string
 	return legacyContext
 }
 
+func rootlessPodmanSocket() (string, error) {
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+		return "unix://" + filepath.Join(xdg, "podman", "podman.sock"), nil
+	}
+
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+
+	return "unix://" + filepath.Join("/run/user", u.Uid, "podman", "podman.sock"), nil
+}
+
 func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	fmt.Println("Welcome to the Podman Go bindings tutorial")
+	socket, err := rootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to determine rootless podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-    // Get Podman socket location
-    sock_dir := os.Getenv("XDG_RUNTIME_DIR")
-    socket := "unix:" + sock_dir + "/podman/podman.sock"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 
-    // Connect to Podman socket
-    connText, err := bindings.NewConnection(context.Background(), socket)
-    if err != nil {
-            fmt.Println(err)
-            os.Exit(1)
-    }
-	
-	// Pull Busybox image (Sample 1)
-    fmt.Println("Pulling Busybox image...")
-    _, err = images.Pull(connText, "docker.io/busybox", entities.ImagePullOptions{})
-    if err != nil {
-            fmt.Println(err)
-            os.Exit(1)
-    }
+	conn, err := bindings.NewConnection(ctx, socket)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to connect to podman socket %q: %v", socket, err), http.StatusServiceUnavailable)
+		return
+	}
 
-    // Pull Fedora image (Sample 2)
-    rawImage := "registry.fedoraproject.org/fedora:latest"
-    fmt.Println("Pulling Fedora image...")
-    _, err = images.Pull(connText, rawImage, entities.ImagePullOptions{})
-    if err != nil {
-            fmt.Println(err)
-            os.Exit(1)
-    }
+	// Hardcoded Docker Hub image.
+	const imageRef = "docker.io/library/busybox:latest"
+
+	// Pull the image into the local Podman image store.
+	_, err = images.Pull(conn, imageRef, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to pull image %q: %v", imageRef, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status": "success",
+		"action": "pull",
+		"image":  imageRef,
+		"socket": socket,
+	})
 
 }
 
