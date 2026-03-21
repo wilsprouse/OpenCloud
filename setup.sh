@@ -9,7 +9,7 @@
 # - Internet connection
 #
 # Optional Environment Variables:
-# - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/<install-user>/OpenCloud)
+# - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/the-target-user/OpenCloud)
 
 set -e  # Exit on any error
 
@@ -48,7 +48,7 @@ if [ -z "$TARGET_USER" ]; then
     TARGET_USER="$(id -un)"
 fi
 if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" = "root" ]; then
-    print_error "Could not determine the target user. Run this script as the target user, or invoke it with sudo from that user account."
+    print_error "Could not determine the target user. Run this script as the intended non-root application user, or invoke it with sudo from that user account."
     exit 1
 fi
 TARGET_USER_ID="$(id -u "$TARGET_USER")"

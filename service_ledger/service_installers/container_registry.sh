@@ -22,7 +22,7 @@ if [ -z "${PODMAN_USER_NAME}" ]; then
     PODMAN_USER_NAME="$(id -un)"
 fi
 if [ "$(id -u)" -eq 0 ] && [ "${PODMAN_USER_NAME}" = "root" ]; then
-    echo "[ERROR] Could not determine the target user. Run this script as the target user, or invoke it with sudo from that user account." >&2
+    echo "[ERROR] Could not determine the target user. Run this script as the intended non-root application user, or invoke it with sudo from that user account." >&2
     exit 1
 fi
 PODMAN_USER_ID="$(id -u "${PODMAN_USER_NAME}")"
