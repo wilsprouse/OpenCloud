@@ -51,11 +51,18 @@ type Container struct {
 
 // GetContainerRegistry lists all container images available through Podman.
 func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-
-	conn, err := podmanConnection(ctx)
+	socket, err := rootlessPodmanSocket()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	conn, err := bindings.NewConnection(ctx, socket)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
 		return
 	}
 
