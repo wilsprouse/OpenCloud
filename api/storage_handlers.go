@@ -497,8 +497,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	fmt.Println("Juice3")
-	conn, err := bindings.NewConnection(ctx, socket)
+	fmt.Println(socket)
+	conn, err := bindings.NewConnection(ctx, "unix:///run/user/1000/podman/podman.sock")
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, fmt.Sprintf("failed to connect to podman socket %q: %v", socket, err), http.StatusServiceUnavailable)
