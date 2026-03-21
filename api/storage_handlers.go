@@ -462,8 +462,46 @@ func marshalFilesForLedger(files map[string]string, legacyContext string) string
 	return legacyContext
 }
 
-// BuildImage handles building a container image using the Podman API.
 func BuildImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	fmt.Println("Welcome to the Podman Go bindings tutorial")
+
+    // Get Podman socket location
+    sock_dir := os.Getenv("XDG_RUNTIME_DIR")
+    socket := "unix:" + sock_dir + "/podman/podman.sock"
+
+    // Connect to Podman socket
+    connText, err := bindings.NewConnection(context.Background(), socket)
+    if err != nil {
+            fmt.Println(err)
+            os.Exit(1)
+    }
+	
+	// Pull Busybox image (Sample 1)
+    fmt.Println("Pulling Busybox image...")
+    _, err = images.Pull(connText, "docker.io/busybox", entities.ImagePullOptions{})
+    if err != nil {
+            fmt.Println(err)
+            os.Exit(1)
+    }
+
+    // Pull Fedora image (Sample 2)
+    rawImage := "registry.fedoraproject.org/fedora:latest"
+    fmt.Println("Pulling Fedora image...")
+    _, err = images.Pull(connText, rawImage, entities.ImagePullOptions{})
+    if err != nil {
+            fmt.Println(err)
+            os.Exit(1)
+    }
+
+}
+
+// BuildImage handles building a container image using the Podman API.
+func BuildImage2(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
