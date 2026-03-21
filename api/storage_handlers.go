@@ -467,7 +467,8 @@ func marshalFilesForLedger(files map[string]string, legacyContext string) string
 func rootlessPodmanSocket() (string, error) {
 	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
 		fmt.Println("Actually we are here")
-		return "unix://" + filepath.Join(xdg, "podman", "podman.sock"), nil
+		return "unix://" + filepath.Join("/run/user", "1000", "podman", "podman.sock"), nil
+		//return "unix://" + filepath.Join(xdg, "podman", "podman.sock"), nil
 	}
 
 	/*u, err := user.Current()
