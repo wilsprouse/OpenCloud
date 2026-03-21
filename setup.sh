@@ -265,8 +265,8 @@ fi
 
 print_info "nginx configured successfully"
 
-# Step 11: Configure Podman socket group access so OpenCloud can manage images and containers
-print_info "Configuring Podman socket group access..."
+# Step 11: Configure a rootless Podman socket so OpenCloud uses the app user's image store
+print_info "Configuring rootless Podman socket access..."
 
 if command -v podman &> /dev/null; then
     print_info "podman is already installed"
@@ -277,28 +277,23 @@ else
     print_info "podman installed successfully"
 fi
 
-sudo groupadd -f podman
-sudo usermod -aG podman "$USER"
-print_info "Added $USER to the 'podman' group"
+PODMAN_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u "$USER")}"
+export XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${PODMAN_RUNTIME_DIR}/bus}"
 
-sudo mkdir -p /etc/systemd/system/podman.socket.d
-cat <<'DROPIN' | sudo tee /etc/systemd/system/podman.socket.d/opencloud-group.conf > /dev/null
-[Socket]
-SocketGroup=podman
-SocketMode=0660
-DROPIN
+sudo loginctl enable-linger "$USER"
+sudo systemctl start "user@$(id -u "$USER").service"
+systemctl --user daemon-reload
+systemctl --user enable podman.socket
+systemctl --user start podman.socket
 
-sudo systemctl daemon-reload
-sudo systemctl enable podman.socket
-sudo systemctl start podman.socket
-
-if [ -S /run/podman/podman.sock ]; then
-    print_info "Podman socket permissions applied"
+if [ -S "${PODMAN_RUNTIME_DIR}/podman/podman.sock" ]; then
+    print_info "Rootless Podman socket is available at ${PODMAN_RUNTIME_DIR}/podman/podman.sock"
 else
-    print_warning "Podman socket is not available yet — it will be created by podman.socket"
+    print_warning "Rootless Podman socket is not available yet — it will be created by the user podman.socket service"
 fi
 
-print_info "Podman socket group access configured"
+print_info "Rootless Podman socket access configured"
 
 # Step 12: Start the services
 print_info "Starting OpenCloud services..."

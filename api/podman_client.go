@@ -46,6 +46,10 @@ func hasPodmanSocket() bool {
 }
 
 func podmanSocketCandidates() []string {
+	if containerHost := strings.TrimSpace(os.Getenv("CONTAINER_HOST")); containerHost != "" {
+		return []string{containerHost}
+	}
+
 	candidates := make([]string, 0, 4)
 	seen := make(map[string]struct{})
 
@@ -60,14 +64,14 @@ func podmanSocketCandidates() []string {
 		candidates = append(candidates, uri)
 	}
 
-	add(strings.TrimSpace(os.Getenv("CONTAINER_HOST")))
-
 	if xdgRuntimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); xdgRuntimeDir != "" {
 		add("unix://" + filepath.Join(xdgRuntimeDir, "podman", "podman.sock"))
 	}
 
 	add("unix:///run/user/" + strconv.Itoa(os.Getuid()) + "/podman/podman.sock")
-	add("unix://" + podmanSocket)
+	if os.Geteuid() == 0 {
+		add("unix://" + podmanSocket)
+	}
 
 	return candidates
 }
