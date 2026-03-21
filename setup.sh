@@ -277,12 +277,12 @@ else
     print_info "podman installed successfully"
 fi
 
-PODMAN_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u "$USER")}"
+PODMAN_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${PODMAN_RUNTIME_DIR}/bus}"
 
 sudo loginctl enable-linger "$USER"
-sudo systemctl start "user@$(id -u "$USER").service"
+sudo systemctl start "user@$(id -u).service"
 systemctl --user daemon-reload
 systemctl --user enable podman.socket
 systemctl --user start podman.socket
