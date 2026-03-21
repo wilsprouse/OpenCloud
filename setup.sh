@@ -9,7 +9,7 @@
 # - Internet connection
 #
 # Optional Environment Variables:
-# - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/$USER/OpenCloud)
+# - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/<install-user>/OpenCloud)
 
 set -e  # Exit on any error
 
@@ -35,6 +35,12 @@ print_warning() {
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+TARGET_USER="${SUDO_USER:-$USER}"
+if [ -z "$TARGET_USER" ]; then
+    TARGET_USER="$(id -un)"
+fi
+TARGET_USER_ID="$(id -u "$TARGET_USER")"
 
 print_info "Starting OpenCloud setup..."
 
@@ -159,7 +165,7 @@ cd "$SCRIPT_DIR"
 # Step 7: Move Go binary to systemd service location
 print_info "Setting up Go backend binary..."
 # Determine installation directory - use /opt for system-wide install or user's home for user install
-INSTALL_DIR="${OPENCLOUD_INSTALL_DIR:-/home/$USER/OpenCloud}"
+INSTALL_DIR="${OPENCLOUD_INSTALL_DIR:-/home/$TARGET_USER/OpenCloud}"
 print_info "Installing to: $INSTALL_DIR"
 
 # Stop the service if it's running to avoid "Text file busy" error
@@ -184,8 +190,8 @@ print_info "Setting up systemd service for OpenCloud backend..."
 # Create a temporary service file with updated paths
 TEMP_SERVICE=$(mktemp)
 sed "s|/home/ubuntu/OpenCloud|$INSTALL_DIR|g" "${SCRIPT_DIR}/utils/opencloud.service" | \
-sed "s|User=ubuntu|User=$USER|g" | \
-sed "s|Group=ubuntu|Group=$USER|g" > "$TEMP_SERVICE"
+sed "s|User=ubuntu|User=$TARGET_USER|g" | \
+sed "s|Group=ubuntu|Group=$TARGET_USER|g" > "$TEMP_SERVICE"
 
 sudo cp "$TEMP_SERVICE" /etc/systemd/system/opencloud.service
 rm "$TEMP_SERVICE"
@@ -220,8 +226,8 @@ fi
 # Create a temporary service file with updated paths for frontend
 TEMP_UI_SERVICE=$(mktemp)
 sed "s|/home/ubuntu/OpenCloud|$INSTALL_DIR|g" "${SCRIPT_DIR}/utils/opencloud-ui.service" | \
-sed "s|User=ubuntu|User=$USER|g" | \
-sed "s|Group=ubuntu|Group=$USER|g" > "$TEMP_UI_SERVICE"
+sed "s|User=ubuntu|User=$TARGET_USER|g" | \
+sed "s|Group=ubuntu|Group=$TARGET_USER|g" > "$TEMP_UI_SERVICE"
 
 sudo cp "$TEMP_UI_SERVICE" /etc/systemd/system/opencloud-ui.service
 rm "$TEMP_UI_SERVICE"
@@ -277,12 +283,12 @@ else
     print_info "podman installed successfully"
 fi
 
-PODMAN_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+PODMAN_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${TARGET_USER_ID}}"
 export XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${PODMAN_RUNTIME_DIR}/bus}"
 
-sudo loginctl enable-linger "$USER"
-sudo systemctl start "user@$(id -u).service"
+sudo loginctl enable-linger "$TARGET_USER"
+sudo systemctl start "user@${TARGET_USER_ID}.service"
 systemctl --user daemon-reload
 systemctl --user enable podman.socket
 systemctl --user start podman.socket

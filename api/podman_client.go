@@ -69,9 +69,9 @@ func podmanSocketCandidates() []string {
 	}
 
 	add("unix:///run/user/" + strconv.Itoa(os.Getuid()) + "/podman/podman.sock")
+	// Root can also manage the shared system Podman service. Non-root callers stay
+	// on their rootless store unless they explicitly override CONTAINER_HOST.
 	if os.Geteuid() == 0 {
-		// Non-root callers should stay on their rootless Podman store unless they
-		// explicitly override CONTAINER_HOST with a rootful socket URI.
 		add("unix://" + podmanSocket)
 	}
 
