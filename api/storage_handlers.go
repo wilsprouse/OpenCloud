@@ -470,10 +470,10 @@ func rootlessPodmanSocket() (string, error) {
 		return "unix://" + filepath.Join(xdg, "podman", "podman.sock"), nil
 	}
 
-	u, err := user.Current()
+	/*u, err := user.Current()
 	if err != nil {
 		return "", err
-	}
+	}*/
 
 	return "unix://" + filepath.Join("/run/user", "1000", "podman", "podman.sock"), nil
 	//return "unix://" + filepath.Join("/run/user", u.Uid, "podman", "podman.sock"), nil
