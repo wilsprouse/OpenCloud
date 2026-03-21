@@ -479,7 +479,7 @@ func rootlessPodmanSocket() (string, error) {
 	//return "unix://" + filepath.Join("/run/user", u.Uid, "podman", "podman.sock"), nil
 }
 
-func BuildImage(w http.ResponseWriter, r *http.Request) {
+func BuildImage2(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Juice0")
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -507,7 +507,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Juice4")
 
 	// Hardcoded Docker Hub image.
-	const imageRef = "busybox:latest"
+	const imageRef = "docker.io/library/busybox:latest"
 
 	// Pull the image into the local Podman image store.
 	_, err = images.Pull(conn, imageRef, nil)
@@ -528,7 +528,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 }
 
 // BuildImage handles building a container image using the Podman API.
-func BuildImage2(w http.ResponseWriter, r *http.Request) {
+func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -553,19 +553,16 @@ func BuildImage2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate that the Dockerfile contains a FROM instruction
 	if !hasFromInstruction(req.Dockerfile) {
 		http.Error(w, "dockerfile must contain a FROM instruction", http.StatusBadRequest)
 		return
 	}
 
-	// Validate that the image name is safe and properly formatted
 	if errMsg := validateImageName(req.ImageName); errMsg != "" {
 		http.Error(w, errMsg, http.StatusBadRequest)
 		return
 	}
 
-	// Create temp directory for build
 	tmpDir, err := os.MkdirTemp("", "opencloud-build-*")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create temp dir: %v", err), http.StatusInternalServerError)
@@ -573,19 +570,9 @@ func BuildImage2(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Write Dockerfile exactly as provided
 	dfPath := filepath.Join(tmpDir, "Dockerfile")
 	if err := os.WriteFile(dfPath, []byte(req.Dockerfile), 0644); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if !hasPodmanSocket() {
-		http.Error(
-			w,
-			"Podman is not available. Start or enable the container registry service and try again.",
-			http.StatusServiceUnavailable,
-		)
 		return
 	}
 
@@ -619,12 +606,18 @@ func BuildImage2(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	socket, err := rootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
 
-	conn, err := podmanConnection(ctx)
+	conn, err := bindings.NewConnection(ctx, socket)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusServiceUnavailable)
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusServiceUnavailable)
 		return
 	}
 
@@ -651,7 +644,7 @@ func BuildImage2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := images.Build(conn, []string{"Dockerfile"}, buildOpts); err != nil {
-		log.Printf("BuildImage failed for %s: %v", req.ImageName, err)
+		log.Printf("BuildImage2 failed for %s: %v", req.ImageName, err)
 		http.Error(
 			w,
 			fmt.Sprintf("Build failed: %v\n\n%s", err, truncateString(buildLogs.String(), 32000)),
@@ -660,7 +653,6 @@ func BuildImage2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Record the built image in the service ledger so it can be rebuilt if needed
 	if ledgerErr := service_ledger.UpdateContainerImageEntry(
 		req.ImageName,
 		req.Dockerfile,
@@ -676,11 +668,12 @@ func BuildImage2(w http.ResponseWriter, r *http.Request) {
 		"status":    "success",
 		"message":   fmt.Sprintf("Image %s built successfully", req.ImageName),
 		"imageName": req.ImageName,
+		"socket":    socket,
 		"logs":      truncateString(buildLogs.String(), 32000),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // DownloadObject downloads a file from blob storage
