@@ -498,6 +498,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Juice3")
 	conn, err := bindings.NewConnection(ctx, socket)
 	if err != nil {
+		fmt.Println(err)
 		http.Error(w, fmt.Sprintf("failed to connect to podman socket %q: %v", socket, err), http.StatusServiceUnavailable)
 		return
 	}
