@@ -11,7 +11,7 @@ import (
 	"github.com/containers/podman/v5/pkg/bindings"
 )
 
-const podmanSocket = "/run/podman/podman.sock"
+const rootfulPodmanSocketPath = "/run/podman/podman.sock"
 
 func podmanConnection(ctx context.Context) (context.Context, error) {
 	var errs []string
@@ -73,7 +73,7 @@ func podmanSocketCandidates() []string {
 	// /run/podman/podman.sock. Non-root callers stay on their rootless store
 	// unless they explicitly override CONTAINER_HOST.
 	if os.Geteuid() == 0 {
-		add("unix://" + podmanSocket)
+		add("unix://" + rootfulPodmanSocketPath)
 	}
 
 	return candidates

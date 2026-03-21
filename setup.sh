@@ -45,7 +45,7 @@ cd "$SCRIPT_DIR"
 
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 if [ "$TARGET_USER" = "root" ]; then
-    print_error "Could not determine the target user. Run this script as the intended non-root application user, or invoke it with sudo from that user account."
+    print_error "Could not determine the target user. Run this script from the intended non-root application user account and let it use sudo internally."
     exit 1
 fi
 TARGET_USER_ID="$(id -u "$TARGET_USER")"

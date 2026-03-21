@@ -19,7 +19,7 @@ readonly PODMAN_PACKAGE_NAME="podman"
 readonly PODMAN_SERVICE_NAME="podman.socket"
 PODMAN_USER_NAME="${SUDO_USER:-$(id -un)}"
 if [ "${PODMAN_USER_NAME}" = "root" ]; then
-    echo "[ERROR] Could not determine the target user. Run this script as the intended non-root application user, or invoke it with sudo from that user account." >&2
+    echo "[ERROR] Could not determine the target user. Run this script from the intended non-root application user account and let it use sudo internally." >&2
     exit 1
 fi
 PODMAN_USER_ID="$(id -u "${PODMAN_USER_NAME}")"
