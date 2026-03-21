@@ -5,7 +5,7 @@ build:
 	go build -tags "$(GO_BUILD_TAGS)" -o bin/opencloud
 
 run: build
-	./bin/app
+	./bin/opencloud
 
 test:
 	go test -tags "$(GO_BUILD_TAGS)" -v ./... -count=1
