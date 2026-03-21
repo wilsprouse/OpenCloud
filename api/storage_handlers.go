@@ -507,7 +507,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Juice4")
 
 	// Hardcoded Docker Hub image.
-	const imageRef = "docker.io/library/busybox:latest"
+	const imageRef = "busybox:latest"
 
 	// Pull the image into the local Podman image store.
 	_, err = images.Pull(conn, imageRef, nil)
