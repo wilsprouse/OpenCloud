@@ -19,9 +19,26 @@ import (
 	"github.com/containers/podman/v5/pkg/specgen"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	nettypes "go.podman.io/common/libnetwork/types"
+	"github.com/containers/podman/v5/pkg/bindings"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
+
+func rootlessPodmanSocket() (string, error) {
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+		fmt.Println("Actually we are here")
+		return "unix://" + filepath.Join("/run/user", "1000", "podman", "podman.sock"), nil
+		//return "unix://" + filepath.Join(xdg, "podman", "podman.sock"), nil
+	}
+
+	/*u, err := user.Current()
+	if err != nil {
+		return "", err
+	}*/
+
+	return "unix://" + filepath.Join("/run/user", "1000", "podman", "podman.sock"), nil
+	//return "unix://" + filepath.Join("/run/user", u.Uid, "podman", "podman.sock"), nil
+}
 
 type FunctionItem struct {
 	ID           string    `json:"id"`
@@ -317,11 +334,16 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer r.Body.Close()
+
 	var req PullAndRunRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
+
+	req.Image = strings.TrimSpace(req.Image)
+	req.Name = strings.TrimSpace(req.Name)
 
 	if req.Image == "" {
 		http.Error(w, "image is required", http.StatusBadRequest)
@@ -371,12 +393,18 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	socket, err := rootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
 
-	conn, err := podmanConnection(ctx)
+	conn, err := bindings.NewConnection(ctx, socket)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
 		return
 	}
 
@@ -457,10 +485,11 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":      "success",
 		"message":     fmt.Sprintf("Container started from image %s", imageRef),
 		"containerId": createResponse.ID,
+		"socket":      socket,
 	})
 }
 
