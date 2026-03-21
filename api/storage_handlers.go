@@ -326,20 +326,32 @@ func DeleteImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer r.Body.Close()
+
 	var req DeleteImageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
 
+	req.ImageName = strings.TrimSpace(req.ImageName)
 	if req.ImageName == "" {
 		http.Error(w, "imageName is required", http.StatusBadRequest)
 		return
 	}
 
-	conn, err := podmanConnection(context.Background())
+	socket, err := rootlessPodmanSocket()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	conn, err := bindings.NewConnection(ctx, socket)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
 		return
 	}
 
@@ -349,9 +361,10 @@ func DeleteImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":    "deleted",
 		"imageName": req.ImageName,
+		"socket":    socket,
 	})
 }
 
