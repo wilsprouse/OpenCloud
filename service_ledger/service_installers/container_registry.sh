@@ -18,7 +18,7 @@ set -o pipefail
 readonly PODMAN_PACKAGE_NAME="podman"
 readonly PODMAN_SERVICE_NAME="podman.socket"
 PODMAN_USER_NAME="${SUDO_USER:-$(id -un)}"
-if [ "$(id -u)" -eq 0 ] && [ "${PODMAN_USER_NAME}" = "root" ]; then
+if [ "${PODMAN_USER_NAME}" = "root" ]; then
     echo "[ERROR] Could not determine the target user. Run this script as the intended non-root application user, or invoke it with sudo from that user account." >&2
     exit 1
 fi
@@ -53,8 +53,14 @@ install_podman() {
 
 configure_podman_socket() {
     print_info "Configuring rootless Podman socket for ${PODMAN_USER_NAME}..."
-    sudo loginctl enable-linger "${PODMAN_USER_NAME}"
-    sudo systemctl start "user@${PODMAN_USER_ID}.service"
+    if ! sudo loginctl enable-linger "${PODMAN_USER_NAME}"; then
+        print_error "Failed to enable lingering for ${PODMAN_USER_NAME}"
+        exit 1
+    fi
+    if ! sudo systemctl start "user@${PODMAN_USER_ID}.service"; then
+        print_error "Failed to start the systemd user manager for ${PODMAN_USER_NAME}"
+        exit 1
+    fi
     run_user_systemctl daemon-reload
     run_user_systemctl enable "${PODMAN_SERVICE_NAME}"
     run_user_systemctl start "${PODMAN_SERVICE_NAME}"

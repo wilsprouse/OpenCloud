@@ -44,7 +44,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 TARGET_USER="${SUDO_USER:-$(id -un)}"
-if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" = "root" ]; then
+if [ "$TARGET_USER" = "root" ]; then
     print_error "Could not determine the target user. Run this script as the intended non-root application user, or invoke it with sudo from that user account."
     exit 1
 fi
@@ -295,8 +295,14 @@ PODMAN_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${TARGET_USER_ID}}"
 export XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${PODMAN_RUNTIME_DIR}/bus}"
 
-sudo loginctl enable-linger "$TARGET_USER"
-sudo systemctl start "user@${TARGET_USER_ID}.service"
+if ! sudo loginctl enable-linger "$TARGET_USER"; then
+    print_error "Failed to enable lingering for $TARGET_USER"
+    exit 1
+fi
+if ! sudo systemctl start "user@${TARGET_USER_ID}.service"; then
+    print_error "Failed to start the systemd user manager for $TARGET_USER"
+    exit 1
+fi
 run_target_user_systemctl daemon-reload
 run_target_user_systemctl enable podman.socket
 run_target_user_systemctl start podman.socket
