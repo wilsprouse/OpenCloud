@@ -475,7 +475,7 @@ func rootlessPodmanSocket() (string, error) {
 		return "", err
 	}
 
-	return "unix://" + filepath.Join("/run/user", 1000, "podman", "podman.sock"), nil
+	return "unix://" + filepath.Join("/run/user", "1000", "podman", "podman.sock"), nil
 	//return "unix://" + filepath.Join("/run/user", u.Uid, "podman", "podman.sock"), nil
 }
 
