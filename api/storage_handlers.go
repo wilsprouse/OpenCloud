@@ -478,25 +478,30 @@ func rootlessPodmanSocket() (string, error) {
 }
 
 func BuildImage(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Juice0")
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	fmt.Println("Juice1")
 	socket, err := rootlessPodmanSocket()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to determine rootless podman socket: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("Juice2")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	fmt.Println("Juice3")
 	conn, err := bindings.NewConnection(ctx, socket)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to connect to podman socket %q: %v", socket, err), http.StatusServiceUnavailable)
 		return
 	}
+	fmt.Println("Juice4")
 
 	// Hardcoded Docker Hub image.
 	const imageRef = "docker.io/library/busybox:latest"
@@ -507,6 +512,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("failed to pull image %q: %v", imageRef, err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("Juice5")
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
