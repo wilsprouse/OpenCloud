@@ -43,10 +43,7 @@ run_target_user_systemctl() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-TARGET_USER="${SUDO_USER:-$USER}"
-if [ -z "$TARGET_USER" ]; then
-    TARGET_USER="$(id -un)"
-fi
+TARGET_USER="${SUDO_USER:-$(id -un)}"
 if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" = "root" ]; then
     print_error "Could not determine the target user. Run this script as the intended non-root application user, or invoke it with sudo from that user account."
     exit 1
