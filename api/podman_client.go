@@ -70,6 +70,8 @@ func podmanSocketCandidates() []string {
 
 	add("unix:///run/user/" + strconv.Itoa(os.Getuid()) + "/podman/podman.sock")
 	if os.Geteuid() == 0 {
+		// Non-root callers should stay on their rootless Podman store unless they
+		// explicitly override CONTAINER_HOST with a rootful socket URI.
 		add("unix://" + podmanSocket)
 	}
 

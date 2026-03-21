@@ -17,10 +17,13 @@ set -o pipefail
 
 readonly PODMAN_PACKAGE_NAME="podman"
 readonly PODMAN_SERVICE_NAME="podman.socket"
-readonly PODMAN_USER_NAME="${SUDO_USER:-$(id -un)}"
-readonly PODMAN_USER_ID="$(id -u "${PODMAN_USER_NAME}")"
-readonly PODMAN_RUNTIME_DIR="/run/user/${PODMAN_USER_ID}"
-readonly PODMAN_SOCKET_PATH="${PODMAN_RUNTIME_DIR}/podman/podman.sock"
+PODMAN_USER_NAME="${SUDO_USER:-}"
+if [ -z "${PODMAN_USER_NAME}" ]; then
+    PODMAN_USER_NAME="$(id -un)"
+fi
+PODMAN_USER_ID="$(id -u "${PODMAN_USER_NAME}")"
+PODMAN_RUNTIME_DIR="/run/user/${PODMAN_USER_ID}"
+PODMAN_SOCKET_PATH="${PODMAN_RUNTIME_DIR}/podman/podman.sock"
 
 ################################################################################
 # Helper Functions
