@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -347,11 +348,12 @@ func DeleteImage(w http.ResponseWriter, r *http.Request) {
 
 // BuildImageRequest represents the JSON payload for building a container image
 type BuildImageRequest struct {
-	Dockerfile string `json:"dockerfile"`
-	ImageName  string `json:"imageName"`
-	Context    string `json:"context"` // optional
-	NoCache    bool   `json:"nocache"`
-	Platform   string `json:"platform"` // optional
+	Dockerfile string            `json:"dockerfile"`
+	ImageName  string            `json:"imageName"`
+	Context    string            `json:"context"` // legacy optional text context
+	Files      map[string]string `json:"files"`   // optional build context files: path -> contents
+	NoCache    bool              `json:"nocache"`
+	Platform   string            `json:"platform"` // optional
 }
 
 // normalizeImageRef adds docker.io registry prefix if no registry is specified
@@ -422,6 +424,44 @@ func parsePlatform(platform string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
+func sanitizeRelativePath(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", fmt.Errorf("path is empty")
+	}
+
+	clean := filepath.Clean(p)
+
+	if clean == "." {
+		return "", fmt.Errorf("path resolves to current directory")
+	}
+	if filepath.IsAbs(clean) {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path traversal is not allowed")
+	}
+
+	return clean, nil
+}
+
+func truncateString(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "\n...truncated..."
+}
+
+func marshalFilesForLedger(files map[string]string, legacyContext string) string {
+	if len(files) > 0 {
+		b, err := json.Marshal(files)
+		if err == nil {
+			return string(b)
+		}
+	}
+	return legacyContext
+}
+
 // BuildImage handles building a container image using the Podman API.
 func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -429,11 +469,20 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer r.Body.Close()
+
 	var req BuildImageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+	dec := json.NewDecoder(io.LimitReader(r.Body, 10<<20))
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid JSON payload: %v", err), http.StatusBadRequest)
 		return
 	}
+
+	req.Dockerfile = strings.TrimSpace(req.Dockerfile)
+	req.ImageName = strings.TrimSpace(req.ImageName)
+
 	if req.Dockerfile == "" || req.ImageName == "" {
 		http.Error(w, "dockerfile and imageName are required", http.StatusBadRequest)
 		return
@@ -475,12 +524,32 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional: write context if provided
-	// (Assumes raw text or tar extraction logic if needed)
-	if req.Context != "" {
+	// Backward compatibility: if legacy context is provided and no files map exists,
+	// write it as context.txt so older callers still behave the same way.
+	if req.Context != "" && len(req.Files) == 0 {
 		ctxPath := filepath.Join(tmpDir, "context.txt")
 		if err := os.WriteFile(ctxPath, []byte(req.Context), 0644); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to write context: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Preferred: write real build context files.
+	for relPath, content := range req.Files {
+		cleanRel, err := sanitizeRelativePath(relPath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid file path %q: %v", relPath, err), http.StatusBadRequest)
+			return
+		}
+
+		fullPath := filepath.Join(tmpDir, cleanRel)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to create directory for %q: %v", relPath, err), http.StatusInternalServerError)
+			return
+		}
+
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write %q: %v", relPath, err), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -494,13 +563,15 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var buildLogs bytes.Buffer
+
 	buildOpts := podmanEntities.BuildOptions{
 		BuildOptions: buildahDefine.BuildOptions{
 			ContextDirectory: tmpDir,
 			Output:           req.ImageName,
 			NoCache:          req.NoCache,
 			CommonBuildOpts:  &buildahDefine.CommonBuildOptions{},
-			ReportWriter:     io.Discard,
+			ReportWriter:     &buildLogs,
 		},
 	}
 
@@ -514,11 +585,11 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		buildOpts.Architecture = arch
 	}
 
-	if _, err := images.Build(conn, []string{dfPath}, buildOpts); err != nil {
+	if _, err := images.Build(conn, []string{"Dockerfile"}, buildOpts); err != nil {
 		log.Printf("BuildImage failed for %s: %v", req.ImageName, err)
 		http.Error(
 			w,
-			fmt.Sprintf("Build failed: %v", err),
+			fmt.Sprintf("Build failed: %v\n\n%s", err, truncateString(buildLogs.String(), 32000)),
 			http.StatusInternalServerError,
 		)
 		return
@@ -528,7 +599,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if ledgerErr := service_ledger.UpdateContainerImageEntry(
 		req.ImageName,
 		req.Dockerfile,
-		req.Context,
+		marshalFilesForLedger(req.Files, req.Context),
 		req.Platform,
 		req.NoCache,
 		time.Now().UTC().Format(time.RFC3339),
@@ -540,11 +611,11 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		"status":    "success",
 		"message":   fmt.Sprintf("Image %s built successfully", req.ImageName),
 		"imageName": req.ImageName,
+		"logs":      truncateString(buildLogs.String(), 32000),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-
 }
 
 // DownloadObject downloads a file from blob storage
