@@ -2,7 +2,7 @@ GO_BUILD_TAGS=remote containers_image_openpgp exclude_graphdriver_btrfs
 
 build:
 	mkdir -p bin
-	go build -tags "$(GO_BUILD_TAGS)" -o bin/app
+	go build -tags "$(GO_BUILD_TAGS)" -o bin/opencloud
 
 run: build
 	./bin/app

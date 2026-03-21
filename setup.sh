@@ -182,10 +182,11 @@ if sudo systemctl is-active --quiet opencloud.service; then
     sudo systemctl stop opencloud.service
 fi
 
+#TODO: wtf is this
 # Create the target directory structure and copy binary
 sudo mkdir -p "$INSTALL_DIR/bin"
-if [ "${SCRIPT_DIR}/bin/app" != "$INSTALL_DIR/bin/opencloud" ]; then
-    sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
+if [ "${SCRIPT_DIR}/bin/opencloud" != "$INSTALL_DIR/bin/opencloud" ]; then
+    sudo cp "${SCRIPT_DIR}/bin/opencloud" "$INSTALL_DIR/bin/opencloud"
     sudo chmod +x "$INSTALL_DIR/bin/opencloud"
     print_info "Go binary copied to $INSTALL_DIR/bin/opencloud"
 else
