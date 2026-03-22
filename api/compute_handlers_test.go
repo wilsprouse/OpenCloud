@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,6 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	podmanTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v5/pkg/bindings/containers"
 )
 
 // Helper function to save and restore crontab state for tests
@@ -613,6 +617,85 @@ func TestGetContainersHandler(t *testing.T) {
 		if trimmed == "null" {
 			t.Error("Response body must be a JSON array, not null, when no containers are present")
 		}
+	}
+}
+
+func TestGetContainersIncludesStoppedContainers(t *testing.T) {
+	origConnection := getContainersConnection
+	origList := listPodmanContainers
+	t.Cleanup(func() {
+		getContainersConnection = origConnection
+		listPodmanContainers = origList
+	})
+
+	getContainersConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	listPodmanContainers = func(ctx context.Context, opts *containers.ListOptions) ([]podmanTypes.ListContainer, error) {
+		if opts == nil || !opts.GetAll() {
+			t.Fatalf("expected GetContainers to list all containers")
+		}
+		if !opts.GetSync() {
+			t.Fatalf("expected GetContainers to synchronize container state before listing")
+		}
+
+		now := time.Now()
+		return []podmanTypes.ListContainer{
+			{
+				ID:      "container-running-1234567890",
+				Names:   []string{"/running"},
+				Image:   "nginx:latest",
+				State:   "running",
+				Status:  "Up 5 minutes",
+				Created: now,
+				Pid:     os.Getpid(),
+			},
+			{
+				ID:      "container-exited-0987654321",
+				Names:   []string{"/exited"},
+				Image:   "busybox:latest",
+				State:   "exited",
+				Status:  "Exited (0) 2 minutes ago",
+				Created: now.Add(-time.Minute),
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-containers", nil)
+	w := httptest.NewRecorder()
+
+	GetContainers(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var got []ContainerInfo
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 containers, got %d", len(got))
+	}
+
+	if got[0].State != "running" {
+		t.Fatalf("expected first container to be running, got %q", got[0].State)
+	}
+	if got[0].MemoryUsageBytes <= 0 {
+		t.Fatalf("expected running container to include memory usage, got %d", got[0].MemoryUsageBytes)
+	}
+
+	if got[1].State != "exited" {
+		t.Fatalf("expected second container to be exited, got %q", got[1].State)
+	}
+	if got[1].Status != "Exited (0) 2 minutes ago" {
+		t.Fatalf("expected exited container status to be preserved, got %q", got[1].Status)
+	}
+	if got[1].MemoryUsageBytes != 0 {
+		t.Fatalf("expected exited container memory usage to remain 0, got %d", got[1].MemoryUsageBytes)
 	}
 }
 
