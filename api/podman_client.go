@@ -31,6 +31,15 @@ func podmanConnection(ctx context.Context) (context.Context, error) {
 	return nil, fmt.Errorf("failed to connect to Podman: %s", strings.Join(errs, "; "))
 }
 
+func rootlessPodmanConnection(ctx context.Context) (context.Context, error) {
+	socket, err := rootlessPodmanSocket()
+	if err != nil {
+		return nil, err
+	}
+
+	return bindings.NewConnection(ctx, socket)
+}
+
 func hasPodmanSocket() bool {
 	for _, uri := range podmanSocketCandidates() {
 		socketPath := podmanSocketPath(uri)

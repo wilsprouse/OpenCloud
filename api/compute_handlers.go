@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	getContainersConnection = podmanConnection
+	getContainersConnection = rootlessPodmanConnection
 	listPodmanContainers    = containers.List
 )
 
