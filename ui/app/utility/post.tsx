@@ -1,7 +1,7 @@
 import axios from "axios"
 
 const client = axios.create({
-  baseURL: process.env.REACT_APP_BACKEND || "/api",
+  baseURL: "/api",
   headers: {
     "Content-Type": "application/json",
   },
@@ -58,4 +58,3 @@ client.interceptors.response.use(null, async (error) => {
 })
 
 export default client
-

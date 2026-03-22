@@ -139,7 +139,6 @@ type DeleteContainerRequest struct {
 // DeleteContainer force-removes a Podman container by ID. It accepts POST
 // requests with a JSON body containing the containerId to delete.
 func DeleteContainer(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("in here")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -147,7 +146,6 @@ func DeleteContainer(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 
-	fmt.Println("juice0")
 	var req DeleteContainerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
@@ -159,13 +157,11 @@ func DeleteContainer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "containerId is required", http.StatusBadRequest)
 		return
 	}
-	fmt.Println("juice1")
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	conn, err := deleteContainerConnection(ctx)
-	fmt.Println("juice2")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
 		return
@@ -175,7 +171,6 @@ func DeleteContainer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to delete container: %v", err), http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("juice3")
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
