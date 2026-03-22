@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from "react"
-import axios from "axios"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -87,6 +86,8 @@ export default function ContainersPage() {
   const [containers, setContainers] = useState<ContainerItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [containerToDelete, setContainerToDelete] = useState<ContainerItem | null>(null)
 
   // Available images fetched from the Container Registry for the dropdown
   const [availableImages, setAvailableImages] = useState<AvailableImage[]>([])
@@ -137,16 +138,32 @@ export default function ContainersPage() {
   }, [])
 
   // Manage container actions
-  const handleAction = async (id: string, action: "start" | "stop" | "remove") => {
+  const handleAction = async (id: string, action: "start" | "stop") => {
     try {
-      if (action === "remove") {
-        await axios.delete(`/api/containers/${id}`)
-      } else {
-        await axios.post(`/api/containers/${id}/${action}`)
-      }
+      await client.post(`/containers/${id}/${action}`)
       fetchContainers() // refresh list
     } catch (err) {
       console.error(`Failed to ${action} container:`, err)
+    }
+  }
+
+  const openDeleteDialog = (container: ContainerItem) => {
+    setContainerToDelete(container)
+    setIsDeleteDialogOpen(true)
+  }
+
+  const handleDeleteContainer = async () => {
+    if (!containerToDelete) return
+
+    try {
+      console.log("before delete")
+      await client.post("/delete-container", { containerId: containerToDelete.Id })
+      console.log("after delete")
+      await fetchContainers()
+      setIsDeleteDialogOpen(false)
+      setContainerToDelete(null)
+    } catch (err) {
+      console.error("Failed to delete container:", err)
     }
   }
 
@@ -380,7 +397,7 @@ export default function ContainersPage() {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={() => handleAction(c.Id, "remove")}
+                        onClick={() => openDeleteDialog(c)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -704,6 +721,29 @@ export default function ContainersPage() {
           </Card>
         </div>
       </div>
+
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Container</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete{" "}
+              <span className="font-medium">
+                {containerToDelete?.Names?.[0]?.replace(/^\//, "") || "this container"}
+              </span>
+              ? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteContainer}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardShell>
   )
 }

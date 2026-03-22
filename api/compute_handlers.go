@@ -25,8 +25,10 @@ import (
 )
 
 var (
-	getContainersConnection = rootlessPodmanConnection
-	listPodmanContainers    = containers.List
+	getContainersConnection   = rootlessPodmanConnection
+	listPodmanContainers      = containers.List
+	deleteContainerConnection = rootlessPodmanConnection
+	removePodmanContainer     = containers.Remove
 )
 
 type FunctionItem struct {
@@ -127,6 +129,55 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+// DeleteContainerRequest represents the JSON payload for deleting a container.
+type DeleteContainerRequest struct {
+	ContainerID string `json:"containerId"`
+}
+
+// DeleteContainer force-removes a Podman container by ID. It accepts POST
+// requests with a JSON body containing the containerId to delete.
+func DeleteContainer(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("in here")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	defer r.Body.Close()
+
+	var req DeleteContainerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	req.ContainerID = strings.TrimSpace(req.ContainerID)
+	if req.ContainerID == "" {
+		http.Error(w, "containerId is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	conn, err := deleteContainerConnection(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := removePodmanContainer(conn, req.ContainerID, new(containers.RemoveOptions).WithForce(true)); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":      "deleted",
+		"containerId": req.ContainerID,
+	})
 }
 
 // containerMemoryUsageBytes reads the resident set size (RSS) of the process

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/containers/podman/v5/pkg/bindings/containers"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
 	podmanTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
@@ -697,6 +699,117 @@ func TestGetContainersIncludesStoppedContainers(t *testing.T) {
 	}
 	if got[1].MemoryUsageBytes != 0 {
 		t.Fatalf("expected exited container memory usage to remain 0, got %d", got[1].MemoryUsageBytes)
+	}
+}
+
+func TestDeleteContainerInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/delete-container", nil)
+	w := httptest.NewRecorder()
+
+	DeleteContainer(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestDeleteContainerInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/delete-container", strings.NewReader("{invalid json}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	DeleteContainer(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestDeleteContainerMissingContainerID(t *testing.T) {
+	body, _ := json.Marshal(DeleteContainerRequest{ContainerID: ""})
+	req := httptest.NewRequest(http.MethodPost, "/delete-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	DeleteContainer(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestDeleteContainerRemovesContainerViaPodman(t *testing.T) {
+	origConnection := deleteContainerConnection
+	origRemove := removePodmanContainer
+	t.Cleanup(func() {
+		deleteContainerConnection = origConnection
+		removePodmanContainer = origRemove
+	})
+
+	deleteContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	removeCalled := false
+	removePodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		removeCalled = true
+		if nameOrID != "container-123" {
+			t.Fatalf("expected container ID container-123, got %q", nameOrID)
+		}
+		if opts == nil || !opts.GetForce() {
+			t.Fatalf("expected DeleteContainer to force removal")
+		}
+		return nil, nil
+	}
+
+	body, _ := json.Marshal(DeleteContainerRequest{ContainerID: "container-123"})
+	req := httptest.NewRequest(http.MethodPost, "/delete-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	DeleteContainer(w, req)
+
+	if !removeCalled {
+		t.Fatal("expected Podman remove to be called")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["status"] != "deleted" || resp["containerId"] != "container-123" {
+		t.Fatalf("unexpected response body: %#v", resp)
+	}
+}
+
+func TestDeleteContainerRemoveFailure(t *testing.T) {
+	origConnection := deleteContainerConnection
+	origRemove := removePodmanContainer
+	t.Cleanup(func() {
+		deleteContainerConnection = origConnection
+		removePodmanContainer = origRemove
+	})
+
+	deleteContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	removePodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		return nil, errors.New("remove failed")
+	}
+
+	body, _ := json.Marshal(DeleteContainerRequest{ContainerID: "container-123"})
+	req := httptest.NewRequest(http.MethodPost, "/delete-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	DeleteContainer(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
 	}
 }
 

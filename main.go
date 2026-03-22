@@ -2,26 +2,26 @@ package main
 
 import (
 	"fmt"
+	"github.com/WavexSoftware/OpenCloud/api"
+	"github.com/WavexSoftware/OpenCloud/service_ledger"
+	"github.com/WavexSoftware/OpenCloud/utils"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"github.com/WavexSoftware/OpenCloud/api"
-	"github.com/WavexSoftware/OpenCloud/service_ledger"
-	"github.com/WavexSoftware/OpenCloud/utils"
 )
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Get the origin from the request
 		origin := r.Header.Get("Origin")
-		
+
 		// Browsers only send the Origin header for cross-origin requests.
 		// When nginx serves both the frontend and proxies API requests on the same host:port,
 		// browsers treat these as same-origin requests and don't include the Origin header.
 		// Therefore, requests without an Origin header are from nginx (production) or same-origin.
-		
+
 		if origin == "" {
 			// Same-origin request (from nginx proxy in production)
 			// No CORS headers needed - browser already allows same-origin requests
@@ -30,16 +30,16 @@ func withCORS(next http.Handler) http.Handler {
 			// We allow requests from the same host on ports 80 (nginx), 3000 (direct frontend), or 443 (https)
 			// This prevents arbitrary external sites from making requests while allowing
 			// legitimate access from the frontend served by this server
-			
+
 			allowed := isAllowedOrigin(origin, r.Host)
-			
+
 			if allowed {
 				// Allow the request with CORS headers
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-				
+
 				// Handle preflight request
 				if r.Method == http.MethodOptions {
 					w.WriteHeader(http.StatusNoContent)
@@ -64,27 +64,27 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 	if err != nil {
 		return false
 	}
-	
+
 	// Extract host from origin (without port)
 	originHost := originURL.Hostname()
-	
+
 	// Extract host from request using standard library (handles IPv6 correctly)
 	requestHostname, _, err := net.SplitHostPort(requestHost)
 	if err != nil {
 		// If there's no port, use the whole string as hostname
 		requestHostname = requestHost
 	}
-	
+
 	// Verify the origin is from the same host or is trusted
 	// This ensures only requests from frontends served by this server are allowed
-	
+
 	// Extract host from request to check if it's localhost
 	isRequestLocalhost := isLocalhost(requestHostname)
-	
+
 	// IMPORTANT: If the request comes TO localhost, trust it
 	// This handles Next.js rewrites where the frontend at http://IP:3000 rewrites
 	// API requests to http://localhost:3030, causing Origin != Host mismatch
-	// 
+	//
 	// Security: This is safe because:
 	// 1. The backend ONLY listens on localhost:3030 (not on external interfaces)
 	// 2. Only local processes (nginx, Next.js) can reach localhost:3030
@@ -102,7 +102,7 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 		// Hostname mismatch and not to localhost - reject
 		return false
 	}
-	
+
 	// Get the port from origin (defaults to 80 for http, 443 for https)
 	port := originURL.Port()
 	if port == "" {
@@ -112,7 +112,7 @@ func isAllowedOrigin(origin string, requestHost string) bool {
 			port = "80"
 		}
 	}
-	
+
 	// Allow specific ports where the frontend is accessible:
 	// - 80: nginx reverse proxy (production)
 	//       Note: If using HTTPS, configure nginx to redirect HTTP to HTTPS
@@ -175,6 +175,7 @@ func main() {
 	mux.HandleFunc("/get-pipeline-logs/", api.GetPipelineLogs)
 	mux.HandleFunc("/build-image", api.BuildImage)
 	mux.HandleFunc("/delete-image", api.DeleteImage)
+	mux.HandleFunc("/delete-container", api.DeleteContainer)
 	mux.HandleFunc("/pull-and-run", api.PullAndRun)
 	mux.HandleFunc("/", api.GetFunction)
 
