@@ -327,6 +327,13 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Printf("PullAndRun raw request from frontend: %+v\n", req)
+	fmt.Printf("PullAndRun frontend image=%q name=%q command=%q restartPolicy=%q autoRemove=%v\n",
+		req.Image, req.Name, req.Command, req.RestartPolicy, req.AutoRemove)
+	fmt.Printf("PullAndRun frontend ports=%v\n", req.Ports)
+	fmt.Printf("PullAndRun frontend env=%v\n", req.Env)
+	fmt.Printf("PullAndRun frontend volumes=%v\n", req.Volumes)
+
 	req.Image = strings.TrimSpace(req.Image)
 	req.Name = strings.TrimSpace(req.Name)
 
@@ -351,6 +358,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	// Validate port mappings.
 	for _, port := range req.Ports {
+		fmt.Printf("Validating port mapping from frontend: %q\n", port)
 		if errMsg := validatePortMapping(port); errMsg != "" {
 			http.Error(w, errMsg, http.StatusBadRequest)
 			return
@@ -359,6 +367,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	// Validate volume mounts for path traversal.
 	for _, vol := range req.Volumes {
+		fmt.Printf("Validating volume mount from frontend: %q\n", vol)
 		if errMsg := validateVolumeMount(vol); errMsg != "" {
 			http.Error(w, errMsg, http.StatusBadRequest)
 			return
@@ -383,6 +392,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("PullAndRun using Podman socket: %s\n", socket)
 
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
@@ -392,31 +402,37 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("PullAndRun connected to Podman successfully")
 
 	imageRef, err := ensurePodmanImage(conn, req.Image)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to resolve image %q: %v", req.Image, err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("PullAndRun resolved imageRef: %q\n", imageRef)
 
 	// Build the unique container ID from the requested name (or a timestamp fallback).
 	containerID := req.Name
 	if containerID == "" {
 		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
 	}
+	fmt.Printf("PullAndRun containerID: %q\n", containerID)
 
 	var mounts []specs.Mount
 	for _, vol := range req.Volumes {
 		parts := strings.SplitN(vol, ":", 2)
 		if len(parts) != 2 {
+			fmt.Printf("Skipping malformed volume mount: %q\n", vol)
 			continue
 		}
-		mounts = append(mounts, specs.Mount{
+		mount := specs.Mount{
 			Type:        "bind",
 			Source:      parts[0],
 			Destination: parts[1],
 			Options:     []string{"rbind", "rw"},
-		})
+		}
+		fmt.Printf("Parsed volume mount: %+v\n", mount)
+		mounts = append(mounts, mount)
 	}
 
 	var portMappings []nettypes.PortMapping
@@ -426,8 +442,12 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		fmt.Printf("Parsed port mapping from %q -> %+v\n", mapping, portMapping)
 		portMappings = append(portMappings, portMapping)
 	}
+
+	envMap := envListToMap(req.Env)
+	fmt.Printf("Parsed env map: %+v\n", envMap)
 
 	labels := map[string]string{
 		"opencloud/name": containerID,
@@ -441,12 +461,13 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if len(req.Ports) > 0 {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
+	fmt.Printf("Container labels: %+v\n", labels)
 
 	spec := specgen.NewSpecGenerator(imageRef, false)
 	spec.Name = containerID
 	spec.Labels = labels
 	spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
-	spec.Env = envListToMap(req.Env)
+	spec.Env = envMap
 	spec.Mounts = mounts
 	spec.PortMappings = portMappings
 	spec.RestartPolicy = req.RestartPolicy
@@ -457,17 +478,30 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		spec.Command = strings.Fields(req.Command)
 	}
 
+	fmt.Printf("Final spec.Name: %q\n", spec.Name)
+	fmt.Printf("Final spec.Image: %q\n", imageRef)
+	fmt.Printf("Final spec.NetNS: %+v\n", spec.NetNS)
+	fmt.Printf("Final spec.Env: %+v\n", spec.Env)
+	fmt.Printf("Final spec.Mounts: %+v\n", spec.Mounts)
+	fmt.Printf("Final spec.PortMappings: %+v\n", spec.PortMappings)
+	fmt.Printf("Final spec.RestartPolicy: %q\n", spec.RestartPolicy)
+	fmt.Printf("Final spec.Remove: %+v\n", spec.Remove)
+	fmt.Printf("Final spec.Command: %+v\n", spec.Command)
+	fmt.Printf("Final spec.Entrypoint: %+v\n", spec.Entrypoint)
+
 	createResponse, err := containers.CreateWithSpec(conn, spec, nil)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create container: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("Container created successfully: ID=%s\n", createResponse.ID)
 
 	if err := containers.Start(conn, createResponse.ID, nil); err != nil {
 		_, _ = containers.Remove(conn, createResponse.ID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true))
 		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("Container started successfully: ID=%s\n", createResponse.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
