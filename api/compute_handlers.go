@@ -1,25 +1,29 @@
 package api
 
 import (
-	"net/http"
+	"bytes"
 	"context"
 	"encoding/json"
-	"time"
-	"os"
-	"io"
-	"os/exec"
-	"bytes"
 	"fmt"
-	"strings"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/cio"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/oci"
-	"github.com/containerd/containerd/remotes/docker"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/containers/podman/v5/pkg/bindings/containers"
+	"github.com/containers/podman/v5/pkg/bindings/images"
+	"github.com/containers/podman/v5/pkg/specgen"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
+	nettypes "go.podman.io/common/libnetwork/types"
+	"github.com/containers/podman/v5/pkg/bindings"
+
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
+
 
 type FunctionItem struct {
 	ID           string    `json:"id"`
@@ -63,25 +67,17 @@ func detectRuntime(filename string) string {
 	}
 }
 
-// GetContainers lists all containers (running and stopped) from the containerd
-// container store and returns their state along with common runtime metrics such
-// as memory usage and the host PID of the main container process.
+// GetContainers lists all containers from Podman and returns their state along
+// with common runtime metrics such as memory usage and the host PID of the main
+// container process.
 func GetContainers(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-
-	// Use the "buildkit" namespace where OpenCloud containers reside.
-	ctx = namespaces.WithNamespace(ctx, "buildkit")
-
-	// Connect to the containerd socket.
-	cli, err := containerd.New(containerdSocket)
+	conn, err := podmanConnection(context.Background())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer cli.Close()
 
-	// List all containers from the container store (not the image store).
-	containers, err := cli.Containers(ctx)
+	containerList, err := containers.List(conn, new(containers.ListOptions).WithAll(true))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list containers: %v", err), http.StatusInternalServerError)
 		return
@@ -89,40 +85,30 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
 
 	// Initialize to an empty slice so JSON encodes as [] rather than null
 	// when no containers are present.
-	result := make([]ContainerInfo, 0)
-	for _, c := range containers {
-		info, err := c.Info(ctx)
-		if err != nil {
-			continue
+	result := make([]ContainerInfo, 0, len(containerList))
+	for _, ctr := range containerList {
+		names := append([]string(nil), ctr.Names...)
+		if len(names) == 0 {
+			names = []string{ctr.ID}
 		}
 
-		// Use the "nerdctl/name" label as the container name when available,
-		// otherwise fall back to the container ID.
-		name := c.ID()
-		if n, ok := info.Labels["nerdctl/name"]; ok {
-			name = n
+		pid := uint32(0)
+		if ctr.Pid > 0 {
+			pid = uint32(ctr.Pid)
 		}
 
 		ci := ContainerInfo{
-			ID:      c.ID(),
-			Names:   []string{name},
-			Image:   info.Image,
-			State:   "stopped",
-			Status:  "stopped",
-			Created: info.CreatedAt.Unix(),
-			Labels:  info.Labels,
+			ID:      ctr.ID,
+			Names:   names,
+			Image:   ctr.Image,
+			State:   ctr.State,
+			Status:  ctr.Status,
+			Created: ctr.Created.Unix(),
+			Labels:  ctr.Labels,
+			PID:     pid,
 		}
 
-		// Attempt to load the running task (process) for this container.
-		// If the task exists the container is running; otherwise it is stopped.
-		task, terr := c.Task(ctx, nil)
-		if terr == nil {
-			if status, serr := task.Status(ctx); serr == nil {
-				ci.State = string(status.Status)
-				ci.PID = task.Pid()
-				ci.Status = fmt.Sprintf("%s (pid: %d)", status.Status, task.Pid())
-			}
-			// Read the resident set size of the container's main process.
+		if ci.PID > 0 {
 			ci.MemoryUsageBytes = containerMemoryUsageBytes(ci.PID)
 		}
 
@@ -239,57 +225,117 @@ func validateVolumeMount(mount string) string {
 	return ""
 }
 
-// resolveLocalImage returns the Image from the local containerd store, trying
-// the exact ref first, then the normalised docker.io/library/… form. If neither
-// is found locally, it falls back to pulling from the registry.
-func resolveLocalImage(ctx context.Context, cli *containerd.Client, ref string) (containerd.Image, error) {
-	// 1. Exact ref as supplied by the user.
-	if img, err := cli.GetImage(ctx, ref); err == nil {
-		return img, nil
+func ensurePodmanImage(ctx context.Context, ref string) (string, error) {
+	if exists, err := images.Exists(ctx, ref, nil); err == nil && exists {
+		return ref, nil
 	}
 
-	// 2. Normalised ref (e.g. "nginx" → "docker.io/library/nginx:latest").
 	normalised := normalizeImageRef(ref)
 	if normalised != ref {
-		if img, err := cli.GetImage(ctx, normalised); err == nil {
-			return img, nil
+		if exists, err := images.Exists(ctx, normalised, nil); err == nil && exists {
+			return normalised, nil
 		}
 	}
 
-	// 3. Image not in the local store — pull from the registry.
-	// WithPullUnpack ensures layers are unpacked so the image is immediately
-	// usable for container creation.
-	pullRef := normalised
-	img, err := cli.Pull(ctx, pullRef,
-		containerd.WithResolver(docker.NewResolver(docker.ResolverOptions{})),
-		containerd.WithPullUnpack,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("image %q not found locally and could not be pulled: %w", ref, err)
+	pullRef := ref
+	if normalised != ref {
+		pullRef = normalised
 	}
-	return img, nil
+
+	if _, err := images.Pull(ctx, pullRef, new(images.PullOptions).WithPolicy("missing").WithQuiet(true)); err != nil {
+		return "", fmt.Errorf("image %q not found locally and could not be pulled: %w", ref, err)
+	}
+
+	return pullRef, nil
 }
 
-// PullAndRun pulls the specified container image and starts a new container using
-// the containerd client directly in the "buildkit" namespace (the same namespace
-// read by GetContainers). It accepts POST requests with a JSON body matching
+func envListToMap(env []string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+
+	result := make(map[string]string, len(env))
+	for _, item := range env {
+		key, value, found := strings.Cut(item, "=")
+		if !found {
+			result[item] = ""
+			continue
+		}
+		result[key] = value
+	}
+
+	return result
+}
+
+func parsePortMapping(mapping string) (nettypes.PortMapping, error) {
+	protocol := "tcp"
+	portSpec := mapping
+	if before, after, found := strings.Cut(mapping, "/"); found {
+		portSpec = before
+		if after != "" {
+			protocol = after
+		}
+	}
+
+	parts := strings.Split(portSpec, ":")
+	if len(parts) != 2 && len(parts) != 3 {
+		return nettypes.PortMapping{}, fmt.Errorf("invalid port mapping %q: expected hostPort:containerPort or hostIP:hostPort:containerPort", mapping)
+	}
+
+	hostIP := ""
+	hostPortPart := parts[0]
+	containerPortPart := parts[1]
+	if len(parts) == 3 {
+		hostIP = parts[0]
+		hostPortPart = parts[1]
+		containerPortPart = parts[2]
+	}
+
+	hostPort, err := strconv.ParseUint(hostPortPart, 10, 16)
+	if err != nil || hostPort == 0 {
+		return nettypes.PortMapping{}, fmt.Errorf("invalid port mapping %q: host port must be a valid port number", mapping)
+	}
+
+	containerPort, err := strconv.ParseUint(containerPortPart, 10, 16)
+	if err != nil || containerPort == 0 {
+		return nettypes.PortMapping{}, fmt.Errorf("invalid port mapping %q: container port must be a valid port number", mapping)
+	}
+
+	return nettypes.PortMapping{
+		HostIP:        hostIP,
+		HostPort:      uint16(hostPort),
+		ContainerPort: uint16(containerPort),
+		Range:         1,
+		Protocol:      protocol,
+	}, nil
+}
+
+// PullAndRun pulls the specified container image and starts a new container
+// through Podman. It accepts POST requests with a JSON body matching
 // PullAndRunRequest and returns the new container ID on success.
-//
-// Note: port mappings and restart policies are managed at the container orchestration
-// layer (e.g. CNI/systemd) and are not part of the core containerd API. Those fields
-// in PullAndRunRequest are accepted for forward-compatibility but are stored as
-// container labels only and are not enforced at runtime by this handler.
 func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	defer r.Body.Close()
+
 	var req PullAndRunRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
+
+	fmt.Printf("PullAndRun raw request from frontend: %+v\n", req)
+	fmt.Printf("PullAndRun frontend image=%q name=%q command=%q restartPolicy=%q autoRemove=%v\n",
+		req.Image, req.Name, req.Command, req.RestartPolicy, req.AutoRemove)
+	fmt.Printf("PullAndRun frontend ports=%v\n", req.Ports)
+	fmt.Printf("PullAndRun frontend env=%v\n", req.Env)
+	fmt.Printf("PullAndRun frontend volumes=%v\n", req.Volumes)
+
+	req.Image = strings.TrimSpace(req.Image)
+	req.Name = strings.TrimSpace(req.Name)
 
 	if req.Image == "" {
 		http.Error(w, "image is required", http.StatusBadRequest)
@@ -312,6 +358,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	// Validate port mappings.
 	for _, port := range req.Ports {
+		fmt.Printf("Validating port mapping from frontend: %q\n", port)
 		if errMsg := validatePortMapping(port); errMsg != "" {
 			http.Error(w, errMsg, http.StatusBadRequest)
 			return
@@ -320,6 +367,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	// Validate volume mounts for path traversal.
 	for _, vol := range req.Volumes {
+		fmt.Printf("Validating volume mount from frontend: %q\n", vol)
 		if errMsg := validateVolumeMount(vol); errMsg != "" {
 			http.Error(w, errMsg, http.StatusBadRequest)
 			return
@@ -339,105 +387,70 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	socket, err := rootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+	fmt.Printf("PullAndRun using Podman socket: %s\n", socket)
+
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
 
-	// All OpenCloud containers live in the "buildkit" namespace so that
-	// GetContainers can list them.
-	ctx = namespaces.WithNamespace(ctx, "buildkit")
-
-	// Connect to the containerd socket.
-	cli, err := containerd.New(containerdSocket)
+	conn, err := bindings.NewConnection(ctx, socket)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to containerd: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
 		return
 	}
-	defer cli.Close()
+	fmt.Println("PullAndRun connected to Podman successfully")
 
-	// Resolve the image reference: prefer images already present in the local
-	// containerd store (visible via `ctr -n buildkit images ls`) before making
-	// any outbound network call. We try the exact ref first, then the
-	// normalised docker.io/library/… form, and only fall back to a registry
-	// pull when neither is found locally.
-	imageRef := req.Image
-	image, err := resolveLocalImage(ctx, cli, req.Image)
+	imageRef, err := ensurePodmanImage(conn, req.Image)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to resolve image %q: %v", req.Image, err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("PullAndRun resolved imageRef: %q\n", imageRef)
 
 	// Build the unique container ID from the requested name (or a timestamp fallback).
 	containerID := req.Name
 	if containerID == "" {
 		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
 	}
+	fmt.Printf("PullAndRun containerID: %q\n", containerID)
 
-	// Parse volume mounts ("hostPath:containerPath") into OCI mount entries.
 	var mounts []specs.Mount
 	for _, vol := range req.Volumes {
 		parts := strings.SplitN(vol, ":", 2)
 		if len(parts) != 2 {
+			fmt.Printf("Skipping malformed volume mount: %q\n", vol)
 			continue
 		}
-		mounts = append(mounts, specs.Mount{
+		mount := specs.Mount{
 			Type:        "bind",
 			Source:      parts[0],
 			Destination: parts[1],
 			Options:     []string{"rbind", "rw"},
-		})
+		}
+		fmt.Printf("Parsed volume mount: %+v\n", mount)
+		mounts = append(mounts, mount)
 	}
 
-	// Read the image's OCI config directly from the content store.
-	// We deliberately avoid oci.WithImageConfig here: that helper resolves
-	// non-numeric User names by mounting the container snapshot under
-	// /tmp, which requires CAP_SYS_ADMIN. The OpenCloud API process does
-	// not hold that capability, so the mount fails with "operation not
-	// permitted". Reading the spec from the content store needs no mount.
-	imgSpec, err := image.Spec(ctx)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read image spec: %v", err), http.StatusInternalServerError)
-		return
+	var portMappings []nettypes.PortMapping
+	for _, mapping := range req.Ports {
+		portMapping, err := parsePortMapping(mapping)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		fmt.Printf("Parsed port mapping from %q -> %+v\n", mapping, portMapping)
+		portMappings = append(portMappings, portMapping)
 	}
 
-	// Determine the process arguments: request command overrides image
-	// defaults; otherwise use ENTRYPOINT+CMD from the image config.
-	processArgs := append(imgSpec.Config.Entrypoint, imgSpec.Config.Cmd...)
-	if req.Command != "" {
-		processArgs = strings.Fields(req.Command)
-	}
-	if len(processArgs) == 0 {
-		processArgs = []string{"/bin/sh"}
-	}
+	envMap := envListToMap(req.Env)
+	fmt.Printf("Parsed env map: %+v\n", envMap)
 
-	// Working directory from the image config, defaulting to root.
-	workDir := imgSpec.Config.WorkingDir
-	if workDir == "" {
-		workDir = "/"
-	}
-
-	// Environment: image defaults first so that request values take precedence.
-	containerEnv := imgSpec.Config.Env
-	if len(req.Env) > 0 {
-		containerEnv = append(containerEnv, req.Env...)
-	}
-
-	// Build OCI spec options. We use oci.WithEnv / WithProcessArgs / WithProcessCwd
-	// rather than oci.WithImageConfig so that no snapshot mount is needed.
-	specOpts := []oci.SpecOpts{
-		oci.WithEnv(containerEnv),
-		oci.WithProcessArgs(processArgs...),
-		oci.WithProcessCwd(workDir),
-	}
-
-	// Append bind-mount volumes.
-	if len(mounts) > 0 {
-		specOpts = append(specOpts, oci.WithMounts(mounts))
-	}
-
-	// Attach metadata labels to the container. The "nerdctl/name" label is the
-	// convention used by GetContainers to return a human-readable name.
 	labels := map[string]string{
-		"nerdctl/name": containerID,
+		"opencloud/name": containerID,
 	}
 	if req.RestartPolicy != "" {
 		labels["opencloud/restart-policy"] = req.RestartPolicy
@@ -448,44 +461,54 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if len(req.Ports) > 0 {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
+	fmt.Printf("Container labels: %+v\n", labels)
 
-	// Create the container record in the containerd metadata store.
-	ctr, err := cli.NewContainer(ctx,
-		containerID,
-		containerd.WithImage(image),
-		containerd.WithNewSnapshot(containerID+"-snapshot", image),
-		containerd.WithNewSpec(specOpts...),
-		containerd.WithContainerLabels(labels),
-	)
+	spec := specgen.NewSpecGenerator(imageRef, false)
+	spec.Name = containerID
+	spec.Labels = labels
+	spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
+	spec.Env = envMap
+	spec.Mounts = mounts
+	spec.PortMappings = portMappings
+	spec.RestartPolicy = req.RestartPolicy
+	spec.Remove = &req.AutoRemove
+
+	if req.Command != "" {
+		spec.Entrypoint = []string{}
+		spec.Command = strings.Fields(req.Command)
+	}
+
+	fmt.Printf("Final spec.Name: %q\n", spec.Name)
+	fmt.Printf("Final spec.Image: %q\n", imageRef)
+	fmt.Printf("Final spec.NetNS: %+v\n", spec.NetNS)
+	fmt.Printf("Final spec.Env: %+v\n", spec.Env)
+	fmt.Printf("Final spec.Mounts: %+v\n", spec.Mounts)
+	fmt.Printf("Final spec.PortMappings: %+v\n", spec.PortMappings)
+	fmt.Printf("Final spec.RestartPolicy: %q\n", spec.RestartPolicy)
+	fmt.Printf("Final spec.Remove: %+v\n", spec.Remove)
+	fmt.Printf("Final spec.Command: %+v\n", spec.Command)
+	fmt.Printf("Final spec.Entrypoint: %+v\n", spec.Entrypoint)
+
+	createResponse, err := containers.CreateWithSpec(conn, spec, nil)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create container: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("Container created successfully: ID=%s\n", createResponse.ID)
 
-	// Create a task (the running process) for the container, discarding I/O.
-	// Logs can be collected separately through the container runtime or a
-	// dedicated log driver.
-	task, err := ctr.NewTask(ctx, cio.NullIO)
-	if err != nil {
-		// Clean up the container record if task creation fails.
-		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
-		http.Error(w, fmt.Sprintf("Failed to create task: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Start the task (equivalent to unblocking the container's init process).
-	if err := task.Start(ctx); err != nil {
-		task.Delete(ctx)
-		ctr.Delete(ctx, containerd.WithSnapshotCleanup)
+	if err := containers.Start(conn, createResponse.ID, nil); err != nil {
+		_, _ = containers.Remove(conn, createResponse.ID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true))
 		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("Container started successfully: ID=%s\n", createResponse.ID)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":      "success",
 		"message":     fmt.Sprintf("Container started from image %s", imageRef),
-		"containerId": containerID,
+		"containerId": createResponse.ID,
+		"socket":      socket,
 	})
 }
 
@@ -642,7 +665,7 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("Warning: failed to write log file: %v\n", writeErr)
 		}
 	}
-	
+
 	fmt.Print(out.String() + stderr.String())
 
 	// Send JSON response
@@ -695,7 +718,7 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 
 	// Remove log files
 	logsDir := filepath.Join(home, ".opencloud", "logs")
-	
+
 	// Remove execution log file (~/.opencloud/logs/functions/{baseName}.log)
 	// Strip extension from function name to match how logs are created
 	baseName := strings.TrimSuffix(fnName, filepath.Ext(fnName))
@@ -773,7 +796,7 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"name":         fnName,
 		"path":         fnPath,
-		"Invocations":	0,
+		"Invocations":  0,
 		"runtime":      detectRuntime(fnName),
 		"lastModified": info.ModTime().Format(time.RFC3339),
 		"sizeBytes":    info.Size(),
@@ -826,9 +849,9 @@ func addCron(filePath string, schedule string) error {
 	//baseName := strings.TrimSuffix(fileName, logFile.Ext(fileName))
 	//fmt.Sprint("%s", baseName)
 
-	fileName := filepath.Base(filePath)                 // hello.py
+	fileName := filepath.Base(filePath)                              // hello.py
 	baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName)) // hello
-	logFile := filepath.Join(fnDir, baseName + ".log")  // hello.log
+	logFile := filepath.Join(fnDir, baseName+".log")                 // hello.log
 
 	newCronJob := fmt.Sprintf("%s %s %s >> %s 2>&1", schedule, detectRuntime(filePath), filePath, logFile)
 
@@ -1128,7 +1151,7 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		newBaseName := strings.TrimSuffix(newFileName, filepath.Ext(newFileName))
 		oldLogPath := filepath.Join(logsDir, oldBaseName+".log")
 		newLogPath := filepath.Join(logsDir, newBaseName+".log")
-		
+
 		if _, err := os.Stat(oldLogPath); err == nil {
 			if err := os.Rename(oldLogPath, newLogPath); err != nil {
 				fmt.Printf("Warning: Failed to rename log file: %v\n", err)
@@ -1215,47 +1238,47 @@ func GetFunctionLogs(w http.ResponseWriter, r *http.Request) {
 	// Each execution is wrapped with ===EXECUTION_START:<timestamp>|<status>=== and ===EXECUTION_END===
 	logText := string(logContent)
 	executions := []service_ledger.FunctionLog{}
-	
+
 	// Split by execution markers
 	parts := strings.Split(logText, "===EXECUTION_START:")
 	for _, part := range parts {
 		if part == "" {
 			continue
 		}
-		
+
 		// Find the end marker
 		endIdx := strings.Index(part, "===EXECUTION_END===")
 		if endIdx == -1 {
 			continue
 		}
-		
+
 		// Extract timestamp and status from header: <timestamp>|<status>===\n
 		headerEndMarker := "===\n"
 		timestampEndIdx := strings.Index(part, headerEndMarker)
 		if timestampEndIdx == -1 {
 			continue
 		}
-		
+
 		// Parse header: "timestamp|status"
 		header := strings.TrimSpace(part[:timestampEndIdx])
 		headerParts := strings.Split(header, "|")
 		if len(headerParts) < 2 {
 			continue
 		}
-		
+
 		timestamp := headerParts[0]
 		status := strings.ToLower(headerParts[1])
-		
+
 		// Extract output (everything between header and end marker)
-		output := part[timestampEndIdx+len(headerEndMarker):endIdx]
-		
+		output := part[timestampEndIdx+len(headerEndMarker) : endIdx]
+
 		executions = append(executions, service_ledger.FunctionLog{
 			Timestamp: timestamp,
 			Output:    output,
 			Status:    status,
 		})
 	}
-	
+
 	// Return only the last execution (most recent one)
 	var logs []service_ledger.FunctionLog
 	if len(executions) > 0 {

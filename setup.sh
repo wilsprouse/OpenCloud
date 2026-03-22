@@ -9,7 +9,7 @@
 # - Internet connection
 #
 # Optional Environment Variables:
-# - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/$USER/OpenCloud)
+# - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/the-target-user/OpenCloud)
 
 set -e  # Exit on any error
 
@@ -32,9 +32,23 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+run_target_user_systemctl() {
+    sudo -u "$TARGET_USER" env \
+        XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=${PODMAN_RUNTIME_DIR}/bus" \
+        systemctl --user "$@"
+}
+
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+TARGET_USER="${SUDO_USER:-$(id -un)}"
+if [ "$TARGET_USER" = "root" ]; then
+    print_error "Could not determine the target user. Run this script from the intended non-root application user account and let it use sudo internally."
+    exit 1
+fi
+TARGET_USER_ID="$(id -u "$TARGET_USER")"
 
 print_info "Starting OpenCloud setup..."
 
@@ -159,7 +173,7 @@ cd "$SCRIPT_DIR"
 # Step 7: Move Go binary to systemd service location
 print_info "Setting up Go backend binary..."
 # Determine installation directory - use /opt for system-wide install or user's home for user install
-INSTALL_DIR="${OPENCLOUD_INSTALL_DIR:-/home/$USER/OpenCloud}"
+INSTALL_DIR="${OPENCLOUD_INSTALL_DIR:-/home/$TARGET_USER/OpenCloud}"
 print_info "Installing to: $INSTALL_DIR"
 
 # Stop the service if it's running to avoid "Text file busy" error
@@ -168,10 +182,11 @@ if sudo systemctl is-active --quiet opencloud.service; then
     sudo systemctl stop opencloud.service
 fi
 
+#TODO: wtf is this
 # Create the target directory structure and copy binary
 sudo mkdir -p "$INSTALL_DIR/bin"
-if [ "${SCRIPT_DIR}/bin/app" != "$INSTALL_DIR/bin/opencloud" ]; then
-    sudo cp "${SCRIPT_DIR}/bin/app" "$INSTALL_DIR/bin/opencloud"
+if [ "${SCRIPT_DIR}/bin/opencloud" != "$INSTALL_DIR/bin/opencloud" ]; then
+    sudo cp "${SCRIPT_DIR}/bin/opencloud" "$INSTALL_DIR/bin/opencloud"
     sudo chmod +x "$INSTALL_DIR/bin/opencloud"
     print_info "Go binary copied to $INSTALL_DIR/bin/opencloud"
 else
@@ -184,8 +199,8 @@ print_info "Setting up systemd service for OpenCloud backend..."
 # Create a temporary service file with updated paths
 TEMP_SERVICE=$(mktemp)
 sed "s|/home/ubuntu/OpenCloud|$INSTALL_DIR|g" "${SCRIPT_DIR}/utils/opencloud.service" | \
-sed "s|User=ubuntu|User=$USER|g" | \
-sed "s|Group=ubuntu|Group=$USER|g" > "$TEMP_SERVICE"
+sed "s|User=ubuntu|User=$TARGET_USER|g" | \
+sed "s|Group=ubuntu|Group=$TARGET_USER|g" > "$TEMP_SERVICE"
 
 sudo cp "$TEMP_SERVICE" /etc/systemd/system/opencloud.service
 rm "$TEMP_SERVICE"
@@ -220,8 +235,8 @@ fi
 # Create a temporary service file with updated paths for frontend
 TEMP_UI_SERVICE=$(mktemp)
 sed "s|/home/ubuntu/OpenCloud|$INSTALL_DIR|g" "${SCRIPT_DIR}/utils/opencloud-ui.service" | \
-sed "s|User=ubuntu|User=$USER|g" | \
-sed "s|Group=ubuntu|Group=$USER|g" > "$TEMP_UI_SERVICE"
+sed "s|User=ubuntu|User=$TARGET_USER|g" | \
+sed "s|Group=ubuntu|Group=$TARGET_USER|g" > "$TEMP_UI_SERVICE"
 
 sudo cp "$TEMP_UI_SERVICE" /etc/systemd/system/opencloud-ui.service
 rm "$TEMP_UI_SERVICE"
@@ -265,41 +280,41 @@ fi
 
 print_info "nginx configured successfully"
 
-# Step 11: Configure containerd socket group access so OpenCloud can list built images
-# The 'containerd' group allows non-root users to access /run/containerd/containerd.sock.
-# This is the same pattern Docker uses with the 'docker' group.
-print_info "Configuring containerd socket group access..."
+# Step 11: Configure a rootless Podman socket so OpenCloud uses the app user's image store
+print_info "Configuring rootless Podman socket access..."
 
-# Create the containerd group if it doesn't exist
-sudo groupadd -f containerd
-
-# Add the OpenCloud service user to the containerd group
-sudo usermod -aG containerd "$USER"
-print_info "Added $USER to the 'containerd' group"
-
-# Create a containerd systemd drop-in so the socket gets proper group permissions
-# on every start — ensures the fix survives reboots.
-sudo mkdir -p /etc/systemd/system/containerd.service.d
-cat <<'DROPIN' | sudo tee /etc/systemd/system/containerd.service.d/opencloud-socket-group.conf > /dev/null
-[Service]
-# After the socket is created, set its group to 'containerd' and allow group r/w.
-# This lets the OpenCloud backend (running as a non-root user in the 'containerd' group)
-# connect to the containerd API without requiring root privileges.
-ExecStartPost=/bin/sh -c 'i=0; until [ -S /run/containerd/containerd.sock ] || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done; chown root:containerd /run/containerd/containerd.sock; chmod 660 /run/containerd/containerd.sock'
-DROPIN
-
-sudo systemctl daemon-reload
-
-# Apply socket permissions immediately if containerd is already running
-if sudo systemctl is-active --quiet containerd; then
-    sudo chown root:containerd /run/containerd/containerd.sock 2>/dev/null || true
-    sudo chmod 660 /run/containerd/containerd.sock 2>/dev/null || true
-    print_info "containerd socket permissions applied"
+if command -v podman &> /dev/null; then
+    print_info "podman is already installed"
 else
-    print_warning "containerd is not running — socket permissions will be applied on next containerd start"
+    print_info "podman not found. Installing podman..."
+    sudo apt-get update -qq
+    sudo apt-get install -y podman
+    print_info "podman installed successfully"
 fi
 
-print_info "containerd socket group access configured"
+PODMAN_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${TARGET_USER_ID}}"
+export XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${PODMAN_RUNTIME_DIR}/bus}"
+
+if ! sudo loginctl enable-linger "$TARGET_USER"; then
+    print_error "Failed to enable lingering for $TARGET_USER"
+    exit 1
+fi
+if ! sudo systemctl start "user@${TARGET_USER_ID}.service"; then
+    print_error "Failed to start the systemd user manager for $TARGET_USER"
+    exit 1
+fi
+run_target_user_systemctl daemon-reload
+run_target_user_systemctl enable podman.socket
+run_target_user_systemctl start podman.socket
+
+if [ -S "${PODMAN_RUNTIME_DIR}/podman/podman.sock" ]; then
+    print_info "Rootless Podman socket is available at ${PODMAN_RUNTIME_DIR}/podman/podman.sock"
+else
+    print_warning "Rootless Podman socket is not available yet — it will be created by the user podman.socket service"
+fi
+
+print_info "Rootless Podman socket access configured"
 
 # Step 12: Start the services
 print_info "Starting OpenCloud services..."
