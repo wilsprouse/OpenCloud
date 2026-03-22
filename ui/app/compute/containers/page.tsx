@@ -156,7 +156,9 @@ export default function ContainersPage() {
     if (!containerToDelete) return
 
     try {
+      console.log("before delete")
       await client.post("/delete-container", { containerId: containerToDelete.Id })
+      console.log("after delete")
       await fetchContainers()
       setIsDeleteDialogOpen(false)
       setContainerToDelete(null)
