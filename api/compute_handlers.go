@@ -14,16 +14,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containers/podman/v5/pkg/bindings"
 	"github.com/containers/podman/v5/pkg/bindings/containers"
 	"github.com/containers/podman/v5/pkg/bindings/images"
 	"github.com/containers/podman/v5/pkg/specgen"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	nettypes "go.podman.io/common/libnetwork/types"
-	"github.com/containers/podman/v5/pkg/bindings"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
+var (
+	getContainersConnection = rootlessPodmanConnection
+	listPodmanContainers    = containers.List
+)
 
 type FunctionItem struct {
 	ID           string    `json:"id"`
@@ -71,22 +75,16 @@ func detectRuntime(filename string) string {
 // with common runtime metrics such as memory usage and the host PID of the main
 // container process.
 func GetContainers(w http.ResponseWriter, r *http.Request) {
-	socket, err := rootlessPodmanSocket()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	conn, err := bindings.NewConnection(ctx, socket)
+	conn, err := getContainersConnection(ctx)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	containerList, err := containers.List(conn, new(containers.ListOptions).WithAll(true))
+	containerList, err := listPodmanContainers(conn, new(containers.ListOptions).WithAll(true).WithSync(true))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list containers: %v", err), http.StatusInternalServerError)
 		return
