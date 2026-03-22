@@ -139,6 +139,7 @@ type DeleteContainerRequest struct {
 // DeleteContainer force-removes a Podman container by ID. It accepts POST
 // requests with a JSON body containing the containerId to delete.
 func DeleteContainer(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("in here")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
