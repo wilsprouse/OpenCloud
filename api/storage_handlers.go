@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	//"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
