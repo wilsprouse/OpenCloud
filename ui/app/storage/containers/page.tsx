@@ -1,10 +1,8 @@
 'use client'
 
 import { useEffect, useState } from "react"
-import axios from "axios"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { DashboardHeader } from "@/components/dashboard-header"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { 
@@ -33,7 +31,6 @@ import {
   Download, 
   Upload, 
   Search,
-  Play,
   Square,
   Trash2,
   Copy,
@@ -126,16 +123,6 @@ export default function ContainerRegistry() {
       fetchImages()
     }
   }, [serviceEnabled])
-
-  // Manage container actions (start/stop only; deletion uses confirmation dialog)
-  const handleAction = async (id: string, action: "start" | "stop") => {
-    try {
-      await axios.post(`/api/containers/${id}/${action}`)
-      fetchImages() // refresh list
-    } catch (err) {
-      console.error(`Failed to ${action} container:`, err)
-    }
-  }
 
   // Open the delete confirmation dialog for the selected image
   const openDeleteDialog = (image: Image) => {
@@ -338,29 +325,19 @@ export default function ContainerRegistry() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {filteredImages.map((c) => {
-                  const isRunning = c.State === "running"
-                  return (
+                {filteredImages.map((c) => (
                     <div
                       key={c.Id}
                       className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
                     >
                       <div className="flex items-center space-x-4 flex-1">
-                        <div className={`p-2 rounded-lg ${isRunning ? 'bg-green-50' : 'bg-muted'}`}>
-                          <Container className={`h-5 w-5 ${isRunning ? 'text-green-600' : 'text-muted-foreground'}`} />
+                        <div className="p-2 rounded-lg bg-muted">
+                          <Container className="h-5 w-5 text-muted-foreground" />
                         </div>
                         <div className="space-y-1 flex-1 min-w-0">
-                          <div className="flex items-center space-x-2">
-                            <h4 className="font-medium truncate">
-                              {c.RepoTags?.[0]?.replace(/^\//, "") || "Unnamed"}
-                            </h4>
-                            <Badge 
-                              variant="outline" 
-                              className={isRunning ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}
-                            >
-                              {isRunning ? "Running" : "Stopped"}
-                            </Badge>
-                          </div>
+                          <h4 className="font-medium truncate">
+                            {c.RepoTags?.[0]?.replace(/^\//, "") || "Unnamed"}
+                          </h4>
                           <p className="text-sm text-muted-foreground truncate">{c.Image}</p>
                           <div className="flex items-center space-x-4 text-xs text-muted-foreground">
                             <span className="flex items-center">
@@ -386,26 +363,6 @@ export default function ContainerRegistry() {
                         >
                           <Copy className="h-4 w-4" />
                         </Button>
-                        {!isRunning && (
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => handleAction(c.Id, "start")}
-                          >
-                            <Play className="h-4 w-4 mr-1" />
-                            Start
-                          </Button>
-                        )}
-                        {isRunning && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleAction(c.Id, "stop")}
-                          >
-                            <Square className="h-4 w-4 mr-1" />
-                            Stop
-                          </Button>
-                        )}
                         <Button
                           variant="destructive"
                           size="sm"
@@ -415,8 +372,7 @@ export default function ContainerRegistry() {
                         </Button>
                       </div>
                     </div>
-                  )
-                })}
+                  ))}
                 {filteredImages.length === 0 && !loading && (
                   <div className="text-center py-12">
                     <Container className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
