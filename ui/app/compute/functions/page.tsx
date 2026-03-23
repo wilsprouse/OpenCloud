@@ -64,6 +64,8 @@ export default function FunctionsPage() {
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [isFunctionDialogOpen, setIsFunctionDialogOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [functionToDelete, setFunctionToDelete] = useState<FunctionItem | null>(null)
   
   // Service enabled state
   const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
@@ -159,10 +161,22 @@ export default function FunctionsPage() {
     }
   }
 
-  const handleDeleteFunction = async (id: string) => {
-    // TODO: Implement this in the backend
+  const openDeleteDialog = (fn: FunctionItem) => {
+    setFunctionToDelete(fn)
+    setIsDeleteDialogOpen(true)
+  }
+
+  const closeDeleteDialog = () => {
+    setFunctionToDelete(null)
+    setIsDeleteDialogOpen(false)
+  }
+
+  const handleDeleteFunction = async () => {
+    if (!functionToDelete) return
+
     try {
-      await client.delete(`/delete-function?name=${id}`)
+      await client.delete(`/delete-function?name=${functionToDelete.id}`)
+      closeDeleteDialog()
       fetchFunctions()
     } catch (err) {
       console.error("Failed to delete function:", err)
@@ -302,6 +316,35 @@ export default function FunctionsPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          <Dialog
+            open={isDeleteDialogOpen}
+            onOpenChange={(open) => {
+              if (!open) {
+                closeDeleteDialog()
+              }
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Delete Function</DialogTitle>
+                <DialogDescription>
+                  Are you sure you want to delete{" "}
+                  <span className="font-medium text-foreground">
+                    {functionToDelete?.name.replace(/\.[^/.]+$/, "") || "this function"}
+                  </span>
+                  ? This action cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={closeDeleteDialog}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={handleDeleteFunction}>
+                  Delete Function
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </DashboardHeader>
 
@@ -435,7 +478,7 @@ export default function FunctionsPage() {
                     size="sm"
                     onClick={(e) => {
                       e.stopPropagation()
-                      handleDeleteFunction(fn.id)
+                      openDeleteDialog(fn)
                     }}
                   >
                     <Trash2 className="h-4 w-4" />
