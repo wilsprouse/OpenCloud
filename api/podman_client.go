@@ -40,6 +40,10 @@ func rootlessPodmanConnection(ctx context.Context) (context.Context, error) {
 	return bindings.NewConnection(ctx, socket)
 }
 
+func RootlessPodmanConnection(ctx context.Context) (context.Context, error) {
+	return rootlessPodmanConnection(ctx)
+}
+
 func hasPodmanSocket() bool {
 	for _, uri := range podmanSocketCandidates() {
 		socketPath := podmanSocketPath(uri)
