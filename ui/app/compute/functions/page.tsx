@@ -197,6 +197,9 @@ export default function FunctionsPage() {
     }
   }
 
+  // Strip the file extension from a function name for display in the UI.
+  const getDisplayFunctionName = (name: string) => name.replace(/\.[^/.]+$/, "")
+
   // Filter functions based on search
   const filteredFunctions = functions.filter(fn => 
     fn.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -330,7 +333,7 @@ export default function FunctionsPage() {
                 <DialogDescription>
                   Are you sure you want to delete{" "}
                   <span className="font-medium text-foreground">
-                    {functionToDelete?.name.replace(/\.[^/.]+$/, "") || "this function"}
+                    {functionToDelete ? getDisplayFunctionName(functionToDelete.name) : "this function"}
                   </span>
                   ? This action cannot be undone.
                 </DialogDescription>
@@ -421,7 +424,7 @@ export default function FunctionsPage() {
                   <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
                       <h4 className="font-medium truncate">
-                        {fn.name.replace(/\.[^/.]+$/, "")}
+                        {getDisplayFunctionName(fn.name)}
                       </h4>
                     </div>
                     <div className="flex items-center space-x-4 text-xs text-muted-foreground">
