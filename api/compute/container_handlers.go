@@ -1,4 +1,4 @@
-package api
+package compute
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	opencloudapi "github.com/WavexSoftware/OpenCloud/api"
 	"github.com/containers/podman/v5/pkg/bindings"
 	"github.com/containers/podman/v5/pkg/bindings/containers"
 	"github.com/containers/podman/v5/pkg/bindings/images"
@@ -19,11 +20,13 @@ import (
 )
 
 var (
-	getContainersConnection   = rootlessPodmanConnection
+	getContainersConnection   = opencloudapi.RootlessPodmanConnection
 	listPodmanContainers      = containers.List
-	deleteContainerConnection = rootlessPodmanConnection
+	deleteContainerConnection = opencloudapi.RootlessPodmanConnection
 	removePodmanContainer     = containers.Remove
 )
+
+type ContainerInfo = opencloudapi.ContainerInfo
 
 // GetContainers lists all containers from Podman and returns their state along
 // with common runtime metrics such as memory usage and the host PID of the main
@@ -46,7 +49,7 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
 
 	// Initialize to an empty slice so JSON encodes as [] rather than null
 	// when no containers are present.
-	result := make([]ContainerInfo, 0, len(containerList))
+	result := make([]opencloudapi.ContainerInfo, 0, len(containerList))
 	for _, ctr := range containerList {
 		names := append([]string(nil), ctr.Names...)
 		if len(names) == 0 {
@@ -58,7 +61,7 @@ func GetContainers(w http.ResponseWriter, r *http.Request) {
 			pid = uint32(ctr.Pid)
 		}
 
-		ci := ContainerInfo{
+		ci := opencloudapi.ContainerInfo{
 			ID:      ctr.ID,
 			Names:   names,
 			Image:   ctr.Image,
@@ -240,7 +243,7 @@ func ensurePodmanImage(ctx context.Context, ref string) (string, error) {
 		return ref, nil
 	}
 
-	normalised := normalizeImageRef(ref)
+	normalised := opencloudapi.NormalizeImageRef(ref)
 	if normalised != ref {
 		if exists, err := images.Exists(ctx, normalised, nil); err == nil && exists {
 			return normalised, nil
@@ -353,7 +356,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate the image name to prevent command injection or path traversal.
-	if errMsg := validateImageName(req.Image); errMsg != "" {
+	if errMsg := opencloudapi.ValidateImageName(req.Image); errMsg != "" {
 		http.Error(w, errMsg, http.StatusBadRequest)
 		return
 	}
@@ -397,14 +400,14 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	socket, err := rootlessPodmanSocket()
+	socket, err := opencloudapi.RootlessPodmanSocket()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
 		return
 	}
 	fmt.Printf("PullAndRun using Podman socket: %s\n", socket)
 
-	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), opencloudapi.BuildTimeout)
 	defer cancel()
 
 	conn, err := bindings.NewConnection(ctx, socket)

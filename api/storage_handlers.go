@@ -17,12 +17,14 @@ import (
 
 	service_ledger "github.com/WavexSoftware/OpenCloud/service_ledger"
 	buildahDefine "github.com/containers/buildah/define"
-	"github.com/containers/podman/v5/pkg/bindings/images"
 	"github.com/containers/podman/v5/pkg/bindings"
+	"github.com/containers/podman/v5/pkg/bindings/images"
 	podmanEntities "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
 const buildTimeout = 5 * time.Minute
+
+const BuildTimeout = buildTimeout
 
 // Pre-compiled regex patterns for image name validation
 var (
@@ -389,6 +391,10 @@ func normalizeImageRef(imageRef string) string {
 	return "docker.io/library/" + imageRef
 }
 
+func NormalizeImageRef(imageRef string) string {
+	return normalizeImageRef(imageRef)
+}
+
 // validateImageName checks an image name for dangerous or invalid patterns.
 // Returns an error string if invalid, or empty string if valid.
 func validateImageName(name string) string {
@@ -413,6 +419,10 @@ func validateImageName(name string) string {
 		return "image name contains invalid characters"
 	}
 	return ""
+}
+
+func ValidateImageName(name string) string {
+	return validateImageName(name)
 }
 
 // hasFromInstruction checks whether a Dockerfile string contains a FROM instruction,
@@ -497,6 +507,10 @@ func rootlessPodmanSocket() (string, error) {
 
 	return "unix://" + filepath.Join("/run/user", "1000", "podman", "podman.sock"), nil
 	//return "unix://" + filepath.Join("/run/user", u.Uid, "podman", "podman.sock"), nil
+}
+
+func RootlessPodmanSocket() (string, error) {
+	return rootlessPodmanSocket()
 }
 
 // BuildImage handles building a container image using the Podman API.

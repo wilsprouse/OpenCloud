@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/WavexSoftware/OpenCloud/api"
+	computeapi "github.com/WavexSoftware/OpenCloud/api/compute"
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 	"github.com/WavexSoftware/OpenCloud/utils"
 	"log"
@@ -147,7 +148,7 @@ func main() {
 	mux.HandleFunc("/user/login", api.Login)
 	mux.HandleFunc("/user/get-auth/", api.RefreshAuth)
 	mux.HandleFunc("/get-server-metrics", api.GetSystemMetrics)
-	mux.HandleFunc("/get-containers", api.GetContainers)
+	mux.HandleFunc("/get-containers", computeapi.GetContainers)
 	mux.HandleFunc("/get-images", api.GetContainerRegistry)
 	mux.HandleFunc("/list-blob-containers", api.ListBlobContainers)
 	mux.HandleFunc("/get-blobs", api.GetBlobBuckets)
@@ -155,12 +156,12 @@ func main() {
 	mux.HandleFunc("/upload-object", api.UploadObject)
 	mux.HandleFunc("/delete-object", api.DeleteObject)
 	mux.HandleFunc("/download-object", api.DownloadObject)
-	mux.HandleFunc("/list-functions", api.ListFunctions)
-	mux.HandleFunc("/invoke-function", api.InvokeFunction)
-	mux.HandleFunc("/create-function", api.CreateFunction)
-	mux.HandleFunc("/delete-function", api.DeleteFunction)
-	mux.HandleFunc("/update-function/", api.UpdateFunction)
-	mux.HandleFunc("/get-function-logs/", api.GetFunctionLogs)
+	mux.HandleFunc("/list-functions", computeapi.ListFunctions)
+	mux.HandleFunc("/invoke-function", computeapi.InvokeFunction)
+	mux.HandleFunc("/create-function", computeapi.CreateFunction)
+	mux.HandleFunc("/delete-function", computeapi.DeleteFunction)
+	mux.HandleFunc("/update-function/", computeapi.UpdateFunction)
+	mux.HandleFunc("/get-function-logs/", computeapi.GetFunctionLogs)
 	mux.HandleFunc("/get-service-status", service_ledger.GetServiceStatusHandler)
 	mux.HandleFunc("/enable-service", service_ledger.EnableServiceHandler)
 	mux.HandleFunc("/sync-pipelines", service_ledger.SyncPipelinesHandler)
@@ -175,9 +176,9 @@ func main() {
 	mux.HandleFunc("/get-pipeline-logs/", api.GetPipelineLogs)
 	mux.HandleFunc("/build-image", api.BuildImage)
 	mux.HandleFunc("/delete-image", api.DeleteImage)
-	mux.HandleFunc("/delete-container", api.DeleteContainer)
-	mux.HandleFunc("/pull-and-run", api.PullAndRun)
-	mux.HandleFunc("/", api.GetFunction)
+	mux.HandleFunc("/delete-container", computeapi.DeleteContainer)
+	mux.HandleFunc("/pull-and-run", computeapi.PullAndRun)
+	mux.HandleFunc("/", computeapi.GetFunction)
 
 	// Wrap all routes with CORS middleware
 	handler := withCORS(mux)
