@@ -86,6 +86,8 @@ export default function ContainersPage() {
   const [containers, setContainers] = useState<ContainerItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
+  const [isStopDialogOpen, setIsStopDialogOpen] = useState(false)
+  const [containerToStop, setContainerToStop] = useState<ContainerItem | null>(null)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [containerToDelete, setContainerToDelete] = useState<ContainerItem | null>(null)
 
@@ -141,10 +143,27 @@ export default function ContainersPage() {
   const handleAction = async (id: string, action: "start" | "stop") => {
     try {
       await client.post(`/containers/${id}/${action}`)
-      fetchContainers() // refresh list
+      await fetchContainers()
+      return true
     } catch (err) {
       console.error(`Failed to ${action} container:`, err)
+      return false
     }
+  }
+
+  const openStopDialog = (container: ContainerItem) => {
+    setContainerToStop(container)
+    setIsStopDialogOpen(true)
+  }
+
+  const handleStopContainer = async () => {
+    if (!containerToStop) return
+
+    const stopped = await handleAction(containerToStop.Id, "stop")
+    if (!stopped) return
+
+    setIsStopDialogOpen(false)
+    setContainerToStop(null)
   }
 
   const openDeleteDialog = (container: ContainerItem) => {
@@ -388,7 +407,7 @@ export default function ContainersPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleAction(c.Id, "stop")}
+                          onClick={() => openStopDialog(c)}
                         >
                           <Square className="h-4 w-4 mr-1" />
                           Stop
@@ -721,6 +740,37 @@ export default function ContainersPage() {
           </Card>
         </div>
       </div>
+
+      <Dialog
+        open={isStopDialogOpen}
+        onOpenChange={(open) => {
+          setIsStopDialogOpen(open)
+          if (!open) {
+            setContainerToStop(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Stop Container</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to stop{" "}
+              <span className="font-medium">
+                {containerToStop?.Names?.[0]?.replace(/^\//, "") || "this container"}
+              </span>
+              ? You can start it again later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsStopDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleStopContainer}>
+              Stop
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <DialogContent>

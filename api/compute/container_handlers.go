@@ -24,6 +24,9 @@ var (
 	listPodmanContainers      = containers.List
 	deleteContainerConnection = opencloudapi.RootlessPodmanConnection
 	removePodmanContainer     = containers.Remove
+	containerActionConnection = opencloudapi.RootlessPodmanConnection
+	startPodmanContainer      = containers.Start
+	stopPodmanContainer       = containers.Stop
 )
 
 type ContainerInfo = opencloudapi.ContainerInfo
@@ -131,6 +134,67 @@ func DeleteContainer(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":      "deleted",
 		"containerId": req.ContainerID,
+	})
+}
+
+// ContainerAction starts or stops a Podman container addressed as
+// /containers/{containerId}/{action}.
+func ContainerAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/containers/")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 {
+		http.Error(w, "container ID and action are required", http.StatusBadRequest)
+		return
+	}
+
+	containerID := strings.TrimSpace(parts[0])
+	action := strings.TrimSpace(parts[1])
+	if containerID == "" || action == "" {
+		http.Error(w, "container ID and action are required", http.StatusBadRequest)
+		return
+	}
+
+	status := ""
+	switch action {
+	case "start":
+		status = "started"
+	case "stop":
+		status = "stopped"
+	default:
+		http.Error(w, "Unsupported container action", http.StatusNotFound)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	conn, err := containerActionConnection(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	switch action {
+	case "start":
+		err = startPodmanContainer(conn, containerID, nil)
+	case "stop":
+		err = stopPodmanContainer(conn, containerID, nil)
+	}
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to %s container: %v", action, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":      status,
+		"containerId": containerID,
 	})
 }
 

@@ -813,6 +813,155 @@ func TestDeleteContainerRemoveFailure(t *testing.T) {
 	}
 }
 
+func TestContainerActionInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/containers/container-123/stop", nil)
+	w := httptest.NewRecorder()
+
+	ContainerAction(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestContainerActionMissingPathSegments(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/containers/container-123", nil)
+	w := httptest.NewRecorder()
+
+	ContainerAction(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestContainerActionStopsContainerViaPodman(t *testing.T) {
+	origConnection := containerActionConnection
+	origStop := stopPodmanContainer
+	t.Cleanup(func() {
+		containerActionConnection = origConnection
+		stopPodmanContainer = origStop
+	})
+
+	containerActionConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	stopCalled := false
+	stopPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error {
+		stopCalled = true
+		if nameOrID != "container-123" {
+			t.Fatalf("expected container ID container-123, got %q", nameOrID)
+		}
+		if opts != nil {
+			t.Fatalf("expected nil stop options, got %#v", opts)
+		}
+		return nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/containers/container-123/stop", nil)
+	w := httptest.NewRecorder()
+
+	ContainerAction(w, req)
+
+	if !stopCalled {
+		t.Fatal("expected Podman stop to be called")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["status"] != "stopped" || resp["containerId"] != "container-123" {
+		t.Fatalf("unexpected response body: %#v", resp)
+	}
+}
+
+func TestContainerActionStartsContainerViaPodman(t *testing.T) {
+	origConnection := containerActionConnection
+	origStart := startPodmanContainer
+	t.Cleanup(func() {
+		containerActionConnection = origConnection
+		startPodmanContainer = origStart
+	})
+
+	containerActionConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	startCalled := false
+	startPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error {
+		startCalled = true
+		if nameOrID != "container-123" {
+			t.Fatalf("expected container ID container-123, got %q", nameOrID)
+		}
+		if opts != nil {
+			t.Fatalf("expected nil start options, got %#v", opts)
+		}
+		return nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/containers/container-123/start", nil)
+	w := httptest.NewRecorder()
+
+	ContainerAction(w, req)
+
+	if !startCalled {
+		t.Fatal("expected Podman start to be called")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["status"] != "started" || resp["containerId"] != "container-123" {
+		t.Fatalf("unexpected response body: %#v", resp)
+	}
+}
+
+func TestContainerActionUnsupportedAction(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/containers/container-123/restart", nil)
+	w := httptest.NewRecorder()
+
+	ContainerAction(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestContainerActionStopFailure(t *testing.T) {
+	origConnection := containerActionConnection
+	origStop := stopPodmanContainer
+	t.Cleanup(func() {
+		containerActionConnection = origConnection
+		stopPodmanContainer = origStop
+	})
+
+	containerActionConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	stopPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error {
+		return errors.New("stop failed")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/containers/container-123/stop", nil)
+	w := httptest.NewRecorder()
+
+	ContainerAction(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
 // TestContainerMemoryUsageBytesZeroPID verifies that containerMemoryUsageBytes
 // returns 0 when given a zero PID (no running process).
 func TestContainerMemoryUsageBytesZeroPID(t *testing.T) {
