@@ -197,8 +197,9 @@ export default function FunctionsPage() {
     }
   }
 
-  // Strip the file extension from a function name for display in the UI.
+  // Remove everything after the last dot in a function name for UI display.
   const getDisplayFunctionName = (name: string) => name.replace(/\.[^/.]+$/, "")
+  const functionToDeleteDisplayName = functionToDelete ? getDisplayFunctionName(functionToDelete.name) : ""
 
   // Filter functions based on search
   const filteredFunctions = functions.filter(fn => 
@@ -333,7 +334,7 @@ export default function FunctionsPage() {
                 <DialogDescription>
                   Are you sure you want to delete{" "}
                   <span className="font-medium text-foreground">
-                    {functionToDelete ? getDisplayFunctionName(functionToDelete.name) : "this function"}
+                    {functionToDeleteDisplayName}
                   </span>
                   ? This action cannot be undone.
                 </DialogDescription>
