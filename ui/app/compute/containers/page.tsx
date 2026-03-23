@@ -88,6 +88,7 @@ export default function ContainersPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [isStopDialogOpen, setIsStopDialogOpen] = useState(false)
   const [containerToStop, setContainerToStop] = useState<ContainerItem | null>(null)
+  const [stopError, setStopError] = useState("")
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [containerToDelete, setContainerToDelete] = useState<ContainerItem | null>(null)
 
@@ -152,18 +153,27 @@ export default function ContainersPage() {
   }
 
   const openStopDialog = (container: ContainerItem) => {
+    setStopError("")
     setContainerToStop(container)
     setIsStopDialogOpen(true)
+  }
+
+  const closeStopDialog = () => {
+    setStopError("")
+    setContainerToStop(null)
+    setIsStopDialogOpen(false)
   }
 
   const handleStopContainer = async () => {
     if (!containerToStop) return
 
     const stopped = await handleAction(containerToStop.Id, "stop")
-    if (!stopped) return
+    if (!stopped) {
+      setStopError("Failed to stop container. Please try again or check the logs.")
+      return
+    }
 
-    setIsStopDialogOpen(false)
-    setContainerToStop(null)
+    closeStopDialog()
   }
 
   const openDeleteDialog = (container: ContainerItem) => {
@@ -744,9 +754,8 @@ export default function ContainersPage() {
       <Dialog
         open={isStopDialogOpen}
         onOpenChange={(open) => {
-          setIsStopDialogOpen(open)
           if (!open) {
-            setContainerToStop(null)
+            closeStopDialog()
           }
         }}
       >
@@ -761,11 +770,16 @@ export default function ContainersPage() {
               ? You can start it again later.
             </DialogDescription>
           </DialogHeader>
+          {stopError && (
+            <p className="text-sm text-destructive">
+              {stopError}
+            </p>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsStopDialogOpen(false)}>
+            <Button variant="outline" onClick={closeStopDialog}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleStopContainer}>
+            <Button onClick={handleStopContainer}>
               Stop
             </Button>
           </DialogFooter>

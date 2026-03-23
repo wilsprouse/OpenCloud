@@ -160,11 +160,18 @@ func ContainerAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := ""
+	var performAction func(context.Context, string) error
 	switch action {
 	case "start":
 		status = "started"
+		performAction = func(ctx context.Context, id string) error {
+			return startPodmanContainer(ctx, id, nil)
+		}
 	case "stop":
 		status = "stopped"
+		performAction = func(ctx context.Context, id string) error {
+			return stopPodmanContainer(ctx, id, nil)
+		}
 	default:
 		http.Error(w, "Unsupported container action", http.StatusNotFound)
 		return
@@ -179,14 +186,7 @@ func ContainerAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch action {
-	case "start":
-		err = startPodmanContainer(conn, containerID, nil)
-	case "stop":
-		err = stopPodmanContainer(conn, containerID, nil)
-	}
-
-	if err != nil {
+	if err := performAction(conn, containerID); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to %s container: %v", action, err), http.StatusInternalServerError)
 		return
 	}
