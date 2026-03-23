@@ -22,9 +22,7 @@ import (
 	podmanEntities "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
-const buildTimeout = 5 * time.Minute
-
-const BuildTimeout = buildTimeout
+const BuildTimeout = 5 * time.Minute
 
 // Pre-compiled regex patterns for image name validation
 var (
@@ -598,7 +596,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), BuildTimeout)
 	defer cancel()
 
 	conn, err := bindings.NewConnection(ctx, socket)
