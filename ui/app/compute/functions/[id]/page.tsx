@@ -185,18 +185,22 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       const fullName = extension ? baseName + extension : baseName
       
       console.log(`Updating function: ${fullName}`)
-      const res = await client.put(`/update-function/${encodeURIComponent(functionId)}`, {
-        name: fullName,
-        runtime,
-        code,
-        memorySize: parseInt(memorySize),
-        timeout: parseInt(timeout),
-        trigger: triggerEnabled ? {
-          type: "cron",
-          schedule: triggerSchedule,
-          enabled: true
-        } : null
-      })
+      const minDelay = new Promise<void>(resolve => setTimeout(resolve, 500))
+      const [res] = await Promise.all([
+        client.put(`/update-function/${encodeURIComponent(functionId)}`, {
+          name: fullName,
+          runtime,
+          code,
+          memorySize: parseInt(memorySize),
+          timeout: parseInt(timeout),
+          trigger: triggerEnabled ? {
+            type: "cron",
+            schedule: triggerSchedule,
+            enabled: true
+          } : null
+        }),
+        minDelay,
+      ])
 
       if (res.status === 200 || res.status === 201) {
         console.log("Function updated successfully")
