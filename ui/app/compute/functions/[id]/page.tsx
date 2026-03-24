@@ -20,6 +20,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import client from "@/app/utility/post"
+import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
+import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
 import { 
   ArrowLeft,
   Save,
@@ -77,6 +79,13 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const [code, setCode] = useState("")
   const [memorySize, setMemorySize] = useState("128")
   const [timeout, setTimeout] = useState("3")
+  const isFunctionNameValid = isValidFunctionName(name)
+  const {
+    handleBeforeInput: handleNameBeforeInput,
+    handleChange: handleNameChange,
+    handlePaste: handleNamePaste,
+    resetWarning: resetNameWarning,
+  } = useFunctionNameWarning(setName)
   
   // Trigger state
   const [triggerEnabled, setTriggerEnabled] = useState(false)
@@ -100,6 +109,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         }
       }
       setName(nameWithoutExt)
+      resetNameWarning()
       setRuntime(data.runtime)
       setCode(data.code || "")
       setMemorySize(data.memorySize?.toString() || "128")
@@ -140,6 +150,8 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   }, [functionId])
 
   const handleSaveAndDeploy = async () => {
+    if (!isFunctionNameValid) return
+
     setSaving(true)
     try {
       // Determine file extension based on runtime
@@ -314,7 +326,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
             <Play className={`mr-2 h-4 w-4 ${invoking ? 'hidden' : ''}`} />
             {invoking ? "Running..." : "Invoke"}
           </Button>
-          <Button onClick={handleSaveAndDeploy} disabled={saving}>
+          <Button onClick={handleSaveAndDeploy} disabled={saving || !isFunctionNameValid}>
             <Save className="mr-2 h-4 w-4" />
             {saving ? "Deploying..." : "Save & Deploy"}
           </Button>
@@ -337,9 +349,15 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
               <Input
                 id="function-name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => handleNameChange(e.target.value)}
+                onBeforeInput={handleNameBeforeInput}
+                onPaste={handleNamePaste}
                 placeholder="my-function"
+                maxLength={FUNCTION_NAME_MAX_LENGTH}
               />
+              <p className="text-xs text-muted-foreground">
+                Function names cannot contain spaces and must be 50 characters or fewer.
+              </p>
             </div>
 
             <div className="space-y-2">

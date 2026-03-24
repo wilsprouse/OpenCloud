@@ -3,6 +3,7 @@ import "@/app/globals.css"
 import { Inter } from "next/font/google"
 import { ThemeProvider } from "@/components/theme-provider"
 import { ConditionalNav } from "@/components/conditional-nav"
+import { Toaster } from "sonner"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -24,6 +25,7 @@ export default function RootLayout({
             <ConditionalNav />
             <main className="flex-1">{children}</main>
           </div>
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>
