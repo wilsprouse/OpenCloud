@@ -32,10 +32,8 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  Upload,
   Edit,
   Plus,
-  FileCode,
   Activity,
   AlertCircle,
   Power
@@ -497,241 +495,147 @@ success "Deployment completed successfully!"`}
         </Card>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3">
-        {/* Main Pipeline List */}
-        <div className="md:col-span-2">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Pipelines</CardTitle>
-                  <CardDescription>Manage your CI/CD pipelines</CardDescription>
-                </div>
-              </div>
-              <div className="relative mt-4">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="Search pipelines by name or description..."
-                  className="w-full pl-8 pr-4 py-2 border rounded-md bg-background"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {filteredPipelines.map((pipeline) => {
-                  const statusInfo = getStatusInfo(pipeline.status)
-                  const StatusIcon = statusInfo.icon
-                  const isRunning = pipeline.status === "running"
-                  
-                  return (
-                    <div
-                      key={pipeline.id}
-                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                      onClick={() => router.push(`/ci-cd/pipelines/${encodeURIComponent(pipeline.id)}`)}
-                    >
-                      <div className="flex items-center space-x-4 flex-1">
-                        <div className={`p-2 rounded-lg ${statusInfo.bg}`}>
-                          <StatusIcon className={`h-5 w-5 ${statusInfo.color} ${isRunning ? 'animate-pulse' : ''}`} />
-                        </div>
-                        <div className="space-y-1 flex-1 min-w-0">
-                          <div className="flex items-center space-x-2">
-                            <h4 className="font-medium truncate">{pipeline.name}</h4>
-                            <Badge 
-                              variant="outline" 
-                              className={statusInfo.badge}
-                            >
-                              {pipeline.status.charAt(0).toUpperCase() + pipeline.status.slice(1)}
-                            </Badge>
-                          </div>
-                          {pipeline.description && (
-                            <p className="text-sm text-muted-foreground truncate">{pipeline.description}</p>
-                          )}
-                          <div className="flex items-center space-x-4 text-xs text-muted-foreground">
-                            <span className="flex items-center">
-                              <GitBranch className="h-3 w-3 mr-1" />
-                              {pipeline.branch || "main"}
-                            </span>
-                            {pipeline.lastRun && (
-                              <>
-                                <span>•</span>
-                                <span className="flex items-center">
-                                  <Clock className="h-3 w-3 mr-1" />
-                                  Last run: {new Date(pipeline.lastRun).toLocaleString()}
-                                </span>
-                              </>
-                            )}
-                            {pipeline.duration && (
-                              <>
-                                <span>•</span>
-                                <span>{pipeline.duration}</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Pipelines</CardTitle>
+              <CardDescription>Manage your CI/CD pipelines</CardDescription>
+            </div>
+          </div>
+          <div className="relative mt-4">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search pipelines by name or description..."
+              className="w-full pl-8 pr-4 py-2 border rounded-md bg-background"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {filteredPipelines.map((pipeline) => {
+              const statusInfo = getStatusInfo(pipeline.status)
+              const StatusIcon = statusInfo.icon
+              const isRunning = pipeline.status === "running"
+              
+              return (
+                <div
+                  key={pipeline.id}
+                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                  onClick={() => router.push(`/ci-cd/pipelines/${encodeURIComponent(pipeline.id)}`)}
+                >
+                  <div className="flex items-center space-x-4 flex-1">
+                    <div className={`p-2 rounded-lg ${statusInfo.bg}`}>
+                      <StatusIcon className={`h-5 w-5 ${statusInfo.color} ${isRunning ? 'animate-pulse' : ''}`} />
+                    </div>
+                    <div className="space-y-1 flex-1 min-w-0">
+                      <div className="flex items-center space-x-2">
+                        <h4 className="font-medium truncate">{pipeline.name}</h4>
+                        <Badge 
+                          variant="outline" 
+                          className={statusInfo.badge}
+                        >
+                          {pipeline.status.charAt(0).toUpperCase() + pipeline.status.slice(1)}
+                        </Badge>
                       </div>
-                      <div className="flex items-center space-x-2 ml-4" onClick={(e) => e.stopPropagation()}>
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          onClick={() => copyToClipboard(pipeline.id)}
-                          title="Copy ID"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openEditDialog(pipeline)}
-                          title="Edit Pipeline"
-                        >
-                          <Edit className="h-4 w-4 mr-1" />
-                          Edit
-                        </Button>
-                        {!isRunning ? (
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => handleRunPipeline(pipeline.id)}
-                            title="Run Pipeline"
-                          >
-                            <Play className="h-4 w-4 mr-1" />
-                            Run
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleStopPipeline(pipeline.id)}
-                            title="Stop Pipeline"
-                          >
-                            <Pause className="h-4 w-4 mr-1" />
-                            Stop
-                          </Button>
+                      {pipeline.description && (
+                        <p className="text-sm text-muted-foreground truncate">{pipeline.description}</p>
+                      )}
+                      <div className="flex items-center space-x-4 text-xs text-muted-foreground">
+                        <span className="flex items-center">
+                          <GitBranch className="h-3 w-3 mr-1" />
+                          {pipeline.branch || "main"}
+                        </span>
+                        {pipeline.lastRun && (
+                          <>
+                            <span>•</span>
+                            <span className="flex items-center">
+                              <Clock className="h-3 w-3 mr-1" />
+                              Last run: {new Date(pipeline.lastRun).toLocaleString()}
+                            </span>
+                          </>
                         )}
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => openDeleteDialog(pipeline.id)}
-                          title="Delete Pipeline"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {pipeline.duration && (
+                          <>
+                            <span>•</span>
+                            <span>{pipeline.duration}</span>
+                          </>
+                        )}
                       </div>
                     </div>
-                  )
-                })}
-                {filteredPipelines.length === 0 && !loading && (
-                  <div className="text-center py-12">
-                    <GitBranch className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-medium mb-2">No pipelines found</h3>
-                    <p className="text-sm text-muted-foreground mb-4">
-                      {searchTerm ? "Try adjusting your search terms" : "Create your first pipeline to get started"}
-                    </p>
-                    {!searchTerm && (
-                      <Button onClick={() => setIsCreateDialogOpen(true)}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Create Pipeline
+                  </div>
+                  <div className="flex items-center space-x-2 ml-4" onClick={(e) => e.stopPropagation()}>
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      onClick={() => copyToClipboard(pipeline.id)}
+                      title="Copy ID"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openEditDialog(pipeline)}
+                      title="Edit Pipeline"
+                    >
+                      <Edit className="h-4 w-4 mr-1" />
+                      Edit
+                    </Button>
+                    {!isRunning ? (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => handleRunPipeline(pipeline.id)}
+                        title="Run Pipeline"
+                      >
+                        <Play className="h-4 w-4 mr-1" />
+                        Run
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleStopPipeline(pipeline.id)}
+                        title="Stop Pipeline"
+                      >
+                        <Pause className="h-4 w-4 mr-1" />
+                        Stop
                       </Button>
                     )}
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => openDeleteDialog(pipeline.id)}
+                      title="Delete Pipeline"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
+                </div>
+              )
+            })}
+            {filteredPipelines.length === 0 && !loading && (
+              <div className="text-center py-12">
+                <GitBranch className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <h3 className="text-lg font-medium mb-2">No pipelines found</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {searchTerm ? "Try adjusting your search terms" : "Create your first pipeline to get started"}
+                </p>
+                {!searchTerm && (
+                  <Button onClick={() => setIsCreateDialogOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Pipeline
+                  </Button>
                 )}
               </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Quick Actions Sidebar */}
-        <div>
-          <Card>
-            <CardHeader>
-              <CardTitle>Quick Actions</CardTitle>
-              <CardDescription>Common pipeline operations</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Button 
-                variant="ghost" 
-                className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100"
-                onClick={() => setIsCreateDialogOpen(true)}
-              >
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-blue-600">
-                    <Plus className="h-4 w-4" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium text-sm">Create Pipeline</div>
-                    <div className="text-xs text-muted-foreground">Add new CI/CD pipeline</div>
-                  </div>
-                </div>
-              </Button>
-
-              <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-green-600">
-                    <Upload className="h-4 w-4" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium text-sm">Import Pipeline</div>
-                    <div className="text-xs text-muted-foreground">Upload from file</div>
-                  </div>
-                </div>
-              </Button>
-
-              <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-purple-50 hover:bg-purple-100">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-purple-600">
-                    <FileCode className="h-4 w-4" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium text-sm">View Templates</div>
-                    <div className="text-xs text-muted-foreground">Browse pipeline templates</div>
-                  </div>
-                </div>
-              </Button>
-
-              <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-orange-50 hover:bg-orange-100">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-orange-600">
-                    <Activity className="h-4 w-4" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium text-sm">View Logs</div>
-                    <div className="text-xs text-muted-foreground">Check execution logs</div>
-                  </div>
-                </div>
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Pipeline Info Card */}
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle>Pipeline Information</CardTitle>
-              <CardDescription>CI/CD system details</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">Active Pipelines</div>
-                <div className="text-2xl font-bold">{runningPipelines}</div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">Success Rate</div>
-                <div className="text-2xl font-bold">
-                  {totalPipelines > 0 
-                    ? `${Math.round((successfulPipelines / totalPipelines) * 100)}%`
-                    : "N/A"}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">Total Pipelines</div>
-                <div className="text-2xl font-bold">{totalPipelines}</div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Edit Pipeline Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
