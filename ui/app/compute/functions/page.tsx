@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import client from "@/app/utility/post"
+import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName, sanitizeFunctionName } from "@/lib/function-name"
 import { 
   RefreshCw, 
   Search,
@@ -75,6 +76,7 @@ export default function FunctionsPage() {
   const [functionName, setFunctionName] = useState<string>("")
   const [functionRuntime, setFunctionRuntime] = useState<string>("python")
   const [functionCode, setFunctionCode] = useState<string>("")
+  const isFunctionNameValid = isValidFunctionName(functionName)
 
   // Check if service is enabled
   const checkServiceStatus = async () => {
@@ -131,7 +133,8 @@ export default function FunctionsPage() {
   }, [serviceEnabled])
 
   const handleCreateFunction = async () => {
-    // TODO: Implement this in the backend
+    if (!isFunctionNameValid || !functionCode) return
+
     try {
       console.log(`Creating function: ${functionName}`)
       const res = await client.post("/create-function", { 
@@ -280,8 +283,12 @@ export default function FunctionsPage() {
                     id="function-name"
                     placeholder="my-function"
                     value={functionName}
-                    onChange={(e) => setFunctionName(e.target.value)}
+                    onChange={(e) => setFunctionName(sanitizeFunctionName(e.target.value))}
+                    maxLength={FUNCTION_NAME_MAX_LENGTH}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Function names cannot contain spaces and must be 50 characters or fewer.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="function-runtime">Language</Label>
@@ -314,7 +321,7 @@ export default function FunctionsPage() {
                 <Button variant="outline" onClick={() => setIsFunctionDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={handleCreateFunction} disabled={!functionName || !functionCode}>
+                <Button onClick={handleCreateFunction} disabled={!isFunctionNameValid || !functionCode}>
                   Create Function
                 </Button>
               </DialogFooter>
