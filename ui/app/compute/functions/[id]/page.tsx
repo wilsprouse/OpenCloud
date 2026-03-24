@@ -20,7 +20,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import client from "@/app/utility/post"
-import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName, sanitizeFunctionName } from "@/lib/function-name"
+import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
+import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
 import { 
   ArrowLeft,
   Save,
@@ -79,6 +80,12 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const [memorySize, setMemorySize] = useState("128")
   const [timeout, setTimeout] = useState("3")
   const isFunctionNameValid = isValidFunctionName(name)
+  const {
+    handleBeforeInput: handleNameBeforeInput,
+    handleChange: handleNameChange,
+    handlePaste: handleNamePaste,
+    resetWarning: resetNameWarning,
+  } = useFunctionNameWarning(setName)
   
   // Trigger state
   const [triggerEnabled, setTriggerEnabled] = useState(false)
@@ -102,6 +109,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
         }
       }
       setName(nameWithoutExt)
+      resetNameWarning()
       setRuntime(data.runtime)
       setCode(data.code || "")
       setMemorySize(data.memorySize?.toString() || "128")
@@ -341,7 +349,9 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
               <Input
                 id="function-name"
                 value={name}
-                onChange={(e) => setName(sanitizeFunctionName(e.target.value))}
+                onChange={(e) => handleNameChange(e.target.value)}
+                onBeforeInput={handleNameBeforeInput}
+                onPaste={handleNamePaste}
                 placeholder="my-function"
                 maxLength={FUNCTION_NAME_MAX_LENGTH}
               />

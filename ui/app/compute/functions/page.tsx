@@ -27,7 +27,8 @@ import {
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import client from "@/app/utility/post"
-import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName, sanitizeFunctionName } from "@/lib/function-name"
+import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
+import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
 import { 
   RefreshCw, 
   Search,
@@ -77,6 +78,19 @@ export default function FunctionsPage() {
   const [functionRuntime, setFunctionRuntime] = useState<string>("python")
   const [functionCode, setFunctionCode] = useState<string>("")
   const isFunctionNameValid = isValidFunctionName(functionName)
+  const {
+    handleBeforeInput: handleFunctionNameBeforeInput,
+    handleChange: handleFunctionNameChange,
+    handlePaste: handleFunctionNamePaste,
+    resetWarning: resetFunctionNameWarning,
+  } = useFunctionNameWarning(setFunctionName)
+
+  const handleFunctionDialogOpenChange = (open: boolean) => {
+    setIsFunctionDialogOpen(open)
+    if (!open) {
+      resetFunctionNameWarning()
+    }
+  }
 
   // Check if service is enabled
   const checkServiceStatus = async () => {
@@ -148,6 +162,7 @@ export default function FunctionsPage() {
         setFunctionName("")
         setFunctionRuntime("nodejs20.x")
         setFunctionCode("")
+        resetFunctionNameWarning()
         fetchFunctions()
       }
     } catch (err) {
@@ -262,7 +277,7 @@ export default function FunctionsPage() {
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Dialog open={isFunctionDialogOpen} onOpenChange={setIsFunctionDialogOpen}>
+          <Dialog open={isFunctionDialogOpen} onOpenChange={handleFunctionDialogOpenChange}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
@@ -283,7 +298,9 @@ export default function FunctionsPage() {
                     id="function-name"
                     placeholder="my-function"
                     value={functionName}
-                    onChange={(e) => setFunctionName(sanitizeFunctionName(e.target.value))}
+                    onChange={(e) => handleFunctionNameChange(e.target.value)}
+                    onBeforeInput={handleFunctionNameBeforeInput}
+                    onPaste={handleFunctionNamePaste}
                     maxLength={FUNCTION_NAME_MAX_LENGTH}
                   />
                   <p className="text-xs text-muted-foreground">
