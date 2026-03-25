@@ -49,7 +49,9 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
-  
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [blobToDelete, setBlobToDelete] = useState<{ container: string; name: string } | null>(null)
+
   // Upload form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
 
@@ -93,17 +95,27 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
     }
   };
 
-  const handleDelete = async (container: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete "${name}"?`)) {
-      return
-    }
-    
+  // Open the delete confirmation dialog for the selected blob
+  const openDeleteDialog = (container: string, name: string) => {
+    setBlobToDelete({ container, name })
+    setIsDeleteDialogOpen(true)
+  }
+
+  const closeDeleteDialog = () => {
+    setBlobToDelete(null)
+    setIsDeleteDialogOpen(false)
+  }
+
+  const handleDelete = async () => {
+    if (!blobToDelete) return
+
     try {
       const res = await client.delete("/delete-object", {
-        data: { container, name },
+        data: { container: blobToDelete.container, name: blobToDelete.name },
       })
 
       if (res.status === 200) {
+        closeDeleteDialog()
         fetchBlobs() // Refresh blob list after deletion
       } else {
         console.error("Failed to delete blob:", res.statusText)
@@ -321,7 +333,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => handleDelete(blob.container, blob.name)}
+                    onClick={() => openDeleteDialog(blob.container, blob.name)}
                     title="Delete"
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
@@ -341,6 +353,27 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
           </div>
         </CardContent>
       </Card>
+
+      {/* Delete Blob Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={(open) => { if (!open) closeDeleteDialog() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Object</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete{" "}
+              <strong>{blobToDelete?.name}</strong>? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeDeleteDialog}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete}>
+              Delete Object
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardShell>
   )
 }
