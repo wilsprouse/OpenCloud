@@ -27,7 +27,6 @@ import {
   Play,
   Pause,
   Trash2,
-  Copy,
   GitBranch,
   Clock,
   CheckCircle2,
@@ -70,7 +69,6 @@ export default function Pipelines() {
   const [pipelineName, setPipelineName] = useState("")
   const [pipelineDescription, setPipelineDescription] = useState("")
   const [pipelineCode, setPipelineCode] = useState("")
-  const [pipelineBranch, setPipelineBranch] = useState("main")
 
   // Check if service is enabled
   const checkServiceStatus = async () => {
@@ -176,14 +174,12 @@ export default function Pipelines() {
         name: pipelineName,
         description: pipelineDescription,
         code: pipelineCode,
-        branch: pipelineBranch,
       })
       
       // Reset form and close dialog
       setPipelineName("")
       setPipelineDescription("")
       setPipelineCode("")
-      setPipelineBranch("main")
       setIsCreateDialogOpen(false)
       
       // Refresh the pipeline list
@@ -207,14 +203,12 @@ export default function Pipelines() {
         name: pipelineName,
         description: pipelineDescription,
         code: pipelineCode,
-        branch: pipelineBranch,
       })
       
       // Reset form and close dialog
       setPipelineName("")
       setPipelineDescription("")
       setPipelineCode("")
-      setPipelineBranch("main")
       setSelectedPipeline(null)
       setIsEditDialogOpen(false)
       
@@ -233,18 +227,7 @@ export default function Pipelines() {
     setPipelineName(pipeline.name)
     setPipelineDescription(pipeline.description)
     setPipelineCode(pipeline.code)
-    setPipelineBranch(pipeline.branch || "main")
     setIsEditDialogOpen(true)
-  }
-
-  const copyToClipboard = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      toast.success("Copied to clipboard")
-    } catch (err) {
-      console.error("Failed to copy to clipboard:", err)
-      toast.error("Failed to copy to clipboard")
-    }
   }
 
   // Calculate statistics
@@ -361,17 +344,6 @@ export default function Pipelines() {
                     onChange={(e) => setPipelineDescription(e.target.value)}
                   />
                 </div>
-
-                {/* Branch
-                <div className="grid gap-2">
-                  <Label htmlFor="pipelineBranch">Branch</Label>
-                  <Input
-                    id="pipelineBranch"
-                    placeholder="main"
-                    value={pipelineBranch}
-                    onChange={(e) => setPipelineBranch(e.target.value)}
-                  />
-                </div*/}
 
                 {/* Pipeline Code */}
                 <div className="grid gap-2">
@@ -545,18 +517,11 @@ success "Deployment completed successfully!"`}
                         <p className="text-sm text-muted-foreground truncate">{pipeline.description}</p>
                       )}
                       <div className="flex items-center space-x-4 text-xs text-muted-foreground">
-                        <span className="flex items-center">
-                          <GitBranch className="h-3 w-3 mr-1" />
-                          {pipeline.branch || "main"}
-                        </span>
                         {pipeline.lastRun && (
-                          <>
-                            <span>•</span>
-                            <span className="flex items-center">
-                              <Clock className="h-3 w-3 mr-1" />
-                              Last run: {new Date(pipeline.lastRun).toLocaleString()}
-                            </span>
-                          </>
+                          <span className="flex items-center">
+                            <Clock className="h-3 w-3 mr-1" />
+                            Last run: {new Date(pipeline.lastRun).toLocaleString()}
+                          </span>
                         )}
                         {pipeline.duration && (
                           <>
@@ -568,14 +533,6 @@ success "Deployment completed successfully!"`}
                     </div>
                   </div>
                   <div className="flex items-center space-x-2 ml-4" onClick={(e) => e.stopPropagation()}>
-                    <Button 
-                      variant="ghost" 
-                      size="icon"
-                      onClick={() => copyToClipboard(pipeline.id)}
-                      title="Copy ID"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
                     <Button
                       variant="outline"
                       size="sm"
@@ -667,17 +624,6 @@ success "Deployment completed successfully!"`}
                 placeholder="Build and test application"
                 value={pipelineDescription}
                 onChange={(e) => setPipelineDescription(e.target.value)}
-              />
-            </div>
-
-            {/* Branch */}
-            <div className="grid gap-2">
-              <Label htmlFor="editPipelineBranch">Branch</Label>
-              <Input
-                id="editPipelineBranch"
-                placeholder="main"
-                value={pipelineBranch}
-                onChange={(e) => setPipelineBranch(e.target.value)}
               />
             </div>
 
