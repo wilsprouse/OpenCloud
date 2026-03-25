@@ -131,7 +131,7 @@ export function MainNav() {
         </nav>
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon">
+      {/*<Button variant="ghost" size="icon">
           <Bell className="h-5 w-5" />
         </Button>
         <Button variant="ghost" size="icon">
@@ -139,7 +139,7 @@ export function MainNav() {
         </Button>
         <Button variant="ghost" size="icon">
           <Settings className="h-5 w-5" />
-        </Button>
+        </Button>*/}
 
         {/* User menu — shows username and logout option */}
         <DropdownMenu.Root>
