@@ -59,6 +59,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
   const [newContainerName, setNewContainerName] = useState<string>("")
   const [isRenaming, setIsRenaming] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
   const isNewContainerNameValid = isValidContainerName(newContainerName)
 
   const {
@@ -180,12 +181,14 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   const openRenameDialog = () => {
     setNewContainerName(containerName)
     resetNewNameWarning()
+    setRenameError(null)
     setIsRenameDialogOpen(true)
   }
 
   const closeRenameDialog = () => {
     setNewContainerName("")
     resetNewNameWarning()
+    setRenameError(null)
     setIsRenameDialogOpen(false)
   }
 
@@ -193,6 +196,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
     if (!isNewContainerNameValid || newContainerName === containerName) return
 
     setIsRenaming(true)
+    setRenameError(null)
     try {
       const res = await client.put("/rename-container", {
         currentName: containerName,
@@ -203,9 +207,12 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
         closeRenameDialog()
         router.push(`/storage/blob/${encodeURIComponent(newContainerName)}`)
       } else {
-        console.error("Failed to rename container:", res.statusText)
+        setRenameError("Failed to rename container. Please try again.")
       }
-    } catch (err) {
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to rename container. Please try again."
+      setRenameError(message)
       console.error("Failed to rename container:", err)
     } finally {
       setIsRenaming(false)
@@ -441,7 +448,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
           <DialogHeader>
             <DialogTitle>Rename Container</DialogTitle>
             <DialogDescription>
-              Enter a new name for <strong>{containerName}</strong>. Container names cannot contain spaces and must be 50 characters or fewer.
+              Enter a new name for <strong>{containerName}</strong>.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -459,6 +466,9 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
               <p className="text-xs text-muted-foreground">
                 Container names cannot contain spaces and must be 50 characters or fewer.
               </p>
+              {renameError && (
+                <p className="text-xs text-destructive">{renameError}</p>
+              )}
             </div>
           </div>
           <DialogFooter>
