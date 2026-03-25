@@ -227,6 +227,20 @@ func CreateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate container name: required, no spaces, and max 50 characters
+	if body.Name == "" {
+		http.Error(w, "Container name is required", http.StatusBadRequest)
+		return
+	}
+	if strings.ContainsAny(body.Name, " \t\n\r") {
+		http.Error(w, "Container name cannot contain spaces", http.StatusBadRequest)
+		return
+	}
+	if len(body.Name) > 50 {
+		http.Error(w, "Container name must be 50 characters or fewer", http.StatusBadRequest)
+		return
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)

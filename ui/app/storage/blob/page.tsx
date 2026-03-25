@@ -18,6 +18,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import client from "@/app/utility/post"
+import { CONTAINER_NAME_MAX_LENGTH, isValidContainerName } from "@/lib/container-name"
+import { useContainerNameWarning } from "@/lib/use-container-name-warning"
 import { 
   RefreshCw, 
   Search,
@@ -45,6 +47,13 @@ export default function BlobStorage() {
   
   // Container form state
   const [containerName, setContainerName] = useState<string>("")
+  const isContainerNameValid = isValidContainerName(containerName)
+  const {
+    handleBeforeInput: handleContainerNameBeforeInput,
+    handleChange: handleContainerNameChange,
+    handlePaste: handleContainerNamePaste,
+    resetWarning: resetContainerNameWarning,
+  } = useContainerNameWarning(setContainerName)
 
   // Fetch containers
   const fetchContainers = async () => {
@@ -119,7 +128,10 @@ export default function BlobStorage() {
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Dialog open={isContainerDialogOpen} onOpenChange={setIsContainerDialogOpen}>
+          <Dialog open={isContainerDialogOpen} onOpenChange={(open) => {
+              setIsContainerDialogOpen(open)
+              if (!open) resetContainerNameWarning()
+            }}>
             <DialogTrigger asChild>
               <Button>
                 <FolderPlus className="mr-2 h-4 w-4" />
@@ -140,15 +152,21 @@ export default function BlobStorage() {
                     id="container-name"
                     placeholder="my-container"
                     value={containerName}
-                    onChange={(e) => setContainerName(e.target.value)}
+                    onChange={(e) => handleContainerNameChange(e.target.value)}
+                    onBeforeInput={handleContainerNameBeforeInput}
+                    onPaste={handleContainerNamePaste}
+                    maxLength={CONTAINER_NAME_MAX_LENGTH}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Container names cannot contain spaces and must be 50 characters or fewer.
+                  </p>
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsContainerDialogOpen(false)}>
+                <Button variant="outline" onClick={() => { setIsContainerDialogOpen(false); resetContainerNameWarning() }}>
                   Cancel
                 </Button>
-                <Button onClick={() => handleCreateContainer(containerName)} disabled={!containerName}>
+                <Button onClick={() => handleCreateContainer(containerName)} disabled={!isContainerNameValid}>
                   Create
                 </Button>
               </DialogFooter>

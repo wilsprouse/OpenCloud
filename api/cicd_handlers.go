@@ -66,6 +66,16 @@ func CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate pipeline name: no spaces and max 50 characters
+	if strings.ContainsAny(req.Name, " \t\n\r") {
+		http.Error(w, "Pipeline name cannot contain spaces", http.StatusBadRequest)
+		return
+	}
+	if len(req.Name) > 50 {
+		http.Error(w, "Pipeline name must be 50 characters or fewer", http.StatusBadRequest)
+		return
+	}
+
 	// Sanitize pipeline name to prevent directory traversal and invalid filenames
 	sanitizedName := sanitizePipelineName(req.Name)
 	if sanitizedName == "" {
@@ -373,6 +383,16 @@ func UpdatePipeline(w http.ResponseWriter, r *http.Request) {
 	// Validate required fields
 	if req.Name == "" || req.Code == "" {
 		http.Error(w, "Missing required fields: name and code", http.StatusBadRequest)
+		return
+	}
+
+	// Validate pipeline name: no spaces and max 50 characters
+	if strings.ContainsAny(req.Name, " \t\n\r") {
+		http.Error(w, "Pipeline name cannot contain spaces", http.StatusBadRequest)
+		return
+	}
+	if len(req.Name) > 50 {
+		http.Error(w, "Pipeline name must be 50 characters or fewer", http.StatusBadRequest)
 		return
 	}
 
