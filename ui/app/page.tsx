@@ -29,6 +29,15 @@ type FunctionItem = {
   lastModified: string
 }
 
+type ContainerItem = {
+  Id: string
+  Names: string[]
+  Image: string
+  State: string
+  Status: string
+  Created: number
+}
+
 // Returns a human-readable relative time string (e.g. "5 min ago") from an ISO date string.
 function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString)
@@ -49,6 +58,8 @@ export default function DashboardPage() {
   const [blobLastUsed, setBlobLastUsed] = useState<string>("Never")
   const [functionCount, setFunctionCount] = useState<number>(0)
   const [functionLastUsed, setFunctionLastUsed] = useState<string>("Never")
+  const [containerCount, setContainerCount] = useState<number>(0)
+  const [containerLastUsed, setContainerLastUsed] = useState<string>("Never")
 
   useEffect(() => {
     setUsername(getUsername())
@@ -96,6 +107,31 @@ export default function DashboardPage() {
     fetchFunctionStats()
   }, [])
 
+  useEffect(() => {
+    const fetchContainerStats = async () => {
+      try {
+        const res = await client.get<ContainerItem[]>("/get-containers")
+        const allContainers: ContainerItem[] = res.data || []
+        const running = allContainers.filter((c) => c.State.toLowerCase() === "running")
+        setContainerCount(running.length)
+        // Use the most recently created running container for "last used" (creation time is
+        // the closest proxy for last activity available from the container list API);
+        // fall back to all containers if none are running.
+        const candidates = running.length > 0 ? running : allContainers
+        if (candidates.length > 0) {
+          const latest = candidates.reduce((prev, curr) =>
+            curr.Created > prev.Created ? curr : prev
+          )
+          const isoString = new Date(latest.Created * 1000).toISOString()
+          setContainerLastUsed(formatRelativeTime(isoString))
+        }
+      } catch (err) {
+        console.error("Failed to fetch container stats:", err)
+      }
+    }
+    fetchContainerStats()
+  }, [])
+
   return (
     <>
       <DashboardShell>
@@ -112,11 +148,11 @@ export default function DashboardPage() {
               <Container className="h-4 w-4 text-blue-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">24</div>
+              <div className="text-2xl font-bold">{containerCount}</div>
               <p className="text-xs text-muted-foreground">Active containers</p>
               <div className="mt-2">
                 <Badge variant="outline" className="text-xs">
-                  Last used: 5 min ago
+                  Last used: {containerLastUsed}
                 </Badge>
               </div>
             </CardContent>
