@@ -1,3 +1,6 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import { ChevronRight, Container, Database, Globe, Zap } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -8,12 +11,19 @@ import { DashboardShell } from "@/components/dashboard-shell"
 import { RecentServices } from "@/components/recent-services"
 import { ServiceQuickActions } from "@/components/service-quick-actions"
 import { ServerMetrics } from "@/components/server-metrics"
+import { getUsername } from "@/lib/auth"
 
 export default function DashboardPage() {
+  const [username, setUsername] = useState<string | null>(null)
+
+  useEffect(() => {
+    setUsername(getUsername())
+  }, [])
+
   return (
     <>
       <DashboardShell>
-        <DashboardHeader heading="Welcome back, Tom" text="Here's what's happening with your services today.">
+        <DashboardHeader heading={username ? `Welcome back, ${username}` : "Welcome back"} text="Here's what's happening with your services today.">
           <Button>
             Deploy Service <ChevronRight className="ml-2 h-4 w-4" />
           </Button>
