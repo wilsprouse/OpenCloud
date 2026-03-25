@@ -21,6 +21,14 @@ type BlobContainer = {
   lastModified: string
 }
 
+type FunctionItem = {
+  id: string
+  name: string
+  runtime: string
+  status: string
+  lastModified: string
+}
+
 // Returns a human-readable relative time string (e.g. "5 min ago") from an ISO date string.
 function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString)
@@ -39,6 +47,8 @@ export default function DashboardPage() {
   const [username, setUsername] = useState<string | null>(null)
   const [bucketCount, setBucketCount] = useState<number>(0)
   const [blobLastUsed, setBlobLastUsed] = useState<string>("Never")
+  const [functionCount, setFunctionCount] = useState<number>(0)
+  const [functionLastUsed, setFunctionLastUsed] = useState<string>("Never")
 
   useEffect(() => {
     setUsername(getUsername())
@@ -63,6 +73,27 @@ export default function DashboardPage() {
       }
     }
     fetchBlobStats()
+  }, [])
+
+  useEffect(() => {
+    const fetchFunctionStats = async () => {
+      try {
+        const res = await client.get<FunctionItem[]>("/list-functions")
+        const functions: FunctionItem[] = res.data || []
+        setFunctionCount(functions.length)
+        if (functions.length > 0) {
+          const latest = functions.reduce((prev, curr) => {
+            const prevTime = new Date(prev.lastModified).getTime()
+            const currTime = new Date(curr.lastModified).getTime()
+            return currTime > prevTime ? curr : prev
+          })
+          setFunctionLastUsed(formatRelativeTime(latest.lastModified))
+        }
+      } catch (err) {
+        console.error("Failed to fetch function stats:", err)
+      }
+    }
+    fetchFunctionStats()
   }, [])
 
   return (
@@ -93,15 +124,15 @@ export default function DashboardPage() {
 
           <Card className="border-l-4 border-l-green-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Serverless Functions</CardTitle>
+              <CardTitle className="text-sm font-medium">Functions</CardTitle>
               <Zap className="h-4 w-4 text-green-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">12</div>
+              <div className="text-2xl font-bold">{functionCount}</div>
               <p className="text-xs text-muted-foreground">Functions deployed</p>
               <div className="mt-2">
                 <Badge variant="outline" className="text-xs">
-                  Last used: 2 min ago
+                  Last used: {functionLastUsed}
                 </Badge>
               </div>
             </CardContent>
