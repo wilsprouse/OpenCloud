@@ -403,7 +403,7 @@ export default function Pipelines() {
                     }}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Press <kbd className="px-1 py-0.5 rounded border border-muted-foreground/30 bg-muted font-mono text-xs">Tab</kbd> in an empty field to populate with a sample pipeline script, or type your own bash script directly.
+                    Press <kbd className="px-1 py-0.5 rounded border border-muted-foreground/30 bg-muted font-mono text-xs">Tab</kbd> to populate with a sample pipeline script, or type your own bash script directly.
                   </p>
                 </div>
               </div>
