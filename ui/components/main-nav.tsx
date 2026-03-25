@@ -83,7 +83,7 @@ export function MainNav() {
                     href="/storage/blob"
                     className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800"
                   >
-                    <Cloud className="h-4 w-4" />
+                    <HardDrive className="h-4 w-4" />
                     Blob Storage
                   </Link>
                 </DropdownMenu.Item>
@@ -96,10 +96,10 @@ export function MainNav() {
                     Container Registry
                   </Link>
                 </DropdownMenu.Item>
-                <DropdownMenu.Item className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800">
+		{/*<DropdownMenu.Item className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800">
                   <HardDrive className="h-4 w-4" />
                   Databases (Coming Soon)
-                </DropdownMenu.Item>
+                </DropdownMenu.Item>*/}
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>

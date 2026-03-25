@@ -315,11 +315,6 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
               }
               return displayName
             })()}</span>
-            {functionData && (
-              <Badge className={getStatusColor(functionData.status)}>
-                {functionData.status}
-              </Badge>
-            )}
           </div>
         } 
         text="Edit function configuration and code"
