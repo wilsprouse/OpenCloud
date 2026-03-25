@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -435,5 +437,201 @@ func TestDeleteImageConnectsToPodman(t *testing.T) {
 	// A BadRequest here would indicate incorrect validation logic.
 	if resp.StatusCode == http.StatusBadRequest {
 		t.Errorf("Valid request should not return BadRequest; got %d", resp.StatusCode)
+	}
+}
+
+// TestRenameContainerInvalidMethod tests that RenameContainer rejects non-PUT requests
+func TestRenameContainerInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/rename-container", nil)
+	w := httptest.NewRecorder()
+
+	RenameContainer(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
+	}
+}
+
+// TestRenameContainerInvalidJSON tests that RenameContainer rejects invalid JSON
+func TestRenameContainerInvalidJSON(t *testing.T) {
+	invalidJSON := bytes.NewBufferString("{invalid json")
+	req := httptest.NewRequest(http.MethodPut, "/rename-container", invalidJSON)
+	w := httptest.NewRecorder()
+
+	RenameContainer(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestRenameContainerValidation tests the input validation rules for RenameContainer
+func TestRenameContainerValidation(t *testing.T) {
+	testCases := []struct {
+		name           string
+		currentName    string
+		newName        string
+		expectedStatus int
+		description    string
+	}{
+		{
+			name:           "Missing currentName",
+			currentName:    "",
+			newName:        "new-name",
+			expectedStatus: http.StatusBadRequest,
+			description:    "Should reject empty currentName",
+		},
+		{
+			name:           "Missing newName",
+			currentName:    "old-name",
+			newName:        "",
+			expectedStatus: http.StatusBadRequest,
+			description:    "Should reject empty newName",
+		},
+		{
+			name:           "New name with space",
+			currentName:    "old-name",
+			newName:        "new name",
+			expectedStatus: http.StatusBadRequest,
+			description:    "Should reject newName containing a space",
+		},
+		{
+			name:           "New name with tab",
+			currentName:    "old-name",
+			newName:        "new\tname",
+			expectedStatus: http.StatusBadRequest,
+			description:    "Should reject newName containing a tab",
+		},
+		{
+			name:           "New name exceeds 50 characters",
+			currentName:    "old-name",
+			newName:        "this-name-is-way-too-long-and-exceeds-fifty-characters",
+			expectedStatus: http.StatusBadRequest,
+			description:    "Should reject newName longer than 50 characters",
+		},
+		{
+			name:           "Non-existent current container",
+			currentName:    "does-not-exist-12345",
+			newName:        "new-name-12345",
+			expectedStatus: http.StatusNotFound,
+			description:    "Should return 404 when current container does not exist",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]string{
+				"currentName": tc.currentName,
+				"newName":     tc.newName,
+			})
+			req := httptest.NewRequest(http.MethodPut, "/rename-container", bytes.NewBuffer(body))
+			w := httptest.NewRecorder()
+
+			RenameContainer(w, req)
+
+			resp := w.Result()
+			if resp.StatusCode != tc.expectedStatus {
+				t.Errorf("%s: Expected status %d, got %d", tc.description, tc.expectedStatus, resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestRenameContainerSuccess tests that RenameContainer succeeds when the container exists
+func TestRenameContainerSuccess(t *testing.T) {
+	// Create a temporary directory to act as the blob_storage base
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("Cannot determine home directory, skipping test")
+	}
+
+	basePath := filepath.Join(home, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(basePath, 0755); err != nil {
+		t.Skipf("Cannot create blob_storage directory: %v", err)
+	}
+
+	// Create a source container
+	srcName := "test-rename-src-container"
+	dstName := "test-rename-dst-container"
+	srcPath := filepath.Join(basePath, srcName)
+	dstPath := filepath.Join(basePath, dstName)
+
+	// Clean up before and after the test
+	os.RemoveAll(srcPath)
+	os.RemoveAll(dstPath)
+	defer os.RemoveAll(srcPath)
+	defer os.RemoveAll(dstPath)
+
+	if err := os.Mkdir(srcPath, 0755); err != nil {
+		t.Fatalf("Failed to create source container for test: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"currentName": srcName,
+		"newName":     dstName,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/rename-container", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	RenameContainer(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	// Verify source directory was removed and destination exists
+	if _, err := os.Stat(srcPath); !os.IsNotExist(err) {
+		t.Errorf("Expected source container to be removed after rename")
+	}
+	if _, err := os.Stat(dstPath); os.IsNotExist(err) {
+		t.Errorf("Expected destination container to exist after rename")
+	}
+}
+
+// TestRenameContainerConflict tests that RenameContainer rejects a rename when the new name is taken
+func TestRenameContainerConflict(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("Cannot determine home directory, skipping test")
+	}
+
+	basePath := filepath.Join(home, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(basePath, 0755); err != nil {
+		t.Skipf("Cannot create blob_storage directory: %v", err)
+	}
+
+	srcName := "test-conflict-src"
+	dstName := "test-conflict-dst"
+	srcPath := filepath.Join(basePath, srcName)
+	dstPath := filepath.Join(basePath, dstName)
+
+	os.RemoveAll(srcPath)
+	os.RemoveAll(dstPath)
+	defer os.RemoveAll(srcPath)
+	defer os.RemoveAll(dstPath)
+
+	// Create both source and destination directories
+	if err := os.Mkdir(srcPath, 0755); err != nil {
+		t.Fatalf("Failed to create source container: %v", err)
+	}
+	if err := os.Mkdir(dstPath, 0755); err != nil {
+		t.Fatalf("Failed to create destination container: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"currentName": srcName,
+		"newName":     dstName,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/rename-container", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	RenameContainer(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("Expected status %d, got %d", http.StatusConflict, resp.StatusCode)
 	}
 }

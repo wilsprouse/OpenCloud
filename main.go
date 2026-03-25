@@ -156,6 +156,7 @@ func main() {
 	mux.HandleFunc("/upload-object", api.UploadObject)
 	mux.HandleFunc("/delete-object", api.DeleteObject)
 	mux.HandleFunc("/download-object", api.DownloadObject)
+	mux.HandleFunc("/rename-container", api.RenameContainer)
 	mux.HandleFunc("/list-functions", computeapi.ListFunctions)
 	mux.HandleFunc("/invoke-function", computeapi.InvokeFunction)
 	mux.HandleFunc("/create-function", computeapi.CreateFunction)
