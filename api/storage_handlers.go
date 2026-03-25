@@ -257,6 +257,73 @@ func CreateBucket(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "container": body.Name})
 }
 
+// RenameContainer renames an existing blob storage container
+func RenameContainer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		CurrentName string `json:"currentName"`
+		NewName     string `json:"newName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate current name is provided
+	if body.CurrentName == "" {
+		http.Error(w, "Current container name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate new name: required, no spaces, and max 50 characters
+	if body.NewName == "" {
+		http.Error(w, "New container name is required", http.StatusBadRequest)
+		return
+	}
+	if strings.ContainsAny(body.NewName, " \t\n\r") {
+		http.Error(w, "Container name cannot contain spaces", http.StatusBadRequest)
+		return
+	}
+	if len(body.NewName) > 50 {
+		http.Error(w, "Container name must be 50 characters or fewer", http.StatusBadRequest)
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	basePath := filepath.Join(home, ".opencloud", "blob_storage")
+	currentPath := filepath.Join(basePath, body.CurrentName)
+	newPath := filepath.Join(basePath, body.NewName)
+
+	// Ensure the current container exists
+	if _, err := os.Stat(currentPath); os.IsNotExist(err) {
+		http.Error(w, "Container not found", http.StatusNotFound)
+		return
+	}
+
+	// Ensure the new name is not already taken
+	if _, err := os.Stat(newPath); err == nil {
+		http.Error(w, "A container with that name already exists", http.StatusConflict)
+		return
+	}
+
+	if err := os.Rename(currentPath, newPath); err != nil {
+		http.Error(w, "Failed to rename container", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "container": body.NewName})
+}
+
 // UploadObject uploads a file to a blob storage container
 func UploadObject(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(10 << 20) // 10MB limit

@@ -19,6 +19,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import client from "@/app/utility/post"
+import { CONTAINER_NAME_MAX_LENGTH, isValidContainerName } from "@/lib/container-name"
+import { useContainerNameWarning } from "@/lib/use-container-name-warning"
 import { 
   Upload, 
   RefreshCw, 
@@ -29,7 +31,8 @@ import {
   HardDrive,
   FileText,
   ArrowLeft,
-  Package
+  Package,
+  Pencil,
 } from "lucide-react"
 
 type Blob = {
@@ -51,6 +54,19 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [blobToDelete, setBlobToDelete] = useState<{ container: string; name: string } | null>(null)
+
+  // Rename dialog state
+  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
+  const [newContainerName, setNewContainerName] = useState<string>("")
+  const [isRenaming, setIsRenaming] = useState(false)
+  const isNewContainerNameValid = isValidContainerName(newContainerName)
+
+  const {
+    handleBeforeInput: handleNewNameBeforeInput,
+    handleChange: handleNewNameChange,
+    handlePaste: handleNewNamePaste,
+    resetWarning: resetNewNameWarning,
+  } = useContainerNameWarning(setNewContainerName)
 
   // Upload form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -161,6 +177,41 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
     }
   }
 
+  const openRenameDialog = () => {
+    setNewContainerName(containerName)
+    resetNewNameWarning()
+    setIsRenameDialogOpen(true)
+  }
+
+  const closeRenameDialog = () => {
+    setNewContainerName("")
+    resetNewNameWarning()
+    setIsRenameDialogOpen(false)
+  }
+
+  const handleRename = async () => {
+    if (!isNewContainerNameValid || newContainerName === containerName) return
+
+    setIsRenaming(true)
+    try {
+      const res = await client.put("/rename-container", {
+        currentName: containerName,
+        newName: newContainerName,
+      })
+
+      if (res.status === 200) {
+        closeRenameDialog()
+        router.push(`/storage/blob/${encodeURIComponent(newContainerName)}`)
+      } else {
+        console.error("Failed to rename container:", res.statusText)
+      }
+    } catch (err) {
+      console.error("Failed to rename container:", err)
+    } finally {
+      setIsRenaming(false)
+    }
+  }
+
   // Format file size
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return "0 B"
@@ -204,6 +255,15 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <span>{containerName}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={openRenameDialog}
+              title="Rename container"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
           </div>
         } 
         text="Manage objects in this container"
@@ -370,6 +430,46 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
             </Button>
             <Button variant="destructive" onClick={handleDelete}>
               Delete Object
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Container Dialog */}
+      <Dialog open={isRenameDialogOpen} onOpenChange={(open) => { if (!open) closeRenameDialog() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename Container</DialogTitle>
+            <DialogDescription>
+              Enter a new name for <strong>{containerName}</strong>. Container names cannot contain spaces and must be 50 characters or fewer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-container-name">New Container Name</Label>
+              <Input
+                id="new-container-name"
+                placeholder="new-container-name"
+                value={newContainerName}
+                onChange={(e) => handleNewNameChange(e.target.value)}
+                onBeforeInput={handleNewNameBeforeInput}
+                onPaste={handleNewNamePaste}
+                maxLength={CONTAINER_NAME_MAX_LENGTH}
+              />
+              <p className="text-xs text-muted-foreground">
+                Container names cannot contain spaces and must be 50 characters or fewer.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeRenameDialog} disabled={isRenaming}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRename}
+              disabled={!isNewContainerNameValid || newContainerName === containerName || isRenaming}
+            >
+              {isRenaming ? "Renaming..." : "Rename"}
             </Button>
           </DialogFooter>
         </DialogContent>
