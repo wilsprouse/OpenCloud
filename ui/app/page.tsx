@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ChevronRight, Container, Database, Globe, Zap } from "lucide-react"
+import { ChevronRight, Container, Globe, HardDrive, Zap } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,12 +12,57 @@ import { RecentServices } from "@/components/recent-services"
 import { ServiceQuickActions } from "@/components/service-quick-actions"
 import { ServerMetrics } from "@/components/server-metrics"
 import { getUsername } from "@/lib/auth"
+import client from "@/app/utility/post"
+
+type BlobContainer = {
+  name: string
+  objectCount: number
+  totalSize: number
+  lastModified: string
+}
+
+// Returns a human-readable relative time string (e.g. "5 min ago") from an ISO date string.
+function formatRelativeTime(isoString: string): string {
+  const date = new Date(isoString)
+  const now = new Date()
+  const diffSec = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000))
+  if (diffSec < 60) return `${diffSec} sec ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin} min ago`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr} hour${diffHr !== 1 ? "s" : ""} ago`
+  const diffDay = Math.floor(diffHr / 24)
+  return `${diffDay} day${diffDay !== 1 ? "s" : ""} ago`
+}
 
 export default function DashboardPage() {
   const [username, setUsername] = useState<string | null>(null)
+  const [bucketCount, setBucketCount] = useState<number>(0)
+  const [blobLastUsed, setBlobLastUsed] = useState<string>("Never")
 
   useEffect(() => {
     setUsername(getUsername())
+  }, [])
+
+  useEffect(() => {
+    const fetchBlobStats = async () => {
+      try {
+        const res = await client.get<BlobContainer[]>("/list-blob-containers")
+        const containers: BlobContainer[] = res.data || []
+        setBucketCount(containers.length)
+        if (containers.length > 0) {
+          const latest = containers.reduce((prev, curr) => {
+            const prevTime = new Date(prev.lastModified).getTime()
+            const currTime = new Date(curr.lastModified).getTime()
+            return currTime > prevTime ? curr : prev
+          })
+          setBlobLastUsed(formatRelativeTime(latest.lastModified))
+        }
+      } catch (err) {
+        console.error("Failed to fetch blob storage stats:", err)
+      }
+    }
+    fetchBlobStats()
   }, [])
 
   return (
@@ -64,15 +109,15 @@ export default function DashboardPage() {
 
           <Card className="border-l-4 border-l-purple-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Databases</CardTitle>
-              <Database className="h-4 w-4 text-purple-500" />
+              <CardTitle className="text-sm font-medium">Blob Storage</CardTitle>
+              <HardDrive className="h-4 w-4 text-purple-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">8</div>
-              <p className="text-xs text-muted-foreground">Active databases</p>
+              <div className="text-2xl font-bold">{bucketCount}</div>
+              <p className="text-xs text-muted-foreground">Active Buckets</p>
               <div className="mt-2">
                 <Badge variant="outline" className="text-xs">
-                  Last used: 1 hour ago
+                  Last used: {blobLastUsed}
                 </Badge>
               </div>
             </CardContent>
