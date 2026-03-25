@@ -21,6 +21,8 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
 import client from "@/app/utility/post"
+import { PIPELINE_NAME_MAX_LENGTH, isValidPipelineName } from "@/lib/pipeline-name"
+import { usePipelineNameWarning } from "@/lib/use-pipeline-name-warning"
 import { 
   RefreshCw, 
   Search,
@@ -110,6 +112,13 @@ export default function Pipelines() {
   const [pipelineName, setPipelineName] = useState("")
   const [pipelineDescription, setPipelineDescription] = useState("")
   const [pipelineCode, setPipelineCode] = useState("")
+  const isPipelineNameValid = isValidPipelineName(pipelineName)
+  const {
+    handleBeforeInput: handlePipelineNameBeforeInput,
+    handleChange: handlePipelineNameChange,
+    handlePaste: handlePipelineNamePaste,
+    resetWarning: resetPipelineNameWarning,
+  } = usePipelineNameWarning(setPipelineName)
 
   // Check if service is enabled
   const checkServiceStatus = async () => {
@@ -348,7 +357,10 @@ export default function Pipelines() {
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             {loading ? "Refreshing..." : "Refresh"}
           </Button>
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <Dialog open={isCreateDialogOpen} onOpenChange={(open) => {
+              setIsCreateDialogOpen(open)
+              if (!open) resetPipelineNameWarning()
+            }}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
@@ -371,8 +383,14 @@ export default function Pipelines() {
                     id="pipelineName"
                     placeholder="my-build-pipeline"
                     value={pipelineName}
-                    onChange={(e) => setPipelineName(e.target.value)}
+                    onChange={(e) => handlePipelineNameChange(e.target.value)}
+                    onBeforeInput={handlePipelineNameBeforeInput}
+                    onPaste={handlePipelineNamePaste}
+                    maxLength={PIPELINE_NAME_MAX_LENGTH}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Pipeline names cannot contain spaces and must be 50 characters or fewer.
+                  </p>
                 </div>
 
                 {/* Pipeline Description */}
@@ -411,13 +429,13 @@ export default function Pipelines() {
               <DialogFooter>
                 <Button
                   variant="outline"
-                  onClick={() => setIsCreateDialogOpen(false)}
+                  onClick={() => { setIsCreateDialogOpen(false); resetPipelineNameWarning() }}
                 >
                   Cancel
                 </Button>
                 <Button
                   onClick={handleCreatePipeline}
-                  disabled={!pipelineName || !pipelineCode}
+                  disabled={!isPipelineNameValid || !pipelineCode}
                 >
                   <Plus className="mr-2 h-4 w-4" />
                   Create Pipeline
@@ -603,7 +621,10 @@ export default function Pipelines() {
       </Card>
 
       {/* Edit Pipeline Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+      <Dialog open={isEditDialogOpen} onOpenChange={(open) => {
+          setIsEditDialogOpen(open)
+          if (!open) resetPipelineNameWarning()
+        }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Pipeline</DialogTitle>
@@ -620,8 +641,14 @@ export default function Pipelines() {
                 id="editPipelineName"
                 placeholder="my-build-pipeline"
                 value={pipelineName}
-                onChange={(e) => setPipelineName(e.target.value)}
+                onChange={(e) => handlePipelineNameChange(e.target.value)}
+                onBeforeInput={handlePipelineNameBeforeInput}
+                onPaste={handlePipelineNamePaste}
+                maxLength={PIPELINE_NAME_MAX_LENGTH}
               />
+              <p className="text-xs text-muted-foreground">
+                Pipeline names cannot contain spaces and must be 50 characters or fewer.
+              </p>
             </div>
 
             {/* Pipeline Description */}
@@ -666,7 +693,7 @@ export default function Pipelines() {
             </Button>
             <Button
               onClick={handleEditPipeline}
-              disabled={!pipelineCode}
+              disabled={!isPipelineNameValid || !pipelineCode}
             >
               <Edit className="mr-2 h-4 w-4" />
               Update Pipeline
