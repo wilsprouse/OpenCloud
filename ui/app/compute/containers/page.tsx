@@ -91,6 +91,8 @@ export default function ContainersPage() {
   const [stopError, setStopError] = useState("")
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [containerToDelete, setContainerToDelete] = useState<ContainerItem | null>(null)
+  // Tracks the container ID currently undergoing a start or stop action
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null)
 
   // Available images fetched from the Container Registry for the dropdown
   const [availableImages, setAvailableImages] = useState<AvailableImage[]>([])
@@ -142,6 +144,7 @@ export default function ContainersPage() {
 
   // Manage container actions
   const handleAction = async (id: string, action: "start" | "stop") => {
+    setActionLoadingId(id)
     try {
       await client.post(`/containers/${id}/${action}`)
       await fetchContainers()
@@ -149,6 +152,8 @@ export default function ContainersPage() {
     } catch (err) {
       console.error(`Failed to ${action} container:`, err)
       return false
+    } finally {
+      setActionLoadingId(null)
     }
   }
 
@@ -408,8 +413,13 @@ export default function ContainersPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => handleAction(c.Id, "start")}
+                          disabled={actionLoadingId === c.Id}
                         >
-                          <Play className="h-4 w-4 mr-1" />
+                          {actionLoadingId === c.Id ? (
+                            <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                          ) : (
+                            <Play className="h-4 w-4 mr-1" />
+                          )}
                           Start
                         </Button>
                       )}
@@ -418,6 +428,7 @@ export default function ContainersPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => openStopDialog(c)}
+                          disabled={actionLoadingId === c.Id}
                         >
                           <Square className="h-4 w-4 mr-1" />
                           Stop
@@ -776,11 +787,18 @@ export default function ContainersPage() {
             </p>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={closeStopDialog}>
+            <Button variant="outline" onClick={closeStopDialog} disabled={actionLoadingId === containerToStop?.Id}>
               Cancel
             </Button>
-            <Button onClick={handleStopContainer}>
-              Stop
+            <Button onClick={handleStopContainer} disabled={actionLoadingId === containerToStop?.Id}>
+              {actionLoadingId === containerToStop?.Id ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Stopping...
+                </>
+              ) : (
+                "Stop"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
