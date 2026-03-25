@@ -79,7 +79,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
   const [pipelineName, setPipelineName] = useState("")
   const [pipelineDescription, setPipelineDescription] = useState("")
   const [pipelineCode, setPipelineCode] = useState("")
-  const [pipelineBranch, setPipelineBranch] = useState("main")
 
   // Fetch pipeline details
   const fetchPipelineDetails = async () => {
@@ -93,7 +92,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
       setPipelineName(data.name)
       setPipelineDescription(data.description || "")
       setPipelineCode(data.code || "")
-      setPipelineBranch(data.branch || "main")
     } catch (err) {
       console.error("Failed to fetch pipeline details:", err)
     } finally {
@@ -159,7 +157,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
         name: pipelineName,
         description: pipelineDescription,
         code: pipelineCode,
-        branch: pipelineBranch,
       })
       
       toast.success("Pipeline updated successfully")
@@ -189,7 +186,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
       setPipelineName(pipeline.name)
       setPipelineDescription(pipeline.description || "")
       setPipelineCode(pipeline.code || "")
-      setPipelineBranch(pipeline.branch || "main")
     }
     setIsEditMode(false)
   }
@@ -339,16 +335,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                     placeholder="Pipeline description"
                   />
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="pipeline-branch">Branch</Label>
-                  <Input
-                    id="pipeline-branch"
-                    value={pipelineBranch}
-                    onChange={(e) => setPipelineBranch(e.target.value)}
-                    placeholder="main"
-                  />
-                </div>
               </>
             ) : (
               <>
@@ -371,14 +357,6 @@ export default function PipelineDetail({ params }: { params: Promise<{ id: strin
                       <StatusIcon className={`h-4 w-4 ${statusInfo.color} ${isRunning ? 'animate-pulse' : ''}`} />
                     </div>
                     <span className="text-sm capitalize">{pipeline?.status}</span>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="text-sm font-medium text-muted-foreground">Branch</div>
-                  <div className="flex items-center space-x-1 text-sm">
-                    <GitBranch className="h-4 w-4" />
-                    <span>{pipeline?.branch || "main"}</span>
                   </div>
                 </div>
 
