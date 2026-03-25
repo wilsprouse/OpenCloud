@@ -50,6 +50,47 @@ type Pipeline = {
   createdAt: string
 }
 
+const SAMPLE_PIPELINE_SCRIPT = `#!/bin/bash
+# Example CI/CD Pipeline Script
+set -e  # Exit on error
+
+# Color output functions
+warning() {
+  echo -e "\\033[1;33m[WARNING]\\033[0m $1"
+}
+
+error() {
+  echo -e "\\033[1;31m[ERROR]\\033[0m $1"
+  exit 1
+}
+
+success() {
+  echo -e "\\033[1;32m[SUCCESS]\\033[0m $1"
+}
+
+# Source stage
+echo "=== Source Stage ==="
+success "Checking out source code..."
+git clone https://github.com/user/repo.git || error "Failed to clone repository"
+
+# Build stage
+echo "=== Build Stage ==="
+success "Installing dependencies..."
+npm install || error "Failed to install dependencies"
+success "Building application..."
+npm run build || error "Build failed"
+
+# Test stage
+echo "=== Test Stage ==="
+success "Running tests..."
+npm test || error "Tests failed"
+
+# Deploy stage
+echo "=== Deploy Stage ==="
+warning "Starting deployment..."
+# Add your deployment commands here
+success "Deployment completed successfully!"`
+
 export default function Pipelines() {
   const router = useRouter()
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -350,52 +391,19 @@ export default function Pipelines() {
                   <Label htmlFor="pipelineCode">Pipeline Configuration *</Label>
                   <Textarea
                     id="pipelineCode"
-                    placeholder={`#!/bin/bash
-# Example CI/CD Pipeline Script
-set -e  # Exit on error
-
-# Color output functions
-warning() {
-  echo -e "\\033[1;33m[WARNING]\\033[0m $1"
-}
-
-error() {
-  echo -e "\\033[1;31m[ERROR]\\033[0m $1"
-  exit 1
-}
-
-success() {
-  echo -e "\\033[1;32m[SUCCESS]\\033[0m $1"
-}
-
-# Source stage
-echo "=== Source Stage ==="
-success "Checking out source code..."
-git clone https://github.com/user/repo.git || error "Failed to clone repository"
-
-# Build stage
-echo "=== Build Stage ==="
-success "Installing dependencies..."
-npm install || error "Failed to install dependencies"
-success "Building application..."
-npm run build || error "Build failed"
-
-# Test stage
-echo "=== Test Stage ==="
-success "Running tests..."
-npm test || error "Tests failed"
-
-# Deploy stage
-echo "=== Deploy Stage ==="
-warning "Starting deployment..."
-# Add your deployment commands here
-success "Deployment completed successfully!"`}
+                    placeholder={SAMPLE_PIPELINE_SCRIPT}
                     className="min-h-[300px] font-mono text-sm"
                     value={pipelineCode}
                     onChange={(e) => setPipelineCode(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Tab" && !pipelineCode) {
+                        e.preventDefault()
+                        setPipelineCode(SAMPLE_PIPELINE_SCRIPT)
+                      }
+                    }}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Enter your pipeline configuration as a bash script
+                    Press <kbd className="px-1 py-0.5 rounded border border-muted-foreground/30 bg-muted font-mono text-xs">Tab</kbd> to populate with a sample pipeline script, or type your own bash script directly.
                   </p>
                 </div>
               </div>
