@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ChevronRight, Container, Globe, HardDrive, Zap } from "lucide-react"
+import { ChevronRight, Container, GitBranch, HardDrive, Zap } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -38,6 +38,15 @@ type ContainerItem = {
   Created: number
 }
 
+type PipelineItem = {
+  id: string
+  name: string
+  description: string
+  status: string
+  createdAt: string
+  lastRun?: string
+}
+
 // Returns a human-readable relative time string (e.g. "5 min ago") from an ISO date string.
 function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString)
@@ -60,6 +69,8 @@ export default function DashboardPage() {
   const [functionLastUsed, setFunctionLastUsed] = useState<string>("Never")
   const [containerCount, setContainerCount] = useState<number>(0)
   const [containerLastUsed, setContainerLastUsed] = useState<string>("Never")
+  const [pipelineCount, setPipelineCount] = useState<number>(0)
+  const [pipelineLastUsed, setPipelineLastUsed] = useState<string>("Never")
 
   useEffect(() => {
     setUsername(getUsername())
@@ -132,6 +143,29 @@ export default function DashboardPage() {
     fetchContainerStats()
   }, [])
 
+  useEffect(() => {
+    const fetchPipelineStats = async () => {
+      try {
+        const res = await client.get<PipelineItem[]>("/get-pipelines")
+        const pipelines: PipelineItem[] = res.data || []
+        setPipelineCount(pipelines.length)
+        if (pipelines.length > 0) {
+          // Prefer lastRun time; fall back to createdAt for pipelines never run.
+          const latest = pipelines.reduce((prev, curr) => {
+            const prevTime = new Date(prev.lastRun ?? prev.createdAt).getTime()
+            const currTime = new Date(curr.lastRun ?? curr.createdAt).getTime()
+            return currTime > prevTime ? curr : prev
+          })
+          const activityTime = latest.lastRun ?? latest.createdAt
+          setPipelineLastUsed(formatRelativeTime(activityTime))
+        }
+      } catch (err) {
+        console.error("Failed to fetch pipeline stats:", err)
+      }
+    }
+    fetchPipelineStats()
+  }, [])
+
   return (
     <>
       <DashboardShell>
@@ -192,15 +226,15 @@ export default function DashboardPage() {
 
           <Card className="border-l-4 border-l-orange-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">API Gateway</CardTitle>
-              <Globe className="h-4 w-4 text-orange-500" />
+              <CardTitle className="text-sm font-medium">Pipelines</CardTitle>
+              <GitBranch className="h-4 w-4 text-orange-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">156K</div>
-              <p className="text-xs text-muted-foreground">Requests today</p>
+              <div className="text-2xl font-bold">{pipelineCount}</div>
+              <p className="text-xs text-muted-foreground">Pipelines deployed</p>
               <div className="mt-2">
                 <Badge variant="outline" className="text-xs">
-                  Last used: 30 sec ago
+                  Last used: {pipelineLastUsed}
                 </Badge>
               </div>
             </CardContent>
