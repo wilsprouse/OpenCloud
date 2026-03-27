@@ -629,7 +629,10 @@ func RunPipeline(w http.ResponseWriter, r *http.Request) {
 	// Execute pipeline in a goroutine to avoid blocking
 	go func() {
 		ctx := context.Background()
-		cmd := exec.CommandContext(ctx, "/bin/bash", pipelinePath)
+		// Use -e to exit immediately on any command failure, and -o pipefail so that
+		// failures in piped commands are also detected. This ensures the pipeline is
+		// marked as failed if any command in the script fails, not just the last one.
+		cmd := exec.CommandContext(ctx, "/bin/bash", "-e", "-o", "pipefail", pipelinePath)
 
 		// Capture output
 		var out bytes.Buffer
