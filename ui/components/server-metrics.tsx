@@ -12,6 +12,7 @@ export function ServerMetrics() {
   const [ AvailableStorage, setAvailableStorage ] = useState("")
   const [ TotalStorage, setTotalStorage ] = useState("")
   const [ PercentageUsed, setPercentageUsed ] = useState("")
+  const [ CpuUsage, setCpuUsage ] = useState<number | null>(null)
 
   useEffect(() => {
     
@@ -25,6 +26,7 @@ export function ServerMetrics() {
         setAvailableStorage(response.data.STORAGE.AvailableStorage)
         setTotalStorage(response.data.STORAGE.TotalStorage)
         setPercentageUsed(response.data.STORAGE.PercentageUsed)
+        setCpuUsage(response.data.CPU)
 
       } catch (error) {
         console.error("Error fetching data:", error)
@@ -55,11 +57,10 @@ export function ServerMetrics() {
             <Cpu className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">67%</div>
-            <Progress value={67} className="mt-2" />
+            <div className="text-2xl font-bold">{CpuUsage !== null ? `${CpuUsage}%` : "—"}</div>
+            <Progress value={CpuUsage ?? 0} className="mt-2" />
             <div className="flex justify-between text-xs text-muted-foreground mt-2">
-              <span>8 cores</span>
-              <span>2.4 GHz avg</span>
+              <span>Snapshot on page load</span>
             </div>
           </CardContent>
         </Card>
