@@ -353,6 +353,88 @@ func TestRunPipeline(t *testing.T) {
 	}
 }
 
+// TestRunPipelineFailsOnIntermediateError verifies that a pipeline is marked as
+// failed when an intermediate command fails, even if the last command succeeds.
+func TestRunPipelineFailsOnIntermediateError(t *testing.T) {
+	// Setup: Create a temporary directory for test pipelines
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	pipelineDir := filepath.Join(tmpHome, ".opencloud", "pipelines")
+	if err := os.MkdirAll(pipelineDir, 0755); err != nil {
+		t.Fatalf("Failed to create test pipeline directory: %v", err)
+	}
+
+	// Create a pipeline where an intermediate command fails but the last command succeeds.
+	// Without -e, the exit code would be 0 (last command); with -e it must be non-zero.
+	testPipelineID := "test-fail-mid-123"
+	testName := "test-fail-mid-pipeline"
+	testCode := "#!/bin/bash\necho 'before failure'\nfalse\necho 'after failure'"
+	createdAt := time.Now().Format(time.RFC3339)
+
+	pipelineFileName := sanitizePipelineName(testName) + ".sh"
+	pipelinePath := filepath.Join(pipelineDir, pipelineFileName)
+	if err := os.WriteFile(pipelinePath, []byte(testCode), 0755); err != nil {
+		t.Fatalf("Failed to create test pipeline file: %v", err)
+	}
+
+	if err := service_ledger.UpdatePipelineEntry(testPipelineID, testName, "", testCode, "main", "idle", createdAt); err != nil {
+		t.Fatalf("Failed to create test pipeline entry: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/run-pipeline/"+testPipelineID, nil)
+	w := httptest.NewRecorder()
+
+	RunPipeline(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+	if response["status"] != "running" {
+		t.Errorf("Expected status 'running', got '%s'", response["status"])
+	}
+
+	// Poll for the goroutine to finish (max 5 seconds) instead of a fixed sleep
+	deadline := time.Now().Add(5 * time.Second)
+	var ledgerEntry *service_ledger.PipelineEntry
+	for time.Now().Before(deadline) {
+		var err error
+		ledgerEntry, err = service_ledger.GetPipelineEntry(testPipelineID)
+		if err != nil {
+			t.Fatalf("Failed to get pipeline entry: %v", err)
+		}
+		if ledgerEntry != nil && ledgerEntry.Status != "running" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if ledgerEntry == nil {
+		t.Fatal("Pipeline entry not found in ledger")
+	}
+	if ledgerEntry.Status != "failed" {
+		t.Errorf("Expected pipeline status 'failed' when intermediate command fails, got '%s'", ledgerEntry.Status)
+	}
+
+	// Verify the log file records the failure
+	logDir := filepath.Join(tmpHome, ".opencloud", "logs", "pipelines")
+	logFileName := sanitizePipelineName(testName) + ".log"
+	logFilePath := filepath.Join(logDir, logFileName)
+	logContent, err := os.ReadFile(logFilePath)
+	if err != nil {
+		t.Fatalf("Failed to read log file: %v", err)
+	}
+	if !strings.Contains(string(logContent), "ERROR") {
+		t.Errorf("Expected log to contain ERROR marker, got: %s", string(logContent))
+	}
+}
+
 func TestGetPipelineLogs(t *testing.T) {
 	// Setup: Create a temporary directory for test pipelines
 	tmpHome := t.TempDir()
