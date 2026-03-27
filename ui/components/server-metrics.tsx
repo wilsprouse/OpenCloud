@@ -86,7 +86,7 @@ export function ServerMetrics() {
             <HardDrive className="h-4 w-4 text-purple-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{AvailableStorage} GB</div>
+            <div className="text-2xl font-bold">{UsedStorage} GB</div>
             <Progress value={parseInt(PercentageUsed)} className="mt-2" />
             <div className="flex justify-between text-xs text-muted-foreground mt-2">
               <span>{PercentageUsed}% Used of {TotalStorage} GB</span>
