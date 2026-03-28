@@ -326,7 +326,9 @@ func RenameContainer(w http.ResponseWriter, r *http.Request) {
 
 // UploadObject uploads a file to a blob storage container
 func UploadObject(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseMultipartForm(10 << 20) // 10MB limit
+	// 32 MB is the in-memory buffer; anything larger is automatically spilled
+	// to a temp file by the multipart parser, so there is no hard file-size cap.
+	err := r.ParseMultipartForm(32 << 20)
 	if err != nil {
 		http.Error(w, "Error parsing form data", http.StatusBadRequest)
 		return
@@ -340,23 +342,40 @@ func UploadObject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Error resolving home directory", http.StatusInternalServerError)
+		return
+	}
 	containerPath := filepath.Join(home, ".opencloud", "blob_storage", container)
-	os.MkdirAll(containerPath, 0755)
+	if err := os.MkdirAll(containerPath, 0755); err != nil {
+		http.Error(w, "Error creating container directory", http.StatusInternalServerError)
+		return
+	}
 
-	dst, err := os.Create(filepath.Join(containerPath, handler.Filename))
+	// Use filepath.Base to strip any path components from the browser-supplied
+	// filename, preventing directory traversal attacks.
+	safeFilename := filepath.Base(handler.Filename)
+	if safeFilename == "." || safeFilename == ".." || safeFilename == "" {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+	dst, err := os.Create(filepath.Join(containerPath, safeFilename))
 	if err != nil {
 		http.Error(w, "Error creating file", http.StatusInternalServerError)
 		return
 	}
 	defer dst.Close()
 
-	io.Copy(dst, file)
+	if _, err := io.Copy(dst, file); err != nil {
+		http.Error(w, "Error writing file", http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":    "ok",
-		"filename":  handler.Filename,
+		"filename":  safeFilename,
 		"container": container,
 	})
 }
