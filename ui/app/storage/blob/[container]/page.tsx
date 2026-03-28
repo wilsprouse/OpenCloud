@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import client from "@/app/utility/post"
+import { Progress } from "@/components/ui/progress"
 import { CONTAINER_NAME_MAX_LENGTH, isValidContainerName } from "@/lib/container-name"
 import { useContainerNameWarning } from "@/lib/use-container-name-warning"
 import { 
@@ -71,6 +72,8 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
 
   // Upload form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
 
   // Fetch blobs for this container
   const fetchBlobs = async () => {
@@ -156,9 +159,18 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
       formData.append("file", selectedFile)
       formData.append("container", containerName)
 
-      // POST to backend endpoint
+      setIsUploading(true)
+      setUploadProgress(0)
+
+      // POST to backend endpoint with upload progress tracking
       const res = await client.post("/upload-object", formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+            setUploadProgress(percent)
+          }
+        },
       })
 
       if (res.status === 200 || res.status === 201) {
@@ -167,6 +179,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
         // Reset form & close dialog
         setIsUploadDialogOpen(false)
         setSelectedFile(null)
+        setUploadProgress(0)
 
         // Refresh blob list
         fetchBlobs()
@@ -175,6 +188,9 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
       }
     } catch (err) {
       console.error("Failed to upload blob:", err)
+    } finally {
+      setIsUploading(false)
+      setUploadProgress(0)
     }
   }
 
@@ -300,16 +316,33 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
                   <Input
                     id="file"
                     type="file"
+                    disabled={isUploading}
                     onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
                   />
                 </div>
+                {isUploading && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm text-muted-foreground">
+                      <span>Uploading...</span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+                    <Progress value={uploadProgress} className="h-2" />
+                  </div>
+                )}
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)}>
+                <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)} disabled={isUploading}>
                   Cancel
                 </Button>
-                <Button onClick={handleUpload} disabled={!selectedFile}>
-                  Upload
+                <Button onClick={handleUpload} disabled={!selectedFile || isUploading}>
+                  {isUploading ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    "Upload"
+                  )}
                 </Button>
               </DialogFooter>
             </DialogContent>
