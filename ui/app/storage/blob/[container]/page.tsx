@@ -146,22 +146,22 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   }
 
   const handleUpload = async () => {
+    if (!selectedFile) {
+      console.warn("No file selected")
+      return
+    }
+
+    console.log(`Uploading file: ${selectedFile.name} to container: ${containerName}`)
+
+    // Create FormData for multipart/form-data upload
+    const formData = new FormData()
+    formData.append("file", selectedFile)
+    formData.append("container", containerName)
+
+    setIsUploading(true)
+    setUploadProgress(0)
+
     try {
-      if (!selectedFile) {
-        console.warn("No file selected")
-        return
-      }
-
-      console.log(`Uploading file: ${selectedFile.name} to container: ${containerName}`)
-
-      // Create FormData for multipart/form-data upload
-      const formData = new FormData()
-      formData.append("file", selectedFile)
-      formData.append("container", containerName)
-
-      setIsUploading(true)
-      setUploadProgress(0)
-
       // POST to backend endpoint with upload progress tracking
       const res = await client.post("/upload-object", formData, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -176,13 +176,12 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
       if (res.status === 200 || res.status === 201) {
         console.log("Upload successful:", res.data)
 
+        // Refresh blob list before closing so file appears immediately
+        await fetchBlobs()
+
         // Reset form & close dialog
         setIsUploadDialogOpen(false)
         setSelectedFile(null)
-        setUploadProgress(0)
-
-        // Refresh blob list
-        fetchBlobs()
       } else {
         console.error("Upload failed:", res.status, res.statusText)
       }
@@ -296,7 +295,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+          <Dialog open={isUploadDialogOpen} onOpenChange={(open) => { if (!isUploading) setIsUploadDialogOpen(open) }}>
             <DialogTrigger asChild>
               <Button>
                 <Upload className="mr-2 h-4 w-4" />
