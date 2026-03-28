@@ -74,6 +74,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   // Fetch blobs for this container
   const fetchBlobs = async () => {
@@ -145,6 +146,12 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
     }
   }
 
+  const closeUploadDialog = () => {
+    setIsUploadDialogOpen(false)
+    setUploadError(null)
+    setSelectedFile(null)
+  }
+
   const handleUpload = async () => {
     if (!selectedFile) {
       console.warn("No file selected")
@@ -160,11 +167,13 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
 
     setIsUploading(true)
     setUploadProgress(0)
+    setUploadError(null)
 
     try {
-      // POST to backend endpoint with upload progress tracking
+      // POST to backend endpoint with upload progress tracking.
+      // Do NOT set Content-Type manually — the browser must set it so the
+      // required multipart boundary is included automatically.
       const res = await client.post("/upload-object", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
@@ -180,12 +189,13 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
         await fetchBlobs()
 
         // Reset form & close dialog
-        setIsUploadDialogOpen(false)
-        setSelectedFile(null)
+        closeUploadDialog()
       } else {
+        setUploadError(`Upload failed (${res.status}). Please try again.`)
         console.error("Upload failed:", res.status, res.statusText)
       }
     } catch (err) {
+      setUploadError("Upload failed. Please check your connection and try again.")
       console.error("Failed to upload blob:", err)
     } finally {
       setIsUploading(false)
@@ -295,7 +305,12 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Dialog open={isUploadDialogOpen} onOpenChange={(open) => { if (!isUploading) setIsUploadDialogOpen(open) }}>
+          <Dialog open={isUploadDialogOpen} onOpenChange={(open) => {
+            if (!isUploading) {
+              if (!open) closeUploadDialog()
+              else setIsUploadDialogOpen(true)
+            }
+          }}>
             <DialogTrigger asChild>
               <Button>
                 <Upload className="mr-2 h-4 w-4" />
@@ -316,9 +331,15 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
                     id="file"
                     type="file"
                     disabled={isUploading}
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    onChange={(e) => {
+                      setSelectedFile(e.target.files?.[0] || null)
+                      setUploadError(null)
+                    }}
                   />
                 </div>
+                {uploadError && (
+                  <p className="text-sm text-destructive">{uploadError}</p>
+                )}
                 {isUploading && (
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm text-muted-foreground">
@@ -330,7 +351,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
                 )}
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)} disabled={isUploading}>
+                <Button variant="outline" onClick={closeUploadDialog} disabled={isUploading}>
                   Cancel
                 </Button>
                 <Button onClick={handleUpload} disabled={!selectedFile || isUploading}>
