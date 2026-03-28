@@ -383,6 +383,7 @@ func UploadObject(w http.ResponseWriter, r *http.Request) {
 			defer dst.Close()
 
 			if _, err := io.Copy(dst, part); err != nil {
+				fmt.Println(err);
 				http.Error(w, "Error writing file", http.StatusInternalServerError)
 				return
 			}
