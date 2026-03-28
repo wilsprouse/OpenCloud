@@ -629,10 +629,38 @@ func RunPipeline(w http.ResponseWriter, r *http.Request) {
 	// Execute pipeline in a goroutine to avoid blocking
 	go func() {
 		ctx := context.Background()
+
+		// Create a unique temporary run directory for this pipeline execution so that
+		// each run is isolated and cannot interfere with concurrent or previous runs.
+		runDir, mkErr := os.MkdirTemp(pipelineDir, sanitizedName+"-run-")
+		if mkErr != nil {
+			fmt.Printf("Warning: failed to create pipeline run directory: %v\n", mkErr)
+			// Without an isolated run directory the isolation guarantee cannot be met,
+			// so fail the pipeline immediately and update the ledger accordingly.
+			if updatedEntry, getErr := service_ledger.GetPipelineEntry(pipelineID); getErr == nil && updatedEntry != nil {
+				_ = service_ledger.UpdatePipelineEntry(
+					pipelineID,
+					updatedEntry.Name,
+					updatedEntry.Description,
+					updatedEntry.Code,
+					updatedEntry.Branch,
+					"failed",
+					updatedEntry.CreatedAt,
+				)
+			}
+			return
+		}
+
+		// Clean up the temporary run directory once the pipeline finishes.
+		defer os.RemoveAll(runDir)
+
 		// Use -e to exit immediately on any command failure, and -o pipefail so that
 		// failures in piped commands are also detected. This ensures the pipeline is
 		// marked as failed if any command in the script fails, not just the last one.
 		cmd := exec.CommandContext(ctx, "/bin/bash", "-e", "-o", "pipefail", pipelinePath)
+
+		// Run the pipeline inside its own isolated temporary directory.
+		cmd.Dir = runDir
 
 		// Capture output
 		var out bytes.Buffer

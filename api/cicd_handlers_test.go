@@ -332,6 +332,17 @@ func TestRunPipeline(t *testing.T) {
 	// Wait a moment for the goroutine to complete
 	time.Sleep(500 * time.Millisecond)
 
+	// Verify the temporary run directory was created and then cleaned up after execution.
+	entries, err := os.ReadDir(pipelineDir)
+	if err != nil {
+		t.Fatalf("Failed to read pipeline directory: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), sanitizePipelineName(testName)+"-run-") {
+			t.Errorf("Expected temporary run directory to be cleaned up after execution, but found: %s", entry.Name())
+		}
+	}
+
 	// Verify log file was created
 	logDir := filepath.Join(tmpHome, ".opencloud", "logs", "pipelines")
 	logFileName := sanitizePipelineName(testName) + ".log"
