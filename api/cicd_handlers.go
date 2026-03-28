@@ -651,6 +651,9 @@ func RunPipeline(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Clean up the temporary run directory once the pipeline finishes.
+		defer os.RemoveAll(runDir)
+
 		// Use -e to exit immediately on any command failure, and -o pipefail so that
 		// failures in piped commands are also detected. This ensures the pipeline is
 		// marked as failed if any command in the script fails, not just the last one.

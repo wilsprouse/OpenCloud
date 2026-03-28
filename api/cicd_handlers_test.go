@@ -332,20 +332,15 @@ func TestRunPipeline(t *testing.T) {
 	// Wait a moment for the goroutine to complete
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify a run directory was created under the pipeline directory
+	// Verify the temporary run directory was created and then cleaned up after execution.
 	entries, err := os.ReadDir(pipelineDir)
 	if err != nil {
 		t.Fatalf("Failed to read pipeline directory: %v", err)
 	}
-	foundRunDir := false
 	for _, entry := range entries {
 		if entry.IsDir() && strings.HasPrefix(entry.Name(), sanitizePipelineName(testName)+"-run-") {
-			foundRunDir = true
-			break
+			t.Errorf("Expected temporary run directory to be cleaned up after execution, but found: %s", entry.Name())
 		}
-	}
-	if !foundRunDir {
-		t.Error("Expected a unique run directory to be created under the pipeline directory, but none was found")
 	}
 
 	// Verify log file was created
