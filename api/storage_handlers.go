@@ -324,39 +324,80 @@ func RenameContainer(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "container": body.NewName})
 }
 
-// UploadObject uploads a file to a blob storage container
+// UploadObject uploads a file to a blob storage container.
+// It uses streaming multipart parsing so that files of any size can be uploaded
+// without buffering the entire request body in memory or temporary files.
+// The "container" field must appear before the "file" field in the multipart form.
 func UploadObject(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseMultipartForm(10 << 20) // 10MB limit
+	mr, err := r.MultipartReader()
 	if err != nil {
-		http.Error(w, "Error parsing form data", http.StatusBadRequest)
+		http.Error(w, "Error parsing multipart form", http.StatusBadRequest)
 		return
 	}
 
-	container := r.FormValue("container")
-	file, handler, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "Error retrieving file", http.StatusBadRequest)
+	var container string
+	var filename string
+
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			http.Error(w, "Error reading multipart data", http.StatusBadRequest)
+			return
+		}
+
+		if part.FormName() == "container" {
+			// Read the plain-text container field value.
+			var buf bytes.Buffer
+			if _, err := io.Copy(&buf, part); err != nil {
+				http.Error(w, "Error reading container field", http.StatusBadRequest)
+				return
+			}
+			container = buf.String()
+		} else if part.FileName() != "" {
+			// Stream the file part directly to disk without buffering.
+			if container == "" {
+				http.Error(w, "Container field must appear before file in form", http.StatusBadRequest)
+				return
+			}
+			filename = part.FileName()
+
+			home, err := os.UserHomeDir()
+			if err != nil {
+				http.Error(w, "Error determining home directory", http.StatusInternalServerError)
+				return
+			}
+			containerPath := filepath.Join(home, ".opencloud", "blob_storage", container)
+			if err := os.MkdirAll(containerPath, 0755); err != nil {
+				http.Error(w, "Error creating container directory", http.StatusInternalServerError)
+				return
+			}
+
+			dst, err := os.Create(filepath.Join(containerPath, filename))
+			if err != nil {
+				http.Error(w, "Error creating file", http.StatusInternalServerError)
+				return
+			}
+			defer dst.Close()
+
+			if _, err := io.Copy(dst, part); err != nil {
+				http.Error(w, "Error writing file", http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	if container == "" || filename == "" {
+		http.Error(w, "Missing container or file", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
-
-	home, _ := os.UserHomeDir()
-	containerPath := filepath.Join(home, ".opencloud", "blob_storage", container)
-	os.MkdirAll(containerPath, 0755)
-
-	dst, err := os.Create(filepath.Join(containerPath, handler.Filename))
-	if err != nil {
-		http.Error(w, "Error creating file", http.StatusInternalServerError)
-		return
-	}
-	defer dst.Close()
-
-	io.Copy(dst, file)
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":    "ok",
-		"filename":  handler.Filename,
+		"filename":  filename,
 		"container": container,
 	})
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -285,6 +286,147 @@ func TestGetBlobBuckets(t *testing.T) {
 	// Should return 200 or 500 depending on whether .opencloud directory exists
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("Expected status 200 or 500, got %d", resp.StatusCode)
+	}
+}
+
+// newUploadRequest builds a multipart POST request with container and file fields.
+// When containerFirst is true the container field precedes the file, which is the
+// order required by the streaming UploadObject handler.
+func newUploadRequest(t *testing.T, container, filename string, fileContent []byte, containerFirst bool) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+
+	if containerFirst {
+		if err := mw.WriteField("container", container); err != nil {
+			t.Fatalf("WriteField container: %v", err)
+		}
+	}
+
+	fw, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := fw.Write(fileContent); err != nil {
+		t.Fatalf("Write file content: %v", err)
+	}
+
+	if !containerFirst {
+		if err := mw.WriteField("container", container); err != nil {
+			t.Fatalf("WriteField container: %v", err)
+		}
+	}
+
+	mw.Close()
+	req := httptest.NewRequest(http.MethodPost, "/upload-object", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	return req
+}
+
+// TestUploadObjectSuccess tests that a valid upload writes the file to disk.
+func TestUploadObjectSuccess(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	req := newUploadRequest(t, "test-container", "hello.txt", []byte("hello world"), true)
+	w := httptest.NewRecorder()
+
+	UploadObject(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected status %d, got %d", http.StatusCreated, resp.StatusCode)
+	}
+
+	uploadedPath := filepath.Join(tmpDir, ".opencloud", "blob_storage", "test-container", "hello.txt")
+	data, err := os.ReadFile(uploadedPath)
+	if err != nil {
+		t.Fatalf("Uploaded file not found: %v", err)
+	}
+	if string(data) != "hello world" {
+		t.Errorf("File content mismatch: got %q", string(data))
+	}
+}
+
+// TestUploadObjectLargeFile tests that files larger than the old 10 MB in-memory
+// limit upload successfully using the streaming multipart handler.
+func TestUploadObjectLargeFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	// 15 MB payload — larger than the previous ParseMultipartForm(10<<20) limit.
+	largeContent := bytes.Repeat([]byte("x"), 15<<20)
+	req := newUploadRequest(t, "large-container", "big.bin", largeContent, true)
+	w := httptest.NewRecorder()
+
+	UploadObject(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected status %d, got %d", http.StatusCreated, resp.StatusCode)
+	}
+
+	uploadedPath := filepath.Join(tmpDir, ".opencloud", "blob_storage", "large-container", "big.bin")
+	info, err := os.Stat(uploadedPath)
+	if err != nil {
+		t.Fatalf("Uploaded file not found: %v", err)
+	}
+	if info.Size() != int64(len(largeContent)) {
+		t.Errorf("File size mismatch: want %d, got %d", len(largeContent), info.Size())
+	}
+}
+
+// TestUploadObjectContainerAfterFile tests that placing the container field after
+// the file field returns 400 — the streaming handler requires the container name
+// before it can begin writing the file to disk.
+func TestUploadObjectContainerAfterFile(t *testing.T) {
+	req := newUploadRequest(t, "my-container", "test.txt", []byte("data"), false)
+	w := httptest.NewRecorder()
+
+	UploadObject(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d when container follows file, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestUploadObjectInvalidMultipart tests that a non-multipart request returns 400.
+func TestUploadObjectInvalidMultipart(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/upload-object", bytes.NewBufferString("not-multipart"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UploadObject(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestUploadObjectMissingContainer tests that a request with no container field returns 400.
+func TestUploadObjectMissingContainer(t *testing.T) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "test.txt")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := fw.Write([]byte("data")); err != nil {
+		t.Fatalf("Write file content: %v", err)
+	}
+	mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/upload-object", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	UploadObject(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
 	}
 }
 

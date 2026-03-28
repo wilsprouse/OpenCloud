@@ -151,10 +151,12 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
 
       console.log(`Uploading file: ${selectedFile.name} to container: ${containerName}`)
 
-      // Create FormData for multipart/form-data upload
+      // Create FormData for multipart/form-data upload.
+      // container must be appended before file so the streaming backend
+      // receives the container name before it begins writing the file to disk.
       const formData = new FormData()
-      formData.append("file", selectedFile)
       formData.append("container", containerName)
+      formData.append("file", selectedFile)
 
       // POST to backend endpoint
       const res = await client.post("/upload-object", formData, {
