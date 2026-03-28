@@ -170,10 +170,15 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
     setUploadError(null)
 
     try {
-      // POST to backend endpoint with upload progress tracking.
-      // Do NOT set Content-Type manually — the browser must set it so the
-      // required multipart boundary is included automatically.
+      // POST to backend with multipart/form-data.
+      // The axios instance has a default Content-Type of "application/json".
+      // Setting Content-Type to undefined here removes that default for this
+      // request, so the browser's XHR can automatically set the correct
+      // "multipart/form-data; boundary=XXX" header from the FormData body.
+      // Without this, axios serializes FormData as JSON (losing the file) and
+      // the server's ParseMultipartForm call fails.
       const res = await client.post("/upload-object", formData, {
+        headers: { "Content-Type": undefined },
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
