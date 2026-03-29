@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import client from "@/app/utility/post"
 import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
 import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
@@ -34,7 +35,8 @@ import {
   Calendar,
   Settings,
   FileText,
-  Terminal
+  Terminal,
+  HelpCircle
 } from "lucide-react"
 
 type FunctionLog = {
@@ -395,7 +397,24 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
               
               {triggerEnabled && (
                 <div className="space-y-2">
-                  <Label htmlFor="trigger-schedule">CRON Schedule</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="trigger-schedule">CRON Schedule</Label>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p className="font-medium mb-1">Common schedules (UTC):</p>
+                          <ul className="space-y-1 text-xs">
+                            <li><span className="font-mono">0 4 * * *</span> — Every day at 11 PM EST</li>
+                            <li><span className="font-mono">0 9 * * *</span> — Every day at 4 AM EST</li>
+                            <li><span className="font-mono">0 22 * * *</span> — Every day at 5 PM EST</li>
+                          </ul>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
                   <Input
                     id="trigger-schedule"
                     value={triggerSchedule}
