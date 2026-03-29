@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -54,6 +55,16 @@ type Image = {
 // Constants
 const REGISTRY_URL = "registry.opencloud.local"
 
+function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get("create") === "true") {
+      onCreateRequested()
+    }
+  }, [searchParams, onCreateRequested])
+  return null
+}
+
 export default function ContainerRegistry() {
   const [images, setImages] = useState<Image[]>([])
   const [loading, setLoading] = useState(false)
@@ -62,6 +73,7 @@ export default function ContainerRegistry() {
   const [isBuilding, setIsBuilding] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [imageToDelete, setImageToDelete] = useState<Image | null>(null)
+  const [pendingCreate, setPendingCreate] = useState(false)
   
   // Service enabled state
   const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
@@ -123,6 +135,12 @@ export default function ContainerRegistry() {
       fetchImages()
     }
   }, [serviceEnabled])
+
+  useEffect(() => {
+    if (serviceEnabled && pendingCreate) {
+      setIsDialogOpen(true)
+    }
+  }, [serviceEnabled, pendingCreate])
 
   // Open the delete confirmation dialog for the selected image
   const openDeleteDialog = (image: Image) => {
@@ -244,6 +262,9 @@ export default function ContainerRegistry() {
 
   return (
     <DashboardShell>
+      <Suspense fallback={null}>
+        <SearchParamsReader onCreateRequested={() => setPendingCreate(true)} />
+      </Suspense>
       <DashboardHeader 
         heading="Container Registry" 
         text="Manage your container images and running containers"

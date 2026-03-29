@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -80,6 +81,18 @@ function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"]
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+}
+
+function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
+  const searchParams = useSearchParams()
+  const handled = useRef(false)
+  useEffect(() => {
+    if (!handled.current && searchParams.get("create") === "true") {
+      handled.current = true
+      onCreateRequested()
+    }
+  }, [searchParams, onCreateRequested])
+  return null
 }
 
 export default function ContainersPage() {
@@ -296,6 +309,9 @@ export default function ContainersPage() {
 
   return (
     <DashboardShell>
+      <Suspense fallback={null}>
+        <SearchParamsReader onCreateRequested={() => setIsPullRunDialogOpen(true)} />
+      </Suspense>
       <DashboardHeader heading="Containers" text="Manage your containers">
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={fetchContainers} disabled={loading}>

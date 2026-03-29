@@ -1,7 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ChevronRight, Container, GitBranch, HardDrive, Zap } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Archive, ChevronDown, Container, GitBranch, HardDrive, Package, Zap } from "lucide-react"
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -61,7 +63,46 @@ function formatRelativeTime(isoString: string): string {
   return `${diffDay} day${diffDay !== 1 ? "s" : ""} ago`
 }
 
+const deployServices = [
+  {
+    name: "Functions",
+    description: "Run serverless functions at scale",
+    icon: Zap,
+    color: "text-green-600",
+    href: "/compute/functions?create=true",
+  },
+  {
+    name: "Container Runtime",
+    description: "Deploy containerized applications",
+    icon: Container,
+    color: "text-cyan-600",
+    href: "/compute/containers?create=true",
+  },
+  {
+    name: "Blob Storage",
+    description: "Store and retrieve unstructured data",
+    icon: Archive,
+    color: "text-purple-600",
+    href: "/storage/blob?create=true",
+  },
+  {
+    name: "Container Registry",
+    description: "Manage and push container images",
+    icon: Package,
+    color: "text-blue-600",
+    href: "/storage/containers?create=true",
+  },
+  {
+    name: "CI/CD Pipelines",
+    description: "Automate builds, tests, and deployments",
+    icon: GitBranch,
+    color: "text-orange-600",
+    href: "/ci-cd/pipelines?create=true",
+  },
+]
+
 export default function DashboardPage() {
+  const router = useRouter()
   const [username, setUsername] = useState<string | null>(null)
   const [bucketCount, setBucketCount] = useState<number>(0)
   const [blobLastUsed, setBlobLastUsed] = useState<string>("Never")
@@ -170,9 +211,37 @@ export default function DashboardPage() {
     <>
       <DashboardShell>
         <DashboardHeader heading={username ? `Welcome back, ${username}` : "Welcome back"} text="Here's what's happening with your services today.">
-          <Button>
-            Deploy Service <ChevronRight className="ml-2 h-4 w-4" />
-          </Button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <Button>
+                Deploy Service <ChevronDown className="ml-2 h-4 w-4" />
+              </Button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className="min-w-[240px] rounded-md bg-white p-1 shadow-lg ring-1 ring-black/5 dark:bg-neutral-900"
+                sideOffset={8}
+                align="end"
+              >
+                {deployServices.map((service) => {
+                  const IconComponent = service.icon
+                  return (
+                    <DropdownMenu.Item
+                      key={service.name}
+                      onSelect={() => router.push(service.href)}
+                      className="flex cursor-pointer select-none items-center gap-3 rounded px-3 py-2 text-sm text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800 focus:outline-none"
+                    >
+                      <IconComponent className={`h-4 w-4 shrink-0 ${service.color}`} />
+                      <div>
+                        <div className="font-medium">{service.name}</div>
+                        <div className="text-xs text-muted-foreground">{service.description}</div>
+                      </div>
+                    </DropdownMenu.Item>
+                  )
+                })}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </DashboardHeader>
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">

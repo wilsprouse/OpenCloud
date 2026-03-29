@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -60,6 +60,16 @@ type FunctionItem = {
   }
 }
 
+function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get("create") === "true") {
+      onCreateRequested()
+    }
+  }, [searchParams, onCreateRequested])
+  return null
+}
+
 export default function FunctionsPage() {
   const router = useRouter()
   const [functions, setFunctions] = useState<FunctionItem[]>([])
@@ -67,6 +77,7 @@ export default function FunctionsPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [isFunctionDialogOpen, setIsFunctionDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [pendingCreate, setPendingCreate] = useState(false)
   const [functionToDelete, setFunctionToDelete] = useState<FunctionItem | null>(null)
   
   // Service enabled state
@@ -145,6 +156,12 @@ export default function FunctionsPage() {
       fetchFunctions()
     }
   }, [serviceEnabled])
+
+  useEffect(() => {
+    if (serviceEnabled && pendingCreate) {
+      setIsFunctionDialogOpen(true)
+    }
+  }, [serviceEnabled, pendingCreate])
 
   const handleCreateFunction = async () => {
     if (!isFunctionNameValid || !functionCode) return
@@ -271,6 +288,9 @@ export default function FunctionsPage() {
 
   return (
     <DashboardShell>
+      <Suspense fallback={null}>
+        <SearchParamsReader onCreateRequested={() => setPendingCreate(true)} />
+      </Suspense>
       <DashboardHeader heading="Functions" text="Compute scripts">
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={fetchFunctions} disabled={loading}>
