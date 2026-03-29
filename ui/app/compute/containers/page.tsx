@@ -313,8 +313,7 @@ export default function ContainersPage() {
       <Suspense fallback={null}>
         <SearchParamsReader onCreateRequested={(image) => {
           if (image) {
-            setRunImage(CUSTOM_IMAGE_VALUE)
-            setRunCustomImage(image)
+            setRunImage(image)
           }
           fetchAvailableImages()
           setIsPullRunDialogOpen(true)
@@ -537,6 +536,18 @@ export default function ContainersPage() {
                           />
                         </SelectTrigger>
                         <SelectContent>
+                          {/* If runImage is set to a value not in availableImages and not a sentinel,
+                              surface it as the first option so the Select can display it correctly */}
+                          {runImage &&
+                            runImage !== CUSTOM_IMAGE_VALUE &&
+                            runImage !== NO_IMAGES_VALUE &&
+                            !availableImages.some(
+                              (img) => (img.RepoTags?.[0] || img.Image || img.Id) === runImage
+                            ) && (
+                              <SelectItem key="__preselected__" value={runImage}>
+                                {runImage}
+                              </SelectItem>
+                            )}
                           {availableImages.map((img) => {
                             // RepoTags is the preferred display value (e.g. "nginx:latest").
                             // Fall back to Image (short name) then Id if no tags are present.
