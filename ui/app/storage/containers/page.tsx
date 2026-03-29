@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "sonner"
 import client from "@/app/utility/post"
 import { 
   Container, 
@@ -185,7 +186,7 @@ export default function ContainerRegistry() {
   // Handle dockerfile upload and build
   const handleBuildImage = async () => {
     if (!dockerfileContent || !imageName) {
-      alert("Please provide both a Dockerfile and an image name")
+      toast.error("Please provide both a Dockerfile and an image name")
       return
     }
 
@@ -212,10 +213,10 @@ export default function ContainerRegistry() {
       // Refresh the image list
       await fetchImages()
       
-      alert("Image built successfully!")
+      toast.success("Image built successfully!")
     } catch (err) {
       console.error("Failed to build image:", err)
-      alert("Failed to build image. Please check the logs.")
+      toast.error("Failed to build image. Please check the logs.")
     } finally {
       setIsBuilding(false)
     }
