@@ -11,6 +11,26 @@ import (
 	"github.com/containers/podman/v5/pkg/bindings"
 )
 
+func rootlessPodmanSocket() (string, error) {
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+		fmt.Println("Actually we are here")
+		return "unix://" + filepath.Join("/run/user", "1000", "podman", "podman.sock"), nil
+		//return "unix://" + filepath.Join(xdg, "podman", "podman.sock"), nil
+	}
+
+	/*u, err := user.Current()
+	if err != nil {
+		return "", err
+	}*/
+
+	return "unix://" + filepath.Join("/run/user", "1000", "podman", "podman.sock"), nil
+	//return "unix://" + filepath.Join("/run/user", u.Uid, "podman", "podman.sock"), nil
+}
+
+func RootlessPodmanSocket() (string, error) {
+	return rootlessPodmanSocket()
+}
+
 const rootfulPodmanSocketPath = "/run/podman/podman.sock"
 
 func podmanConnection(ctx context.Context) (context.Context, error) {
