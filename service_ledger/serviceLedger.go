@@ -799,6 +799,7 @@ func UpdateContainerImageEntry(imageName, dockerfile, context, platform string, 
 
 // DeleteContainerImageEntry removes a container image entry from the container_registry service ledger
 func DeleteContainerImageEntry(imageName string) error {
+	fmt.Println("In here")
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
 
@@ -814,6 +815,7 @@ func DeleteContainerImageEntry(imageName string) error {
 
 	delete(serviceStatus.ContainerImages, imageName)
 	ledger["container_registry"] = serviceStatus
+	fmt.Println("Succ?")
 
 	return WriteServiceLedger(ledger)
 }
