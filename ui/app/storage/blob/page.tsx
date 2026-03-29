@@ -18,8 +18,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import client from "@/app/utility/post"
-import { CONTAINER_NAME_MAX_LENGTH, isValidContainerName } from "@/lib/container-name"
-import { useContainerNameWarning } from "@/lib/use-container-name-warning"
+import { BUCKET_NAME_MAX_LENGTH, isValidBucketName } from "@/lib/bucket-name"
+import { useBucketNameWarning } from "@/lib/use-bucket-name-warning"
 import { 
   RefreshCw, 
   Search,
@@ -31,7 +31,7 @@ import {
   ChevronRight
 } from "lucide-react"
 
-type Container = {
+type Bucket = {
   name: string
   objectCount: number
   totalSize: number
@@ -52,55 +52,55 @@ function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => vo
 
 export default function BlobStorage() {
   const router = useRouter()
-  const [containers, setContainers] = useState<Container[]>([])
+  const [buckets, setBuckets] = useState<Bucket[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
-  const [isContainerDialogOpen, setIsContainerDialogOpen] = useState(false)
+  const [isBucketDialogOpen, setIsBucketDialogOpen] = useState(false)
   
-  // Container form state
-  const [containerName, setContainerName] = useState<string>("")
-  const isContainerNameValid = isValidContainerName(containerName)
+  // Bucket form state
+  const [bucketName, setBucketName] = useState<string>("")
+  const isBucketNameValid = isValidBucketName(bucketName)
   const {
-    handleBeforeInput: handleContainerNameBeforeInput,
-    handleChange: handleContainerNameChange,
-    handlePaste: handleContainerNamePaste,
-    resetWarning: resetContainerNameWarning,
-  } = useContainerNameWarning(setContainerName)
+    handleBeforeInput: handleBucketNameBeforeInput,
+    handleChange: handleBucketNameChange,
+    handlePaste: handleBucketNamePaste,
+    resetWarning: resetBucketNameWarning,
+  } = useBucketNameWarning(setBucketName)
 
-  // Fetch containers
-  const fetchContainers = async () => {
+  // Fetch buckets
+  const fetchBuckets = async () => {
     setLoading(true)
     try {
-      const res = await client.get<Container[]>("/list-blob-containers")
-      setContainers(res.data || [])
+      const res = await client.get<Bucket[]>("/list-blob-buckets")
+      setBuckets(res.data || [])
     } catch (err) {
-      console.error("Failed to fetch containers:", err)
+      console.error("Failed to fetch buckets:", err)
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchContainers()
+    fetchBuckets()
   }, [])
 
-  const handleCreateContainer = async (name: string) => {
+  const handleCreateBucket = async (name: string) => {
     try {
-      console.log(`Creating container: ${name}`)
-      const res = await client.post("/create-container", { name })
+      console.log(`Creating bucket: ${name}`)
+      const res = await client.post("/create-bucket", { name })
 
       if (res.status === 200 || res.status === 201) {
-        setIsContainerDialogOpen(false)
-        setContainerName("")
-        fetchContainers()
+        setIsBucketDialogOpen(false)
+        setBucketName("")
+        fetchBuckets()
       }
     } catch (err) {
-      console.error("Failed to create container:", err)
+      console.error("Failed to create bucket:", err)
     }
   }
 
-  const handleContainerClick = (containerName: string) => {
-    router.push(`/storage/blob/${encodeURIComponent(containerName)}`)
+  const handleBucketClick = (bucketName: string) => {
+    router.push(`/storage/blob/${encodeURIComponent(bucketName)}`)
   }
 
   // Format file size
@@ -122,66 +122,66 @@ export default function BlobStorage() {
     }
   }
 
-  // Filter containers based on search
-  const filteredContainers = containers.filter(container => 
-    container.name.toLowerCase().includes(searchTerm.toLowerCase())
+  // Filter buckets based on search
+  const filteredBuckets = buckets.filter(bucket => 
+    bucket.name.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   // Calculate statistics
-  const totalContainers = containers.length
-  const totalObjects = containers.reduce((sum, container) => sum + container.objectCount, 0)
-  const totalSize = containers.reduce((sum, container) => sum + container.totalSize, 0)
+  const totalBuckets = buckets.length
+  const totalObjects = buckets.reduce((sum, bucket) => sum + bucket.objectCount, 0)
+  const totalSize = buckets.reduce((sum, bucket) => sum + bucket.totalSize, 0)
 
   return (
     <DashboardShell>
       <Suspense fallback={null}>
-        <SearchParamsReader onCreateRequested={() => setIsContainerDialogOpen(true)} />
+        <SearchParamsReader onCreateRequested={() => setIsBucketDialogOpen(true)} />
       </Suspense>
-      <DashboardHeader heading="Blob Storage" text="Manage your containers and objects">
+      <DashboardHeader heading="Blob Storage" text="Manage your buckets and objects">
         <div className="flex items-center space-x-2">
-          <Button variant="outline" onClick={fetchContainers} disabled={loading}>
+          <Button variant="outline" onClick={fetchBuckets} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Dialog open={isContainerDialogOpen} onOpenChange={(open) => {
-              setIsContainerDialogOpen(open)
-              if (!open) resetContainerNameWarning()
+          <Dialog open={isBucketDialogOpen} onOpenChange={(open) => {
+              setIsBucketDialogOpen(open)
+              if (!open) resetBucketNameWarning()
             }}>
             <DialogTrigger asChild>
               <Button>
                 <FolderPlus className="mr-2 h-4 w-4" />
-                Create Container
+                Create Bucket
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Create New Container</DialogTitle>
+                <DialogTitle>Create New Bucket</DialogTitle>
                 <DialogDescription>
-                  Containers help organize your objects. Enter a name for your new container.
+                  Buckets help organize your objects. Enter a name for your new bucket.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="container-name">Container Name</Label>
+                  <Label htmlFor="bucket-name">Bucket Name</Label>
                   <Input
-                    id="container-name"
-                    placeholder="my-container"
-                    value={containerName}
-                    onChange={(e) => handleContainerNameChange(e.target.value)}
-                    onBeforeInput={handleContainerNameBeforeInput}
-                    onPaste={handleContainerNamePaste}
-                    maxLength={CONTAINER_NAME_MAX_LENGTH}
+                    id="bucket-name"
+                    placeholder="my-bucket"
+                    value={bucketName}
+                    onChange={(e) => handleBucketNameChange(e.target.value)}
+                    onBeforeInput={handleBucketNameBeforeInput}
+                    onPaste={handleBucketNamePaste}
+                    maxLength={BUCKET_NAME_MAX_LENGTH}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Container names cannot contain spaces and must be 50 characters or fewer.
+                    Bucket names cannot contain spaces and must be 50 characters or fewer.
                   </p>
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => { setIsContainerDialogOpen(false); resetContainerNameWarning() }}>
+                <Button variant="outline" onClick={() => { setIsBucketDialogOpen(false); resetBucketNameWarning() }}>
                   Cancel
                 </Button>
-                <Button onClick={() => handleCreateContainer(containerName)} disabled={!isContainerNameValid}>
+                <Button onClick={() => handleCreateBucket(bucketName)} disabled={!isBucketNameValid}>
                   Create
                 </Button>
               </DialogFooter>
@@ -194,12 +194,12 @@ export default function BlobStorage() {
       <div className="grid gap-6 md:grid-cols-3">
         <Card className="border-l-4 border-l-blue-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Containers</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Buckets</CardTitle>
             <Package className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalContainers}</div>
-            <p className="text-xs text-muted-foreground">Storage containers</p>
+            <div className="text-2xl font-bold">{totalBuckets}</div>
+            <p className="text-xs text-muted-foreground">Storage buckets</p>
           </CardContent>
         </Card>
 
@@ -226,20 +226,20 @@ export default function BlobStorage() {
         </Card>
       </div>
 
-      {/* Main Container List */}
+      {/* Main Bucket List */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Containers</CardTitle>
-              <CardDescription>Browse and manage your storage containers</CardDescription>
+              <CardTitle>Buckets</CardTitle>
+              <CardDescription>Browse and manage your storage buckets</CardDescription>
             </div>
           </div>
           <div className="relative mt-4">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Search containers by name..."
+              placeholder="Search buckets by name..."
               className="w-full pl-8 pr-4 py-2 border rounded-md bg-background"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -248,11 +248,11 @@ export default function BlobStorage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {filteredContainers.map((container) => (
+            {filteredBuckets.map((bucket) => (
               <div
-                key={container.name}
+                key={bucket.name}
                 className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                onClick={() => handleContainerClick(container.name)}
+                onClick={() => handleBucketClick(bucket.name)}
               >
                 <div className="flex items-center space-x-4 flex-1">
                   <div className="p-2 rounded-lg bg-blue-50">
@@ -260,20 +260,20 @@ export default function BlobStorage() {
                   </div>
                   <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
-                      <h4 className="font-medium truncate">{container.name}</h4>
+                      <h4 className="font-medium truncate">{bucket.name}</h4>
                     </div>
                     <div className="flex items-center space-x-4 text-xs text-muted-foreground">
                       <span className="flex items-center">
                         <File className="h-3 w-3 mr-1" />
-                        {container.objectCount} {container.objectCount === 1 ? 'object' : 'objects'}
+                        {bucket.objectCount} {bucket.objectCount === 1 ? 'object' : 'objects'}
                       </span>
                       <span>•</span>
                       <span className="flex items-center">
                         <HardDrive className="h-3 w-3 mr-1" />
-                        {formatSize(container.totalSize)}
+                        {formatSize(bucket.totalSize)}
                       </span>
                       <span>•</span>
-                      <span>Modified: {formatDate(container.lastModified)}</span>
+                      <span>Modified: {formatDate(bucket.lastModified)}</span>
                     </div>
                   </div>
                 </div>
@@ -282,12 +282,12 @@ export default function BlobStorage() {
                 </div>
               </div>
             ))}
-            {filteredContainers.length === 0 && !loading && (
+            {filteredBuckets.length === 0 && !loading && (
               <div className="text-center py-12">
                 <Package className="mx-auto h-12 w-12 text-muted-foreground" />
-                <h3 className="mt-4 text-lg font-semibold">No containers found</h3>
+                <h3 className="mt-4 text-lg font-semibold">No buckets found</h3>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {searchTerm ? "Try adjusting your search terms" : "Create your first container to get started"}
+                  {searchTerm ? "Try adjusting your search terms" : "Create your first bucket to get started"}
                 </p>
               </div>
             )}

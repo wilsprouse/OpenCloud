@@ -38,10 +38,10 @@ type Blob struct {
 	Size         int64  `json:"size"`
 	ContentType  string `json:"contentType"`
 	LastModified string `json:"lastModified"`
-	Container    string `json:"container"`
+	Bucket       string `json:"bucket"`
 }
 
-type Container struct {
+type Bucket struct {
 	Name         string `json:"name"`
 	ObjectCount  int    `json:"objectCount"`
 	TotalSize    int64  `json:"totalSize"`
@@ -107,8 +107,8 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ListBlobContainers returns a list of blob storage containers with metadata.
-func ListBlobContainers(w http.ResponseWriter, r *http.Request) {
+// ListBlobBuckets returns a list of blob storage buckets with metadata.
+func ListBlobBuckets(w http.ResponseWriter, r *http.Request) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
@@ -122,37 +122,37 @@ func ListBlobContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var containers []Container
+	var buckets []Bucket
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 
-		containerPath := filepath.Join(root, entry.Name())
-		containerInfo, err := os.Stat(containerPath)
+		bucketPath := filepath.Join(root, entry.Name())
+		bucketInfo, err := os.Stat(bucketPath)
 		if err != nil {
 			continue
 		}
 
 		// Count objects and calculate total size
-		files, _ := os.ReadDir(containerPath)
+		files, _ := os.ReadDir(bucketPath)
 		objectCount := 0
 		var totalSize int64
-		var lastModified time.Time = containerInfo.ModTime()
+		var lastModified time.Time = bucketInfo.ModTime()
 
 		for _, file := range files {
 			if file.IsDir() {
 				continue
 			}
 			objectCount++
-			info, _ := os.Stat(filepath.Join(containerPath, file.Name()))
+			info, _ := os.Stat(filepath.Join(bucketPath, file.Name()))
 			totalSize += info.Size()
 			if info.ModTime().After(lastModified) {
 				lastModified = info.ModTime()
 			}
 		}
 
-		containers = append(containers, Container{
+		buckets = append(buckets, Bucket{
 			Name:         entry.Name(),
 			ObjectCount:  objectCount,
 			TotalSize:    totalSize,
@@ -161,10 +161,10 @@ func ListBlobContainers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(containers)
+	json.NewEncoder(w).Encode(buckets)
 }
 
-// GetBlobBuckets returns blobs from all containers or a specific container if specified.
+// GetBlobBuckets returns blobs from all buckets or a specific bucket if specified.
 func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -172,8 +172,8 @@ func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if a specific container is requested via query parameter
-	containerFilter := r.URL.Query().Get("container")
+	// Check if a specific bucket is requested via query parameter
+	bucketFilter := r.URL.Query().Get("bucket")
 
 	root := filepath.Join(home, ".opencloud", "blob_storage")
 	entries, err := os.ReadDir(root)
@@ -183,32 +183,32 @@ func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var blobs []Blob
-	for _, container := range entries {
-		if !container.IsDir() {
+	for _, bucket := range entries {
+		if !bucket.IsDir() {
 			continue
 		}
 
-		// Skip if a specific container is requested and this isn't it
-		if containerFilter != "" && container.Name() != containerFilter {
+		// Skip if a specific bucket is requested and this isn't it
+		if bucketFilter != "" && bucket.Name() != bucketFilter {
 			continue
 		}
 
-		containerPath := filepath.Join(root, container.Name())
+		bucketPath := filepath.Join(root, bucket.Name())
 
-		files, _ := os.ReadDir(containerPath)
+		files, _ := os.ReadDir(bucketPath)
 		for _, file := range files {
 			if file.IsDir() {
 				continue
 			}
-			info, _ := os.Stat(filepath.Join(containerPath, file.Name()))
+			info, _ := os.Stat(filepath.Join(bucketPath, file.Name()))
 
 			blobs = append(blobs, Blob{
-				ID:           fmt.Sprintf("%s-%s", container.Name(), file.Name()), // simple unique ID
+				ID:           fmt.Sprintf("%s-%s", bucket.Name(), file.Name()), // simple unique ID
 				Name:         file.Name(),
 				Size:         info.Size(),
 				ContentType:  mime.TypeByExtension(filepath.Ext(file.Name())),
 				LastModified: info.ModTime().UTC().Format(time.RFC3339),
-				Container:    container.Name(),
+				Bucket:       bucket.Name(),
 			})
 		}
 	}
@@ -217,7 +217,7 @@ func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(blobs)
 }
 
-// CreateBucket creates a new blob storage container
+// CreateBucket creates a new blob storage bucket
 func CreateBucket(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
@@ -227,17 +227,17 @@ func CreateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate container name: required, no spaces, and max 50 characters
+	// Validate bucket name: required, no spaces, and max 50 characters
 	if body.Name == "" {
-		http.Error(w, "Container name is required", http.StatusBadRequest)
+		http.Error(w, "Bucket name is required", http.StatusBadRequest)
 		return
 	}
 	if strings.ContainsAny(body.Name, " \t\n\r") {
-		http.Error(w, "Container name cannot contain spaces", http.StatusBadRequest)
+		http.Error(w, "Bucket name cannot contain spaces", http.StatusBadRequest)
 		return
 	}
 	if len(body.Name) > 50 {
-		http.Error(w, "Container name must be 50 characters or fewer", http.StatusBadRequest)
+		http.Error(w, "Bucket name must be 50 characters or fewer", http.StatusBadRequest)
 		return
 	}
 
@@ -249,16 +249,16 @@ func CreateBucket(w http.ResponseWriter, r *http.Request) {
 
 	bucketPath := filepath.Join(home, ".opencloud", "blob_storage", body.Name)
 	if err := os.Mkdir(bucketPath, 0755); err != nil {
-		http.Error(w, "Failed to create container", http.StatusInternalServerError)
+		http.Error(w, "Failed to create bucket", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "container": body.Name})
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "bucket": body.Name})
 }
 
-// RenameContainer renames an existing blob storage container
-func RenameContainer(w http.ResponseWriter, r *http.Request) {
+// RenameBucket renames an existing blob storage bucket
+func RenameBucket(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -275,21 +275,21 @@ func RenameContainer(w http.ResponseWriter, r *http.Request) {
 
 	// Validate current name is provided
 	if body.CurrentName == "" {
-		http.Error(w, "Current container name is required", http.StatusBadRequest)
+		http.Error(w, "Current bucket name is required", http.StatusBadRequest)
 		return
 	}
 
 	// Validate new name: required, no spaces, and max 50 characters
 	if body.NewName == "" {
-		http.Error(w, "New container name is required", http.StatusBadRequest)
+		http.Error(w, "New bucket name is required", http.StatusBadRequest)
 		return
 	}
 	if strings.ContainsAny(body.NewName, " \t\n\r") {
-		http.Error(w, "Container name cannot contain spaces", http.StatusBadRequest)
+		http.Error(w, "Bucket name cannot contain spaces", http.StatusBadRequest)
 		return
 	}
 	if len(body.NewName) > 50 {
-		http.Error(w, "Container name must be 50 characters or fewer", http.StatusBadRequest)
+		http.Error(w, "Bucket name must be 50 characters or fewer", http.StatusBadRequest)
 		return
 	}
 
@@ -303,31 +303,31 @@ func RenameContainer(w http.ResponseWriter, r *http.Request) {
 	currentPath := filepath.Join(basePath, body.CurrentName)
 	newPath := filepath.Join(basePath, body.NewName)
 
-	// Ensure the current container exists
+	// Ensure the current bucket exists
 	if _, err := os.Stat(currentPath); os.IsNotExist(err) {
-		http.Error(w, "Container not found", http.StatusNotFound)
+		http.Error(w, "Bucket not found", http.StatusNotFound)
 		return
 	}
 
 	// Ensure the new name is not already taken
 	if _, err := os.Stat(newPath); err == nil {
-		http.Error(w, "A container with that name already exists", http.StatusConflict)
+		http.Error(w, "A bucket with that name already exists", http.StatusConflict)
 		return
 	}
 
 	if err := os.Rename(currentPath, newPath); err != nil {
-		http.Error(w, "Failed to rename container", http.StatusInternalServerError)
+		http.Error(w, "Failed to rename bucket", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "container": body.NewName})
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "bucket": body.NewName})
 }
 
-// UploadObject uploads a file to a blob storage container.
+// UploadObject uploads a file to a blob storage bucket.
 // It uses streaming multipart parsing so that files of any size can be uploaded
 // without buffering the entire request body in memory or temporary files.
-// The "container" field must appear before the "file" field in the multipart form.
+// The "bucket" field must appear before the "file" field in the multipart form.
 func UploadObject(w http.ResponseWriter, r *http.Request) {
 	mr, err := r.MultipartReader()
 	if err != nil {
@@ -335,7 +335,7 @@ func UploadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var container string
+	var bucket string
 	var filename string
 
 	for {
@@ -348,18 +348,18 @@ func UploadObject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if part.FormName() == "container" {
-			// Read the plain-text container field value.
+		if part.FormName() == "bucket" {
+			// Read the plain-text bucket field value.
 			var buf bytes.Buffer
 			if _, err := io.Copy(&buf, part); err != nil {
-				http.Error(w, "Error reading container field", http.StatusBadRequest)
+				http.Error(w, "Error reading bucket field", http.StatusBadRequest)
 				return
 			}
-			container = buf.String()
+			bucket = buf.String()
 		} else if part.FileName() != "" {
 			// Stream the file part directly to disk without buffering.
-			if container == "" {
-				http.Error(w, "Container field must appear before file in form", http.StatusBadRequest)
+			if bucket == "" {
+				http.Error(w, "Bucket field must appear before file in form", http.StatusBadRequest)
 				return
 			}
 			filename = part.FileName()
@@ -369,13 +369,13 @@ func UploadObject(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Error determining home directory", http.StatusInternalServerError)
 				return
 			}
-			containerPath := filepath.Join(home, ".opencloud", "blob_storage", container)
-			if err := os.MkdirAll(containerPath, 0755); err != nil {
-				http.Error(w, "Error creating container directory", http.StatusInternalServerError)
+			bucketPath := filepath.Join(home, ".opencloud", "blob_storage", bucket)
+			if err := os.MkdirAll(bucketPath, 0755); err != nil {
+				http.Error(w, "Error creating bucket directory", http.StatusInternalServerError)
 				return
 			}
 
-			dst, err := os.Create(filepath.Join(containerPath, filename))
+			dst, err := os.Create(filepath.Join(bucketPath, filename))
 			if err != nil {
 				http.Error(w, "Error creating file", http.StatusInternalServerError)
 				return
@@ -390,24 +390,24 @@ func UploadObject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if container == "" || filename == "" {
-		http.Error(w, "Missing container or file", http.StatusBadRequest)
+	if bucket == "" || filename == "" {
+		http.Error(w, "Missing bucket or file", http.StatusBadRequest)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":    "ok",
-		"filename":  filename,
-		"container": container,
+		"status":   "ok",
+		"filename": filename,
+		"bucket":   bucket,
 	})
 }
 
 // DeleteObject deletes a file from blob storage
 func DeleteObject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Container string `json:"container"`
-		Name      string `json:"name"`
+		Bucket string `json:"bucket"`
+		Name   string `json:"name"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -416,7 +416,7 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	home, _ := os.UserHomeDir()
-	filePath := filepath.Join(home, ".opencloud", "blob_storage", req.Container, req.Name)
+	filePath := filepath.Join(home, ".opencloud", "blob_storage", req.Bucket, req.Name)
 
 	if err := os.Remove(filePath); err != nil {
 		if os.IsNotExist(err) {
@@ -429,9 +429,9 @@ func DeleteObject(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":    "deleted",
-		"container": req.Container,
-		"name":      req.Name,
+		"status": "deleted",
+		"bucket": req.Bucket,
+		"name":   req.Name,
 	})
 }
 
@@ -797,16 +797,16 @@ func DownloadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	container, ok1 := body["container"]
+	bucket, ok1 := body["bucket"]
 	name, ok2 := body["name"]
-	if !ok1 || !ok2 || container == "" || name == "" {
-		http.Error(w, "Missing container or name", http.StatusBadRequest)
+	if !ok1 || !ok2 || bucket == "" || name == "" {
+		http.Error(w, "Missing bucket or name", http.StatusBadRequest)
 		return
 	}
 
 	// Adjust this path to match your storage layout
 	home, _ := os.UserHomeDir()
-	filePath := filepath.Join(home, ".opencloud", "blob_storage", container, name)
+	filePath := filepath.Join(home, ".opencloud", "blob_storage", bucket, name)
 
 	file, err := os.Open(filePath)
 	if err != nil {

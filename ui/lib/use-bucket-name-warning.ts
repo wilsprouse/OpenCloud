@@ -2,13 +2,13 @@
 
 import { ClipboardEvent, FormEvent, useState } from "react"
 import { toast } from "sonner"
-import { getContainerNameWarnings, sanitizeContainerName } from "@/lib/container-name"
+import { getBucketNameWarnings, sanitizeBucketName } from "@/lib/bucket-name"
 
-export const useContainerNameWarning = (setValue: (value: string) => void) => {
+export const useBucketNameWarning = (setValue: (value: string) => void) => {
   const [lastWarning, setLastWarning] = useState<string | null>(null)
 
   const showWarning = (value: string) => {
-    const warnings = getContainerNameWarnings(value)
+    const warnings = getBucketNameWarnings(value)
     const nextWarning = warnings.length > 0 ? warnings.join(" ") : null
 
     if (nextWarning && nextWarning !== lastWarning) {
@@ -23,7 +23,7 @@ export const useContainerNameWarning = (setValue: (value: string) => void) => {
 
   const handleChange = (value: string) => {
     showWarning(value)
-    setValue(sanitizeContainerName(value))
+    setValue(sanitizeBucketName(value))
   }
 
   const handleBeforeInput = (event: FormEvent<HTMLInputElement>) => {
