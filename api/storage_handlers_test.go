@@ -262,12 +262,12 @@ func TestGetContainerRegistryHandler(t *testing.T) {
 	}
 }
 
-// TestListBlobContainers tests the blob container listing
-func TestListBlobContainers(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/list-blob-containers", nil)
+// TestListBlobBuckets tests the blob bucket listing
+func TestListBlobBuckets(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/list-blob-buckets", nil)
 	w := httptest.NewRecorder()
 
-	ListBlobContainers(w, req)
+	ListBlobBuckets(w, req)
 
 	resp := w.Result()
 	// Should return 200 or 500 depending on whether .opencloud directory exists
@@ -278,7 +278,7 @@ func TestListBlobContainers(t *testing.T) {
 
 // TestGetBlobBuckets tests the blob bucket retrieval
 func TestGetBlobBuckets(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/get-blob-buckets", nil)
+	req := httptest.NewRequest(http.MethodGet, "/get-blobs", nil)
 	w := httptest.NewRecorder()
 
 	GetBlobBuckets(w, req)
@@ -290,17 +290,17 @@ func TestGetBlobBuckets(t *testing.T) {
 	}
 }
 
-// newUploadRequest builds a multipart POST request with container and file fields.
-// When containerFirst is true the container field precedes the file, which is the
+// newUploadRequest builds a multipart POST request with bucket and file fields.
+// When bucketFirst is true the bucket field precedes the file, which is the
 // order required by the streaming UploadObject handler.
-func newUploadRequest(t *testing.T, container, filename string, fileContent []byte, containerFirst bool) *http.Request {
+func newUploadRequest(t *testing.T, bucket, filename string, fileContent []byte, bucketFirst bool) *http.Request {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 
-	if containerFirst {
-		if err := mw.WriteField("container", container); err != nil {
-			t.Fatalf("WriteField container: %v", err)
+	if bucketFirst {
+		if err := mw.WriteField("bucket", bucket); err != nil {
+			t.Fatalf("WriteField bucket: %v", err)
 		}
 	}
 
@@ -312,9 +312,9 @@ func newUploadRequest(t *testing.T, container, filename string, fileContent []by
 		t.Fatalf("Write file content: %v", err)
 	}
 
-	if !containerFirst {
-		if err := mw.WriteField("container", container); err != nil {
-			t.Fatalf("WriteField container: %v", err)
+	if !bucketFirst {
+		if err := mw.WriteField("bucket", bucket); err != nil {
+			t.Fatalf("WriteField bucket: %v", err)
 		}
 	}
 
@@ -329,7 +329,7 @@ func TestUploadObjectSuccess(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	req := newUploadRequest(t, "test-container", "hello.txt", []byte("hello world"), true)
+	req := newUploadRequest(t, "test-bucket", "hello.txt", []byte("hello world"), true)
 	w := httptest.NewRecorder()
 
 	UploadObject(w, req)
@@ -339,7 +339,7 @@ func TestUploadObjectSuccess(t *testing.T) {
 		t.Fatalf("Expected status %d, got %d", http.StatusCreated, resp.StatusCode)
 	}
 
-	uploadedPath := filepath.Join(tmpDir, ".opencloud", "blob_storage", "test-container", "hello.txt")
+	uploadedPath := filepath.Join(tmpDir, ".opencloud", "blob_storage", "test-bucket", "hello.txt")
 	data, err := os.ReadFile(uploadedPath)
 	if err != nil {
 		t.Fatalf("Uploaded file not found: %v", err)
@@ -357,7 +357,7 @@ func TestUploadObjectLargeFile(t *testing.T) {
 
 	// 15 MB payload — larger than the previous ParseMultipartForm(10<<20) limit.
 	largeContent := bytes.Repeat([]byte("x"), 15<<20)
-	req := newUploadRequest(t, "large-container", "big.bin", largeContent, true)
+	req := newUploadRequest(t, "large-bucket", "big.bin", largeContent, true)
 	w := httptest.NewRecorder()
 
 	UploadObject(w, req)
@@ -367,7 +367,7 @@ func TestUploadObjectLargeFile(t *testing.T) {
 		t.Fatalf("Expected status %d, got %d", http.StatusCreated, resp.StatusCode)
 	}
 
-	uploadedPath := filepath.Join(tmpDir, ".opencloud", "blob_storage", "large-container", "big.bin")
+	uploadedPath := filepath.Join(tmpDir, ".opencloud", "blob_storage", "large-bucket", "big.bin")
 	info, err := os.Stat(uploadedPath)
 	if err != nil {
 		t.Fatalf("Uploaded file not found: %v", err)
@@ -391,8 +391,8 @@ func (zeroReader) Read(p []byte) (int, error) {
 // newStreamingUploadRequest builds a multipart POST whose file body is generated
 // on the fly by src, up to fileSize bytes. Using a pipe avoids allocating the
 // entire payload in memory, making it suitable for very large file tests.
-// container is always written as the first field.
-func newStreamingUploadRequest(t *testing.T, container, filename string, src io.Reader, fileSize int64) *http.Request {
+// bucket is always written as the first field.
+func newStreamingUploadRequest(t *testing.T, bucket, filename string, src io.Reader, fileSize int64) *http.Request {
 	t.Helper()
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
@@ -404,7 +404,7 @@ func newStreamingUploadRequest(t *testing.T, container, filename string, src io.
 			pw.CloseWithError(writeErr)
 		}()
 
-		if err := mw.WriteField("container", container); err != nil {
+		if err := mw.WriteField("bucket", bucket); err != nil {
 			writeErr = err
 			return
 		}
@@ -430,7 +430,7 @@ func TestUploadObjectVeryLargeFile(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	const fileSize = 500 << 20 // 500 MB
-	req := newStreamingUploadRequest(t, "large-container", "huge.bin", zeroReader{}, fileSize)
+	req := newStreamingUploadRequest(t, "large-bucket", "huge.bin", zeroReader{}, fileSize)
 	w := httptest.NewRecorder()
 
 	UploadObject(w, req)
@@ -440,7 +440,7 @@ func TestUploadObjectVeryLargeFile(t *testing.T) {
 		t.Fatalf("Expected status %d, got %d", http.StatusCreated, resp.StatusCode)
 	}
 
-	uploadedPath := filepath.Join(tmpDir, ".opencloud", "blob_storage", "large-container", "huge.bin")
+	uploadedPath := filepath.Join(tmpDir, ".opencloud", "blob_storage", "large-bucket", "huge.bin")
 	info, err := os.Stat(uploadedPath)
 	if err != nil {
 		t.Fatalf("Uploaded file not found: %v", err)
@@ -450,18 +450,18 @@ func TestUploadObjectVeryLargeFile(t *testing.T) {
 	}
 }
 
-// TestUploadObjectContainerAfterFile tests that placing the container field after
-// the file field returns 400 — the streaming handler requires the container name
+// TestUploadObjectBucketAfterFile tests that placing the bucket field after
+// the file field returns 400 — the streaming handler requires the bucket name
 // before it can begin writing the file to disk.
-func TestUploadObjectContainerAfterFile(t *testing.T) {
-	req := newUploadRequest(t, "my-container", "test.txt", []byte("data"), false)
+func TestUploadObjectBucketAfterFile(t *testing.T) {
+	req := newUploadRequest(t, "my-bucket", "test.txt", []byte("data"), false)
 	w := httptest.NewRecorder()
 
 	UploadObject(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected status %d when container follows file, got %d", http.StatusBadRequest, resp.StatusCode)
+		t.Errorf("Expected status %d when bucket follows file, got %d", http.StatusBadRequest, resp.StatusCode)
 	}
 }
 
@@ -479,8 +479,8 @@ func TestUploadObjectInvalidMultipart(t *testing.T) {
 	}
 }
 
-// TestUploadObjectMissingContainer tests that a request with no container field returns 400.
-func TestUploadObjectMissingContainer(t *testing.T) {
+// TestUploadObjectMissingBucket tests that a request with no bucket field returns 400.
+func TestUploadObjectMissingBucket(t *testing.T) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, err := mw.CreateFormFile("file", "test.txt")
@@ -566,20 +566,20 @@ func TestDownloadObjectMissingFields(t *testing.T) {
 		body map[string]string
 	}{
 		{
-			name: "Missing container",
+			name: "Missing bucket",
 			body: map[string]string{"name": "test.txt"},
 		},
 		{
 			name: "Missing name",
-			body: map[string]string{"container": "test-container"},
+			body: map[string]string{"bucket": "test-bucket"},
 		},
 		{
-			name: "Empty container",
-			body: map[string]string{"container": "", "name": "test.txt"},
+			name: "Empty bucket",
+			body: map[string]string{"bucket": "", "name": "test.txt"},
 		},
 		{
 			name: "Empty name",
-			body: map[string]string{"container": "test-container", "name": ""},
+			body: map[string]string{"bucket": "test-bucket", "name": ""},
 		},
 	}
 
@@ -656,12 +656,12 @@ func TestDeleteImageConnectsToPodman(t *testing.T) {
 	}
 }
 
-// TestRenameContainerInvalidMethod tests that RenameContainer rejects non-PUT requests
-func TestRenameContainerInvalidMethod(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/rename-container", nil)
+// TestRenameBucketInvalidMethod tests that RenameBucket rejects non-PUT requests
+func TestRenameBucketInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/rename-bucket", nil)
 	w := httptest.NewRecorder()
 
-	RenameContainer(w, req)
+	RenameBucket(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
@@ -669,13 +669,13 @@ func TestRenameContainerInvalidMethod(t *testing.T) {
 	}
 }
 
-// TestRenameContainerInvalidJSON tests that RenameContainer rejects invalid JSON
-func TestRenameContainerInvalidJSON(t *testing.T) {
+// TestRenameBucketInvalidJSON tests that RenameBucket rejects invalid JSON
+func TestRenameBucketInvalidJSON(t *testing.T) {
 	invalidJSON := bytes.NewBufferString("{invalid json")
-	req := httptest.NewRequest(http.MethodPut, "/rename-container", invalidJSON)
+	req := httptest.NewRequest(http.MethodPut, "/rename-bucket", invalidJSON)
 	w := httptest.NewRecorder()
 
-	RenameContainer(w, req)
+	RenameBucket(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusBadRequest {
@@ -683,8 +683,8 @@ func TestRenameContainerInvalidJSON(t *testing.T) {
 	}
 }
 
-// TestRenameContainerValidation tests the input validation rules for RenameContainer
-func TestRenameContainerValidation(t *testing.T) {
+// TestRenameBucketValidation tests the input validation rules for RenameBucket
+func TestRenameBucketValidation(t *testing.T) {
 	testCases := []struct {
 		name           string
 		currentName    string
@@ -728,11 +728,11 @@ func TestRenameContainerValidation(t *testing.T) {
 			description:    "Should reject newName longer than 50 characters",
 		},
 		{
-			name:           "Non-existent current container",
+			name:           "Non-existent current bucket",
 			currentName:    "does-not-exist-12345",
 			newName:        "new-name-12345",
 			expectedStatus: http.StatusNotFound,
-			description:    "Should return 404 when current container does not exist",
+			description:    "Should return 404 when current bucket does not exist",
 		},
 	}
 
@@ -742,10 +742,10 @@ func TestRenameContainerValidation(t *testing.T) {
 				"currentName": tc.currentName,
 				"newName":     tc.newName,
 			})
-			req := httptest.NewRequest(http.MethodPut, "/rename-container", bytes.NewBuffer(body))
+			req := httptest.NewRequest(http.MethodPut, "/rename-bucket", bytes.NewBuffer(body))
 			w := httptest.NewRecorder()
 
-			RenameContainer(w, req)
+			RenameBucket(w, req)
 
 			resp := w.Result()
 			if resp.StatusCode != tc.expectedStatus {
@@ -755,8 +755,8 @@ func TestRenameContainerValidation(t *testing.T) {
 	}
 }
 
-// TestRenameContainerSuccess tests that RenameContainer succeeds when the container exists
-func TestRenameContainerSuccess(t *testing.T) {
+// TestRenameBucketSuccess tests that RenameBucket succeeds when the bucket exists
+func TestRenameBucketSuccess(t *testing.T) {
 	// Create a temporary directory to act as the blob_storage base
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -768,9 +768,9 @@ func TestRenameContainerSuccess(t *testing.T) {
 		t.Skipf("Cannot create blob_storage directory: %v", err)
 	}
 
-	// Create a source container
-	srcName := "test-rename-src-container"
-	dstName := "test-rename-dst-container"
+	// Create a source bucket
+	srcName := "test-rename-src-bucket"
+	dstName := "test-rename-dst-bucket"
 	srcPath := filepath.Join(basePath, srcName)
 	dstPath := filepath.Join(basePath, dstName)
 
@@ -781,17 +781,17 @@ func TestRenameContainerSuccess(t *testing.T) {
 	defer os.RemoveAll(dstPath)
 
 	if err := os.Mkdir(srcPath, 0755); err != nil {
-		t.Fatalf("Failed to create source container for test: %v", err)
+		t.Fatalf("Failed to create source bucket for test: %v", err)
 	}
 
 	body, _ := json.Marshal(map[string]string{
 		"currentName": srcName,
 		"newName":     dstName,
 	})
-	req := httptest.NewRequest(http.MethodPut, "/rename-container", bytes.NewBuffer(body))
+	req := httptest.NewRequest(http.MethodPut, "/rename-bucket", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
 
-	RenameContainer(w, req)
+	RenameBucket(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusOK {
@@ -800,15 +800,15 @@ func TestRenameContainerSuccess(t *testing.T) {
 
 	// Verify source directory was removed and destination exists
 	if _, err := os.Stat(srcPath); !os.IsNotExist(err) {
-		t.Errorf("Expected source container to be removed after rename")
+		t.Errorf("Expected source bucket to be removed after rename")
 	}
 	if _, err := os.Stat(dstPath); os.IsNotExist(err) {
-		t.Errorf("Expected destination container to exist after rename")
+		t.Errorf("Expected destination bucket to exist after rename")
 	}
 }
 
-// TestRenameContainerConflict tests that RenameContainer rejects a rename when the new name is taken
-func TestRenameContainerConflict(t *testing.T) {
+// TestRenameBucketConflict tests that RenameBucket rejects a rename when the new name is taken
+func TestRenameBucketConflict(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skip("Cannot determine home directory, skipping test")
@@ -831,20 +831,20 @@ func TestRenameContainerConflict(t *testing.T) {
 
 	// Create both source and destination directories
 	if err := os.Mkdir(srcPath, 0755); err != nil {
-		t.Fatalf("Failed to create source container: %v", err)
+		t.Fatalf("Failed to create source bucket: %v", err)
 	}
 	if err := os.Mkdir(dstPath, 0755); err != nil {
-		t.Fatalf("Failed to create destination container: %v", err)
+		t.Fatalf("Failed to create destination bucket: %v", err)
 	}
 
 	body, _ := json.Marshal(map[string]string{
 		"currentName": srcName,
 		"newName":     dstName,
 	})
-	req := httptest.NewRequest(http.MethodPut, "/rename-container", bytes.NewBuffer(body))
+	req := httptest.NewRequest(http.MethodPut, "/rename-bucket", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
 
-	RenameContainer(w, req)
+	RenameBucket(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusConflict {

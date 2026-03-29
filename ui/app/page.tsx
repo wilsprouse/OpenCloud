@@ -16,7 +16,7 @@ import { ServerMetrics } from "@/components/server-metrics"
 import { getUsername } from "@/lib/auth"
 import client from "@/app/utility/post"
 
-type BlobContainer = {
+type BlobBucket = {
   name: string
   objectCount: number
   totalSize: number
@@ -120,11 +120,11 @@ export default function DashboardPage() {
   useEffect(() => {
     const fetchBlobStats = async () => {
       try {
-        const res = await client.get<BlobContainer[]>("/list-blob-containers")
-        const containers: BlobContainer[] = res.data || []
-        setBucketCount(containers.length)
-        if (containers.length > 0) {
-          const latest = containers.reduce((prev, curr) => {
+        const res = await client.get<BlobBucket[]>("/list-blob-buckets")
+        const buckets: BlobBucket[] = res.data || []
+        setBucketCount(buckets.length)
+        if (buckets.length > 0) {
+          const latest = buckets.reduce((prev, curr) => {
             const prevTime = new Date(prev.lastModified).getTime()
             const currTime = new Date(curr.lastModified).getTime()
             return currTime > prevTime ? curr : prev

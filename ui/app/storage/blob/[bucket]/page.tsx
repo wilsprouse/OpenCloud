@@ -19,8 +19,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import client from "@/app/utility/post"
-import { CONTAINER_NAME_MAX_LENGTH, isValidContainerName } from "@/lib/container-name"
-import { useContainerNameWarning } from "@/lib/use-container-name-warning"
+import { BUCKET_NAME_MAX_LENGTH, isValidBucketName } from "@/lib/bucket-name"
+import { useBucketNameWarning } from "@/lib/use-bucket-name-warning"
 import { Progress } from "@/components/ui/progress"
 import { 
   Upload, 
@@ -42,33 +42,33 @@ type Blob = {
   size: number
   contentType: string
   lastModified: string
-  container: string
+  bucket: string
 }
 
-export default function ContainerDetail({ params }: { params: Promise<{ container: string }> }) {
+export default function BucketDetail({ params }: { params: Promise<{ bucket: string }> }) {
   const resolvedParams = use(params)
-  const containerName = decodeURIComponent(resolvedParams.container)
+  const bucketName = decodeURIComponent(resolvedParams.bucket)
   const router = useRouter()
   const [blobs, setBlobs] = useState<Blob[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
-  const [blobToDelete, setBlobToDelete] = useState<{ container: string; name: string } | null>(null)
+  const [blobToDelete, setBlobToDelete] = useState<{ bucket: string; name: string } | null>(null)
 
   // Rename dialog state
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
-  const [newContainerName, setNewContainerName] = useState<string>("")
+  const [newBucketName, setNewBucketName] = useState<string>("")
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
-  const isNewContainerNameValid = isValidContainerName(newContainerName)
+  const isNewBucketNameValid = isValidBucketName(newBucketName)
 
   const {
     handleBeforeInput: handleNewNameBeforeInput,
     handleChange: handleNewNameChange,
     handlePaste: handleNewNamePaste,
     resetWarning: resetNewNameWarning,
-  } = useContainerNameWarning(setNewContainerName)
+  } = useBucketNameWarning(setNewBucketName)
 
   // Upload form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -76,11 +76,11 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   const [uploadProgress, setUploadProgress] = useState(0)
   const uploadAbortRef = useRef<AbortController | null>(null)
 
-  // Fetch blobs for this container
+  // Fetch blobs for this bucket
   const fetchBlobs = async () => {
     setLoading(true)
     try {
-      const res = await client.get<Blob[]>(`/get-blobs?container=${encodeURIComponent(containerName)}`)
+      const res = await client.get<Blob[]>(`/get-blobs?bucket=${encodeURIComponent(bucketName)}`)
       setBlobs(res.data || [])
     } catch (err) {
       console.error("Failed to fetch blobs:", err)
@@ -91,14 +91,14 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
 
   useEffect(() => {
     fetchBlobs()
-  }, [containerName])
+  }, [bucketName])
 
-  const handleDownload = async (container: string, name: string) => {
+  const handleDownload = async (bucket: string, name: string) => {
     try {
-      console.log(`Downloading blob: ${name} from container: ${container}`);
+      console.log(`Downloading blob: ${name} from bucket: ${bucket}`);
 
       // Send POST request with JSON body
-      const res = await client.post("/download-object", { container, name }, {
+      const res = await client.post("/download-object", { bucket, name }, {
         responseType: "blob", // important for file download
       });
 
@@ -117,8 +117,8 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   };
 
   // Open the delete confirmation dialog for the selected blob
-  const openDeleteDialog = (container: string, name: string) => {
-    setBlobToDelete({ container, name })
+  const openDeleteDialog = (bucket: string, name: string) => {
+    setBlobToDelete({ bucket, name })
     setIsDeleteDialogOpen(true)
   }
 
@@ -132,7 +132,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
 
     try {
       const res = await client.delete("/delete-object", {
-        data: { container: blobToDelete.container, name: blobToDelete.name },
+        data: { bucket: blobToDelete.bucket, name: blobToDelete.name },
       })
 
       if (res.status === 200) {
@@ -153,13 +153,13 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
         return
       }
 
-      console.log(`Uploading file: ${selectedFile.name} to container: ${containerName}`)
+      console.log(`Uploading file: ${selectedFile.name} to bucket: ${bucketName}`)
 
       // Create FormData for multipart/form-data upload.
-      // container must be appended before file so the streaming backend
-      // receives the container name before it begins writing the file to disk.
+      // bucket must be appended before file so the streaming backend
+      // receives the bucket name before it begins writing the file to disk.
       const formData = new FormData()
-      formData.append("container", containerName)
+      formData.append("bucket", bucketName)
       formData.append("file", selectedFile)
 
       const controller = new AbortController()
@@ -202,41 +202,41 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
   }
 
   const openRenameDialog = () => {
-    setNewContainerName(containerName)
+    setNewBucketName(bucketName)
     resetNewNameWarning()
     setRenameError(null)
     setIsRenameDialogOpen(true)
   }
 
   const closeRenameDialog = () => {
-    setNewContainerName("")
+    setNewBucketName("")
     resetNewNameWarning()
     setRenameError(null)
     setIsRenameDialogOpen(false)
   }
 
   const handleRename = async () => {
-    if (!isNewContainerNameValid || newContainerName === containerName) return
+    if (!isNewBucketNameValid || newBucketName === bucketName) return
 
     setIsRenaming(true)
     setRenameError(null)
     try {
-      const res = await client.put("/rename-container", {
-        currentName: containerName,
-        newName: newContainerName,
+      const res = await client.put("/rename-bucket", {
+        currentName: bucketName,
+        newName: newBucketName,
       })
 
       if (res.status === 200) {
         closeRenameDialog()
-        router.push(`/storage/blob/${encodeURIComponent(newContainerName)}`)
+        router.push(`/storage/blob/${encodeURIComponent(newBucketName)}`)
       } else {
-        setRenameError("Failed to rename container. Please try again.")
+        setRenameError("Failed to rename bucket. Please try again.")
       }
     } catch (err: unknown) {
       const message =
-        err instanceof Error ? err.message : "Failed to rename container. Please try again."
+        err instanceof Error ? err.message : "Failed to rename bucket. Please try again."
       setRenameError(message)
-      console.error("Failed to rename container:", err)
+      console.error("Failed to rename bucket:", err)
     } finally {
       setIsRenaming(false)
     }
@@ -284,19 +284,19 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <span>{containerName}</span>
+            <span>{bucketName}</span>
             <Button
               variant="ghost"
               size="icon"
               onClick={openRenameDialog}
-              title="Rename container"
+              title="Rename bucket"
               className="text-muted-foreground hover:text-foreground"
             >
               <Pencil className="h-4 w-4" />
             </Button>
           </div>
         } 
-        text="Manage objects in this container"
+        text="Manage objects in this bucket"
       >
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={fetchBlobs} disabled={loading}>
@@ -321,7 +321,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
               <DialogHeader>
                 <DialogTitle>Upload Object</DialogTitle>
                 <DialogDescription>
-                  Select a file to upload to <strong>{containerName}</strong>.
+                  Select a file to upload to <strong>{bucketName}</strong>.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -366,7 +366,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalBlobs}</div>
-            <p className="text-xs text-muted-foreground">Files in this container</p>
+            <p className="text-xs text-muted-foreground">Files in this bucket</p>
           </CardContent>
         </Card>
 
@@ -388,7 +388,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Objects</CardTitle>
-              <CardDescription>View and manage objects in {containerName}</CardDescription>
+              <CardDescription>View and manage objects in {bucketName}</CardDescription>
             </div>
           </div>
           <div className="relative mt-4">
@@ -432,7 +432,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
                   <Button 
                     variant="ghost" 
                     size="icon"
-                    onClick={() => handleDownload(blob.container, blob.name)}
+                    onClick={() => handleDownload(blob.bucket, blob.name)}
                     title="Download"
                   >
                     <Download className="h-4 w-4" />
@@ -440,7 +440,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => openDeleteDialog(blob.container, blob.name)}
+                    onClick={() => openDeleteDialog(blob.bucket, blob.name)}
                     title="Delete"
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
@@ -482,29 +482,29 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
         </DialogContent>
       </Dialog>
 
-      {/* Rename Container Dialog */}
+      {/* Rename Bucket Dialog */}
       <Dialog open={isRenameDialogOpen} onOpenChange={(open) => { if (!open) closeRenameDialog() }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename Container</DialogTitle>
+            <DialogTitle>Rename Bucket</DialogTitle>
             <DialogDescription>
-              Enter a new name for <strong>{containerName}</strong>.
+              Enter a new name for <strong>{bucketName}</strong>.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="new-container-name">New Container Name</Label>
+              <Label htmlFor="new-bucket-name">New Bucket Name</Label>
               <Input
-                id="new-container-name"
-                placeholder="new-container-name"
-                value={newContainerName}
+                id="new-bucket-name"
+                placeholder="new-bucket-name"
+                value={newBucketName}
                 onChange={(e) => handleNewNameChange(e.target.value)}
                 onBeforeInput={handleNewNameBeforeInput}
                 onPaste={handleNewNamePaste}
-                maxLength={CONTAINER_NAME_MAX_LENGTH}
+                maxLength={BUCKET_NAME_MAX_LENGTH}
               />
               <p className="text-xs text-muted-foreground">
-                Container names cannot contain spaces and must be 50 characters or fewer.
+                Bucket names cannot contain spaces and must be 50 characters or fewer.
               </p>
               {renameError && (
                 <p className="text-xs text-destructive">{renameError}</p>
@@ -517,7 +517,7 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
             </Button>
             <Button
               onClick={handleRename}
-              disabled={!isNewContainerNameValid || newContainerName === containerName || isRenaming}
+              disabled={!isNewBucketNameValid || newBucketName === bucketName || isRenaming}
             >
               {isRenaming ? "Renaming..." : "Rename"}
             </Button>
