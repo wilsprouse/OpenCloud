@@ -360,11 +360,10 @@ http.Error(w, fmt.Sprintf("Failed to delete image: %v", errs[0]), http.StatusInt
 return
 }
 
-if ledgerErr := service_ledger.DeleteContainerImageEntry(req.ImageName); ledgerErr != nil {
-	fmt.Println(ledgerErr)
-log.Printf("Warning: failed to remove image %s from service ledger: %v", req.ImageName, ledgerErr)
+ledgerName := strings.TrimPrefix(req.ImageName, "localhost/")
+if ledgerErr := service_ledger.DeleteContainerImageEntry(ledgerName); ledgerErr != nil {
+log.Printf("Warning: failed to remove image %s from service ledger: %v", ledgerName, ledgerErr)
 }
-fmt.Println("Success?")
 
 w.Header().Set("Content-Type", "application/json")
 _ = json.NewEncoder(w).Encode(map[string]string{
