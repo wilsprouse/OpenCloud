@@ -407,7 +407,7 @@ export default function ContainersPage() {
                             {c.State}
                           </Badge>
                         </div>
-                        <div className="hidden sm:flex items-center space-x-4 text-xs text-muted-foreground">
+                        <div className="hidden lg:flex items-center space-x-4 text-xs text-muted-foreground">
                           <span className="flex items-center">
                             <ImageIcon className="h-3 w-3 mr-1" />
                             {c.Image}
