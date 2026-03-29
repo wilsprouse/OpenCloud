@@ -449,7 +449,7 @@ func EnableServiceStreamHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ledgerMutex.Unlock()
 
-	sendLine("[SUCCESS] Functions service enabled successfully!")
+	sendLine(fmt.Sprintf("[SUCCESS] %s service enabled successfully!", body.Service))
 	fmt.Fprintf(w, "event: done\ndata: {\"service\":%q,\"enabled\":true}\n\n", body.Service)
 	flusher.Flush()
 }

@@ -117,6 +117,13 @@ export default function FunctionsPage() {
     }
   }
 
+  // Auto-scroll the output box whenever a new line is appended
+  useEffect(() => {
+    if (outputBoxRef.current) {
+      outputBoxRef.current.scrollTop = outputBoxRef.current.scrollHeight
+    }
+  }, [enableOutput])
+
   // Enable the service with streaming output
   const handleEnableService = async () => {
     setEnablingService(true)
@@ -125,12 +132,6 @@ export default function FunctionsPage() {
 
     const appendLine = (line: string) => {
       setEnableOutput(prev => [...prev, line])
-      // Auto-scroll the output box to the bottom
-      setTimeout(() => {
-        if (outputBoxRef.current) {
-          outputBoxRef.current.scrollTop = outputBoxRef.current.scrollHeight
-        }
-      }, 0)
     }
 
     try {
@@ -151,7 +152,7 @@ export default function FunctionsPage() {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
-      let serviceEnabled = false
+      let installationSucceeded = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -168,14 +169,14 @@ export default function FunctionsPage() {
               appendLine(data)
             }
           } else if (line.startsWith("event: done")) {
-            serviceEnabled = true
+            installationSucceeded = true
           } else if (line.startsWith("event: error")) {
             // error data line follows; will be appended via the data: handler above
           }
         }
       }
 
-      if (serviceEnabled) {
+      if (installationSucceeded) {
         setServiceEnabled(true)
         fetchFunctions()
       }
