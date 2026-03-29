@@ -407,9 +407,9 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                         <TooltipContent className="max-w-xs">
                           <p className="font-medium mb-1">Common schedules (UTC):</p>
                           <ul className="space-y-1 text-xs">
-                            <li><span className="font-mono">0 23 * * *</span> — Every day at 11 PM UTC</li>
-                            <li><span className="font-mono">0 4 * * *</span> — Every day at 4 AM UTC</li>
-                            <li><span className="font-mono">0 5 * * *</span> — Every day at 5 AM UTC</li>
+                            <li><span className="font-mono">0 4 * * *</span> — Every day at 11 PM EST</li>
+                            <li><span className="font-mono">0 9 * * *</span> — Every day at 4 AM EST</li>
+                            <li><span className="font-mono">0 22 * * *</span> — Every day at 5 PM EST</li>
                           </ul>
                         </TooltipContent>
                       </Tooltip>
