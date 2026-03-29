@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -40,6 +40,7 @@ type Container = {
 
 export default function BlobStorage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [containers, setContainers] = useState<Container[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -71,6 +72,12 @@ export default function BlobStorage() {
   useEffect(() => {
     fetchContainers()
   }, [])
+
+  useEffect(() => {
+    if (searchParams.get("create") === "true") {
+      setIsContainerDialogOpen(true)
+    }
+  }, [searchParams])
 
   const handleCreateContainer = async (name: string) => {
     try {

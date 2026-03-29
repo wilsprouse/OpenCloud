@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -95,6 +95,7 @@ success "Deployment completed successfully!"`
 
 export default function Pipelines() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -173,6 +174,12 @@ export default function Pipelines() {
       fetchPipelines()
     }
   }, [serviceEnabled])
+
+  useEffect(() => {
+    if (serviceEnabled && searchParams.get("create") === "true") {
+      setIsCreateDialogOpen(true)
+    }
+  }, [serviceEnabled, searchParams])
 
   // Handle pipeline actions
   const handleRunPipeline = async (id: string) => {

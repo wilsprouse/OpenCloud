@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -83,6 +84,7 @@ function formatBytes(bytes: number): string {
 }
 
 export default function ContainersPage() {
+  const searchParams = useSearchParams()
   const [containers, setContainers] = useState<ContainerItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -141,6 +143,12 @@ export default function ContainersPage() {
   useEffect(() => {
     fetchContainers()
   }, [])
+
+  useEffect(() => {
+    if (searchParams.get("create") === "true") {
+      setIsPullRunDialogOpen(true)
+    }
+  }, [searchParams])
 
   // Manage container actions
   const handleAction = async (id: string, action: "start" | "stop") => {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -55,6 +56,7 @@ type Image = {
 const REGISTRY_URL = "registry.opencloud.local"
 
 export default function ContainerRegistry() {
+  const searchParams = useSearchParams()
   const [images, setImages] = useState<Image[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -123,6 +125,12 @@ export default function ContainerRegistry() {
       fetchImages()
     }
   }, [serviceEnabled])
+
+  useEffect(() => {
+    if (serviceEnabled && searchParams.get("create") === "true") {
+      setIsDialogOpen(true)
+    }
+  }, [serviceEnabled, searchParams])
 
   // Open the delete confirmation dialog for the selected image
   const openDeleteDialog = (image: Image) => {

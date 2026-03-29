@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -62,6 +62,7 @@ type FunctionItem = {
 
 export default function FunctionsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [functions, setFunctions] = useState<FunctionItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -145,6 +146,12 @@ export default function FunctionsPage() {
       fetchFunctions()
     }
   }, [serviceEnabled])
+
+  useEffect(() => {
+    if (serviceEnabled && searchParams.get("create") === "true") {
+      setIsFunctionDialogOpen(true)
+    }
+  }, [serviceEnabled, searchParams])
 
   const handleCreateFunction = async () => {
     if (!isFunctionNameValid || !functionCode) return
