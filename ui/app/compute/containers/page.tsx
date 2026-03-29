@@ -84,13 +84,13 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
 
-function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
+function SearchParamsReader({ onCreateRequested }: { onCreateRequested: (image?: string) => void }) {
   const searchParams = useSearchParams()
   const handled = useRef(false)
   useEffect(() => {
     if (!handled.current && searchParams.get("create") === "true") {
       handled.current = true
-      onCreateRequested()
+      onCreateRequested(searchParams.get("image") ?? undefined)
     }
   }, [searchParams, onCreateRequested])
   return null
@@ -311,7 +311,14 @@ export default function ContainersPage() {
   return (
     <DashboardShell>
       <Suspense fallback={null}>
-        <SearchParamsReader onCreateRequested={() => setIsPullRunDialogOpen(true)} />
+        <SearchParamsReader onCreateRequested={(image) => {
+          if (image) {
+            setRunImage(CUSTOM_IMAGE_VALUE)
+            setRunCustomImage(image)
+          }
+          fetchAvailableImages()
+          setIsPullRunDialogOpen(true)
+        }} />
       </Suspense>
       <DashboardHeader heading="Containers" text="Manage your containers">
         <div className="flex items-center space-x-2">

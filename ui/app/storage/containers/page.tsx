@@ -1,6 +1,7 @@
 'use client'
 
 import { Suspense, useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -35,10 +36,11 @@ import {
   Search,
   Square,
   Trash2,
-  Copy,
+  Play,
   Package,
   HardDrive,
   Layers,
+  Copy,
   FileText,
   Power
 } from "lucide-react"
@@ -67,6 +69,7 @@ function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => vo
 }
 
 export default function ContainerRegistry() {
+  const router = useRouter()
   const [images, setImages] = useState<Image[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -380,10 +383,13 @@ export default function ContainerRegistry() {
                         <Button 
                           variant="ghost" 
                           size="icon"
-                          onClick={() => copyToClipboard(c.Id)}
-                          title="Copy ID"
+                          onClick={() => {
+                            const imageName = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
+                            router.push(`/compute/containers?create=true&image=${encodeURIComponent(imageName)}`)
+                          }}
+                          title="Deploy container"
                         >
-                          <Copy className="h-4 w-4" />
+                          <Play className="h-4 w-4" />
                         </Button>
                         <Button
                           variant="destructive"
@@ -421,12 +427,12 @@ export default function ContainerRegistry() {
                 <DialogTrigger asChild>
                   <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100">
                     <div className="flex items-center space-x-3">
-                      <div className="p-2 rounded-lg bg-white text-blue-600">
+                      <div className="p-2 rounded-lg bg-white text-blue-600 shrink-0">
                         <Upload className="h-4 w-4" />
                       </div>
-                      <div className="text-left">
+                      <div className="text-left min-w-0">
                         <div className="font-medium text-sm">Build from Dockerfile</div>
-                        <div className="text-xs text-muted-foreground">Upload and build container image</div>
+                        <div className="text-xs text-muted-foreground whitespace-normal">Upload and build container image</div>
                       </div>
                     </div>
                   </Button>
@@ -561,36 +567,12 @@ export default function ContainerRegistry() {
 
               <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100">
                 <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-green-600">
+                  <div className="p-2 rounded-lg bg-white text-green-600 shrink-0">
                     <Download className="h-4 w-4" />
                   </div>
-                  <div className="text-left">
+                  <div className="text-left min-w-0">
                     <div className="font-medium text-sm">Pull Image</div>
-                    <div className="text-xs text-muted-foreground">Download from registry</div>
-                  </div>
-                </div>
-              </Button>
-
-              <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-purple-50 hover:bg-purple-100">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-purple-600">
-                    <Container className="h-4 w-4" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium text-sm">Deploy Container</div>
-                    <div className="text-xs text-muted-foreground">Create new instance</div>
-                  </div>
-                </div>
-              </Button>
-
-              <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-orange-50 hover:bg-orange-100">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-orange-600">
-                    <Layers className="h-4 w-4" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium text-sm">View Layers</div>
-                    <div className="text-xs text-muted-foreground">Inspect image layers</div>
+                    <div className="text-xs text-muted-foreground whitespace-normal">Download from registry</div>
                   </div>
                 </div>
               </Button>
