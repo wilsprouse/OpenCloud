@@ -166,6 +166,7 @@ func main() {
 	mux.HandleFunc("/get-function-logs/", computeapi.GetFunctionLogs)
 	mux.HandleFunc("/get-service-status", service_ledger.GetServiceStatusHandler)
 	mux.HandleFunc("/enable-service", service_ledger.EnableServiceHandler)
+	mux.HandleFunc("/enable-service-stream", service_ledger.EnableServiceStreamHandler)
 	mux.HandleFunc("/sync-pipelines", service_ledger.SyncPipelinesHandler)
 	mux.HandleFunc("/sync-functions", service_ledger.SyncFunctionsHandler)
 	mux.HandleFunc("/create-pipeline", api.CreatePipeline)

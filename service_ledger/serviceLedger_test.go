@@ -2,6 +2,8 @@ package service_ledger
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -405,6 +407,167 @@ func TestEnableServiceWithoutInstaller(t *testing.T) {
 	
 	if !enabled {
 		t.Error("Service should be enabled even without installer")
+	}
+}
+
+func TestEnableServiceWithStreamSuccess(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+
+	// Create an installer script that emits multiple output lines
+	installerDir := getInstallerDir(t)
+	testServiceName := "test_stream_success"
+	installerPath, err := createTestScript(installerDir, testServiceName, 0, "Stream line one")
+	if err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath)
+
+	// Invoke the stream handler via an httptest recorder
+	body := strings.NewReader(`{"service":"` + testServiceName + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/enable-service-stream", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	EnableServiceStreamHandler(rr, req)
+
+	resp := rr.Result()
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("Expected Content-Type text/event-stream, got %q", resp.Header.Get("Content-Type"))
+	}
+
+	responseBody := rr.Body.String()
+
+	// The SSE response should contain the installer output line
+	if !strings.Contains(responseBody, "Stream line one") {
+		t.Errorf("Response should contain installer output, got: %s", responseBody)
+	}
+
+	// The SSE response should contain the done event
+	if !strings.Contains(responseBody, "event: done") {
+		t.Errorf("Response should contain done event, got: %s", responseBody)
+	}
+
+	// Verify the service was actually enabled in the ledger
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	if !enabled {
+		t.Error("Service should be enabled after streaming enable completes successfully")
+	}
+}
+
+func TestEnableServiceWithStreamFailingInstaller(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+
+	// Create an installer script that exits with non-zero exit code
+	installerDir := getInstallerDir(t)
+	testServiceName := "test_stream_fail"
+	installerPath, err := createTestScript(installerDir, testServiceName, 1, "Stream install failed")
+	if err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath)
+
+	body := strings.NewReader(`{"service":"` + testServiceName + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/enable-service-stream", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	EnableServiceStreamHandler(rr, req)
+
+	responseBody := rr.Body.String()
+
+	// The SSE response should contain the error event
+	if !strings.Contains(responseBody, "event: error") {
+		t.Errorf("Response should contain error event for failing installer, got: %s", responseBody)
+	}
+
+	// The service should NOT be marked as enabled
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	if enabled {
+		t.Error("Service should NOT be enabled when installer fails")
+	}
+}
+
+func TestEnableServiceWithStreamNoInstaller(t *testing.T) {
+	// Setup: Create a temporary ledger
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("Failed to initialize ledger: %v", err)
+	}
+
+	// Use a service name that has no installer script
+	testServiceName := "stream_service_no_installer"
+
+	body := strings.NewReader(`{"service":"` + testServiceName + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/enable-service-stream", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	EnableServiceStreamHandler(rr, req)
+
+	responseBody := rr.Body.String()
+
+	// Should still send the done event since no installer means success
+	if !strings.Contains(responseBody, "event: done") {
+		t.Errorf("Response should contain done event for service without installer, got: %s", responseBody)
+	}
+
+	// The service should be enabled
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("Failed to check service status: %v", err)
+	}
+	if !enabled {
+		t.Error("Service should be enabled when no installer is present")
+	}
+}
+
+func TestEnableServiceStreamHandlerMethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/enable-service-stream", nil)
+	rr := httptest.NewRecorder()
+
+	EnableServiceStreamHandler(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected 405 Method Not Allowed, got %d", rr.Code)
+	}
+}
+
+func TestEnableServiceStreamHandlerMissingService(t *testing.T) {
+	body := strings.NewReader(`{"service":""}`)
+	req := httptest.NewRequest(http.MethodPost, "/enable-service-stream", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	EnableServiceStreamHandler(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 Bad Request for missing service, got %d", rr.Code)
 	}
 }
 
