@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -82,6 +82,9 @@ export default function ContainerRegistry() {
   // Service enabled state
   const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
   const [enablingService, setEnablingService] = useState(false)
+  const [enableOutput, setEnableOutput] = useState<string[]>([])
+  const [enableError, setEnableError] = useState<string | null>(null)
+  const outputBoxRef = useRef<HTMLDivElement>(null)
   
   // Dockerfile form state
   const [dockerfileContent, setDockerfileContent] = useState("")
@@ -102,15 +105,72 @@ export default function ContainerRegistry() {
     }
   }
 
-  // Enable the service
+  // Auto-scroll the output box whenever a new line is appended
+  useEffect(() => {
+    if (outputBoxRef.current) {
+      outputBoxRef.current.scrollTop = outputBoxRef.current.scrollHeight
+    }
+  }, [enableOutput])
+
+  // Enable the service with streaming output
   const handleEnableService = async () => {
     setEnablingService(true)
+    setEnableOutput([])
+    setEnableError(null)
+
+    const appendLine = (line: string) => {
+      setEnableOutput(prev => [...prev, line])
+    }
+
     try {
-      await client.post("/enable-service", { service: "container_registry" })
-      setServiceEnabled(true)
-      fetchImages()
+      const response = await fetch("/api/enable-service-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "container_registry" }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`)
+      }
+
+      if (!response.body) {
+        throw new Error("No response body")
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      let installationSucceeded = false
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data) {
+              appendLine(data)
+            }
+          } else if (line.startsWith("event: done")) {
+            installationSucceeded = true
+          } else if (line.startsWith("event: error")) {
+            // error data line follows; will be appended via the data: handler above
+          }
+        }
+      }
+
+      if (installationSucceeded) {
+        setServiceEnabled(true)
+        fetchImages()
+      }
     } catch (err) {
       console.error("Failed to enable service:", err)
+      setEnableError(err instanceof Error ? err.message : "Failed to enable service")
     } finally {
       setEnablingService(false)
     }
@@ -241,7 +301,7 @@ export default function ContainerRegistry() {
     return (
       <DashboardShell>
         <DashboardHeader heading="Container Registry" text="Manage your container images and running containers" />
-        <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-6 pt-8">
           <Card className="max-w-md w-full">
             <CardHeader className="text-center">
               <div className="mx-auto p-3 rounded-full bg-blue-50 w-fit mb-4">
@@ -254,11 +314,39 @@ export default function ContainerRegistry() {
             </CardHeader>
             <CardContent className="flex justify-center">
               <Button onClick={handleEnableService} disabled={enablingService} size="lg">
-                <Power className="mr-2 h-4 w-4" />
+                {enablingService ? (
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Power className="mr-2 h-4 w-4" />
+                )}
                 {enablingService ? "Enabling..." : "Enable Container Registry"}
               </Button>
             </CardContent>
           </Card>
+
+          {(enablingService || enableOutput.length > 0 || enableError) && (
+            <Card className="w-full max-w-2xl">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Installation Output</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div
+                  ref={outputBoxRef}
+                  className="bg-black text-green-400 font-mono text-xs p-4 rounded-lg h-64 overflow-y-auto whitespace-pre-wrap"
+                >
+                  {enableOutput.map((line, i) => (
+                    <div key={i}>{line}</div>
+                  ))}
+                  {enablingService && (
+                    <span className="animate-pulse">▌</span>
+                  )}
+                  {enableError && (
+                    <div className="text-red-400 mt-2">[ERROR] {enableError}</div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </DashboardShell>
     )
