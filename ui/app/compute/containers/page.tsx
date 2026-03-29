@@ -19,6 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { toast } from "sonner"
 import client from "@/app/utility/post"
 import { 
   RefreshCw, 
@@ -232,7 +233,7 @@ export default function ContainersPage() {
     // Resolve the actual image: use custom input when CUSTOM_IMAGE_VALUE is selected
     const resolvedImage = runImage === CUSTOM_IMAGE_VALUE ? runCustomImage : runImage
     if (!resolvedImage) {
-      alert("Please select or enter an image name to pull and run")
+      toast.error("Please select or enter an image name to pull and run")
       return
     }
 
@@ -265,10 +266,10 @@ export default function ContainersPage() {
       resetPullRunForm()
       setIsPullRunDialogOpen(false)
       await fetchContainers()
-      alert("Container pulled and started successfully!")
+      toast.success("Container pulled and started successfully!")
     } catch (err) {
       console.error("Failed to pull and run container:", err)
-      alert("Failed to pull and run container. Please check the logs.")
+      toast.error("Failed to pull and run container. Please check the logs.")
     } finally {
       setIsPullingAndRunning(false)
     }
