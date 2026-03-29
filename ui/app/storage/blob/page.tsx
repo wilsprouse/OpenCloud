@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -40,8 +40,10 @@ type Container = {
 
 function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
   const searchParams = useSearchParams()
+  const handled = useRef(false)
   useEffect(() => {
-    if (searchParams.get("create") === "true") {
+    if (!handled.current && searchParams.get("create") === "true") {
+      handled.current = true
       onCreateRequested()
     }
   }, [searchParams, onCreateRequested])
