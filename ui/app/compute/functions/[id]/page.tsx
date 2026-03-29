@@ -405,11 +405,11 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                           <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs">
-                          <p className="font-medium mb-1">Common schedules:</p>
+                          <p className="font-medium mb-1">Common schedules (UTC):</p>
                           <ul className="space-y-1 text-xs">
-                            <li><span className="font-mono">0 23 * * *</span> — Every day at 11 PM</li>
-                            <li><span className="font-mono">0 4 * * *</span> — Every day at 4 AM</li>
-                            <li><span className="font-mono">0 5 * * *</span> — Every day at 5 AM</li>
+                            <li><span className="font-mono">0 23 * * *</span> — Every day at 11 PM UTC</li>
+                            <li><span className="font-mono">0 4 * * *</span> — Every day at 4 AM UTC</li>
+                            <li><span className="font-mono">0 5 * * *</span> — Every day at 5 AM UTC</li>
                           </ul>
                         </TooltipContent>
                       </Tooltip>
