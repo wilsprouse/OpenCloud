@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/WavexSoftware/OpenCloud/api"
 	computeapi "github.com/WavexSoftware/OpenCloud/api/compute"
+	storageapi "github.com/WavexSoftware/OpenCloud/api/storage"
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 	"github.com/WavexSoftware/OpenCloud/utils"
 	"log"
@@ -149,14 +150,14 @@ func main() {
 	mux.HandleFunc("/user/get-auth/", api.RefreshAuth)
 	mux.HandleFunc("/get-server-metrics", api.GetSystemMetrics)
 	mux.HandleFunc("/get-containers", computeapi.GetContainers)
-	mux.HandleFunc("/get-images", api.GetContainerRegistry)
-	mux.HandleFunc("/list-blob-buckets", api.ListBlobBuckets)
-	mux.HandleFunc("/get-blobs", api.GetBlobBuckets)
-	mux.HandleFunc("/create-bucket", api.CreateBucket)
-	mux.HandleFunc("/upload-object", api.UploadObject)
-	mux.HandleFunc("/delete-object", api.DeleteObject)
-	mux.HandleFunc("/download-object", api.DownloadObject)
-	mux.HandleFunc("/rename-bucket", api.RenameBucket)
+	mux.HandleFunc("/get-images", storageapi.GetContainerRegistry)
+	mux.HandleFunc("/list-blob-buckets", storageapi.ListBlobBuckets)
+	mux.HandleFunc("/get-blobs", storageapi.GetBlobBuckets)
+	mux.HandleFunc("/create-bucket", storageapi.CreateBucket)
+	mux.HandleFunc("/upload-object", storageapi.UploadObject)
+	mux.HandleFunc("/delete-object", storageapi.DeleteObject)
+	mux.HandleFunc("/download-object", storageapi.DownloadObject)
+	mux.HandleFunc("/rename-bucket", storageapi.RenameBucket)
 	mux.HandleFunc("/list-functions", computeapi.ListFunctions)
 	mux.HandleFunc("/invoke-function", computeapi.InvokeFunction)
 	mux.HandleFunc("/create-function", computeapi.CreateFunction)
@@ -175,8 +176,8 @@ func main() {
 	mux.HandleFunc("/run-pipeline/", api.RunPipeline)
 	mux.HandleFunc("/stop-pipeline/", api.StopPipeline)
 	mux.HandleFunc("/get-pipeline-logs/", api.GetPipelineLogs)
-	mux.HandleFunc("/build-image", api.BuildImage)
-	mux.HandleFunc("/delete-image", api.DeleteImage)
+	mux.HandleFunc("/build-image", storageapi.BuildImage)
+	mux.HandleFunc("/delete-image", storageapi.DeleteImage)
 	mux.HandleFunc("/delete-container", computeapi.DeleteContainer)
 	mux.HandleFunc("/containers/", computeapi.ContainerAction)
 	mux.HandleFunc("/pull-and-run", computeapi.PullAndRun)
