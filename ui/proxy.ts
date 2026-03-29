@@ -2,11 +2,11 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
 /**
- * Middleware that protects all application routes behind authentication.
+ * Proxy that protects all application routes behind authentication.
  * Unauthenticated users are redirected to /login; authenticated users
  * attempting to access /login are redirected to the dashboard.
  */
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const session = request.cookies.get("opencloud_session")
   const { pathname } = request.nextUrl
 
