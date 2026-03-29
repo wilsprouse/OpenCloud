@@ -5,10 +5,12 @@ The Service Ledger
 package service_ledger
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -317,6 +319,139 @@ func EnableServiceHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// enableServiceWithStream runs the service installer for the given service, sending each
+// line of combined stdout/stderr output to the provided send callback as it is produced.
+// Once the installer completes successfully the service is marked as enabled in the ledger.
+// The mutex is NOT held during the installer execution so that streaming is not blocked.
+func enableServiceWithStream(serviceName string, send func(string)) error {
+	if serviceLedgerDir == "" {
+		return fmt.Errorf("service ledger directory not initialized")
+	}
+
+	installerPath := filepath.Join(serviceLedgerDir, "service_installers", serviceName+".sh")
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		send(fmt.Sprintf("[INFO] No installer found for service '%s', skipping installation step", serviceName))
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to check installer script: %w", err)
+	}
+
+	if err := os.Chmod(installerPath, 0755); err != nil {
+		return fmt.Errorf("failed to make installer script executable: %w", err)
+	}
+
+	send(fmt.Sprintf("[INFO] Executing installer for service '%s'...", serviceName))
+
+	cmd := exec.Command("/bin/bash", installerPath)
+
+	// Merge stdout and stderr into a single pipe for ordered, real-time output.
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+
+	errCh := make(chan error, 1)
+	go func() {
+		runErr := cmd.Run()
+		pw.Close()
+		errCh <- runErr
+	}()
+
+	scanner := bufio.NewScanner(pr)
+	for scanner.Scan() {
+		send(scanner.Text())
+	}
+
+	if err := <-errCh; err != nil {
+		return fmt.Errorf("installer script failed for service '%s': %w", serviceName, err)
+	}
+
+	return nil
+}
+
+// EnableServiceStreamHandler is an HTTP handler that enables a service and streams the
+// installer output to the client using Server-Sent Events (SSE).
+//
+// Request: POST /enable-service-stream  body: {"service": "<name>"}
+// Response: text/event-stream
+//
+//	data: <installer output line>
+//	...
+//	event: done
+//	data: {"service":"<name>","enabled":true}
+//
+//	On error:
+//	event: error
+//	data: <error message>
+func EnableServiceStreamHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Service string `json:"service"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.Service == "" {
+		http.Error(w, "Missing service field", http.StatusBadRequest)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	sendLine := func(line string) {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+	}
+
+	// Run the installer with real-time streaming output.
+	if err := enableServiceWithStream(body.Service, sendLine); err != nil {
+		log.Printf("EnableServiceStreamHandler: installer error for '%s': %v", body.Service, err)
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	// Mark the service as enabled in the ledger.
+	ledgerMutex.Lock()
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		ledgerMutex.Unlock()
+		errMsg := fmt.Sprintf("failed to read service ledger: %s", err.Error())
+		log.Printf("EnableServiceStreamHandler: %s", errMsg)
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", errMsg)
+		flusher.Flush()
+		return
+	}
+	ledger[body.Service] = ServiceStatus{Enabled: true}
+	if err := WriteServiceLedger(ledger); err != nil {
+		ledgerMutex.Unlock()
+		errMsg := fmt.Sprintf("failed to write service ledger: %s", err.Error())
+		log.Printf("EnableServiceStreamHandler: %s", errMsg)
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", errMsg)
+		flusher.Flush()
+		return
+	}
+	ledgerMutex.Unlock()
+
+	sendLine("[SUCCESS] Functions service enabled successfully!")
+	fmt.Fprintf(w, "event: done\ndata: {\"service\":%q,\"enabled\":true}\n\n", body.Service)
+	flusher.Flush()
 }
 
 // UpdateFunctionEntry updates a specific function entry in the Functions service ledger
