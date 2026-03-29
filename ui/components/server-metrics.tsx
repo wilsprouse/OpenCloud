@@ -2,7 +2,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Cpu, HardDrive, MemoryStick, Network, Activity, Clock } from "lucide-react"
+import { Cpu, HardDrive, Activity, Clock } from "lucide-react"
 import { useState, useEffect } from "react";
 import client from "../app/utility/post";
 
@@ -50,7 +50,7 @@ export function ServerMetrics() {
         </Badge>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">CPU Usage</CardTitle>
@@ -67,21 +67,6 @@ export function ServerMetrics() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Memory</CardTitle>
-            <MemoryStick className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">12.4 GB</div>
-            <Progress value={78} className="mt-2" />
-            <div className="flex justify-between text-xs text-muted-foreground mt-2">
-              <span>78% of 16 GB</span>
-              <span>3.6 GB free</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Storage</CardTitle>
             <HardDrive className="h-4 w-4 text-purple-500" />
           </CardHeader>
@@ -91,21 +76,6 @@ export function ServerMetrics() {
             <div className="flex justify-between text-xs text-muted-foreground mt-2">
               <span>{PercentageUsed}% Used of {TotalStorage} GB</span>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Network I/O</CardTitle>
-            <Network className="h-4 w-4 text-orange-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">2.4 GB/s</div>
-            <div className="flex justify-between text-xs text-muted-foreground mt-2">
-              <span>↑ 1.2 GB/s</span>
-              <span>↓ 1.2 GB/s</span>
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">Peak: 4.8 GB/s</div>
           </CardContent>
         </Card>
       </div>
