@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useEffect, useState } from "react"
+import { use, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label"
 import client from "@/app/utility/post"
 import { CONTAINER_NAME_MAX_LENGTH, isValidContainerName } from "@/lib/container-name"
 import { useContainerNameWarning } from "@/lib/use-container-name-warning"
+import { Progress } from "@/components/ui/progress"
 import { 
   Upload, 
   RefreshCw, 
@@ -71,6 +72,9 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
 
   // Upload form state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const uploadAbortRef = useRef<AbortController | null>(null)
 
   // Fetch blobs for this container
   const fetchBlobs = async () => {
@@ -151,14 +155,29 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
 
       console.log(`Uploading file: ${selectedFile.name} to container: ${containerName}`)
 
-      // Create FormData for multipart/form-data upload
+      // Create FormData for multipart/form-data upload.
+      // container must be appended before file so the streaming backend
+      // receives the container name before it begins writing the file to disk.
       const formData = new FormData()
-      formData.append("file", selectedFile)
       formData.append("container", containerName)
+      formData.append("file", selectedFile)
+
+      const controller = new AbortController()
+      uploadAbortRef.current = controller
+
+      setIsUploading(true)
+      setUploadProgress(0)
 
       // POST to backend endpoint
       const res = await client.post("/upload-object", formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        signal: controller.signal,
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+            setUploadProgress(pct)
+          }
+        },
       })
 
       if (res.status === 200 || res.status === 201) {
@@ -175,6 +194,10 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
       }
     } catch (err) {
       console.error("Failed to upload blob:", err)
+    } finally {
+      uploadAbortRef.current = null
+      setIsUploading(false)
+      setUploadProgress(0)
     }
   }
 
@@ -280,7 +303,14 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+          <Dialog open={isUploadDialogOpen} onOpenChange={(open) => {
+              if (!open) {
+                // Cancel any in-flight upload when the dialog is dismissed;
+                // the finally block in handleUpload resets all upload state.
+                uploadAbortRef.current?.abort()
+              }
+              setIsUploadDialogOpen(open)
+            }}>
             <DialogTrigger asChild>
               <Button>
                 <Upload className="mr-2 h-4 w-4" />
@@ -301,15 +331,25 @@ export default function ContainerDetail({ params }: { params: Promise<{ containe
                     id="file"
                     type="file"
                     onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    disabled={isUploading}
                   />
                 </div>
+                {isUploading && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm text-muted-foreground">
+                      <span>Uploading…</span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+                    <Progress value={uploadProgress} className="h-2" />
+                  </div>
+                )}
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)}>
+                <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)} disabled={isUploading}>
                   Cancel
                 </Button>
-                <Button onClick={handleUpload} disabled={!selectedFile}>
-                  Upload
+                <Button onClick={handleUpload} disabled={!selectedFile || isUploading}>
+                  {isUploading ? "Uploading…" : "Upload"}
                 </Button>
               </DialogFooter>
             </DialogContent>
