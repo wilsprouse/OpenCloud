@@ -394,8 +394,8 @@ export default function ContainersPage() {
                     key={c.Id}
                     className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
                   >
-                    <div className="flex items-center space-x-4 flex-1">
-                      <div className={`p-2 rounded-lg ${c.State === "running" ? "bg-green-50" : "bg-gray-50"}`}>
+                    <div className="flex items-center space-x-4 flex-1 min-w-0">
+                      <div className={`shrink-0 p-2 rounded-lg ${c.State === "running" ? "bg-green-50" : "bg-gray-50"}`}>
                         <Container className={`h-5 w-5 ${c.State === "running" ? "text-green-600" : "text-gray-600"}`} />
                       </div>
                       <div className="space-y-1 flex-1 min-w-0">
@@ -407,7 +407,7 @@ export default function ContainersPage() {
                             {c.State}
                           </Badge>
                         </div>
-                        <div className="flex items-center space-x-4 text-xs text-muted-foreground">
+                        <div className="hidden sm:flex items-center space-x-4 text-xs text-muted-foreground">
                           <span className="flex items-center">
                             <ImageIcon className="h-3 w-3 mr-1" />
                             {c.Image}
@@ -430,7 +430,7 @@ export default function ContainersPage() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2 ml-4">
+                    <div className="flex shrink-0 items-center space-x-2 ml-4">
                       {c.State !== "running" && (
                         <Button
                           variant="outline"
@@ -503,13 +503,13 @@ export default function ContainersPage() {
               >
                 <DialogTrigger asChild>
                   <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100">
-                    <div className="flex items-center space-x-3">
-                      <div className="p-2 rounded-lg bg-white text-blue-600">
+                    <div className="flex items-center space-x-3 min-w-0">
+                      <div className="shrink-0 p-2 rounded-lg bg-white text-blue-600">
                         <Download className="h-4 w-4" />
                       </div>
-                      <div className="text-left">
-                        <div className="font-medium text-sm">Pull and Run Container</div>
-                        <div className="text-xs text-muted-foreground">Pull an image from your Container Registry</div>
+                      <div className="text-left min-w-0">
+                        <div className="font-medium text-sm whitespace-normal break-words">Pull and Run Container</div>
+                        <div className="text-xs text-muted-foreground whitespace-normal break-words">Pull an image from your Container Registry</div>
                       </div>
                     </div>
                   </Button>
