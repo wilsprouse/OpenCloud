@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -38,9 +38,18 @@ type Container = {
   lastModified: string
 }
 
+function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get("create") === "true") {
+      onCreateRequested()
+    }
+  }, [searchParams, onCreateRequested])
+  return null
+}
+
 export default function BlobStorage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const [containers, setContainers] = useState<Container[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -72,12 +81,6 @@ export default function BlobStorage() {
   useEffect(() => {
     fetchContainers()
   }, [])
-
-  useEffect(() => {
-    if (searchParams.get("create") === "true") {
-      setIsContainerDialogOpen(true)
-    }
-  }, [searchParams])
 
   const handleCreateContainer = async (name: string) => {
     try {
@@ -129,6 +132,9 @@ export default function BlobStorage() {
 
   return (
     <DashboardShell>
+      <Suspense fallback={null}>
+        <SearchParamsReader onCreateRequested={() => setIsContainerDialogOpen(true)} />
+      </Suspense>
       <DashboardHeader heading="Blob Storage" text="Manage your containers and objects">
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={fetchContainers} disabled={loading}>

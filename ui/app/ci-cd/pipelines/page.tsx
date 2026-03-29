@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -93,9 +93,18 @@ warning "Starting deployment..."
 # Add your deployment commands here
 success "Deployment completed successfully!"`
 
+function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get("create") === "true") {
+      onCreateRequested()
+    }
+  }, [searchParams, onCreateRequested])
+  return null
+}
+
 export default function Pipelines() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -104,6 +113,7 @@ export default function Pipelines() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null)
   const [pipelineToDelete, setPipelineToDelete] = useState<string | null>(null)
+  const [pendingCreate, setPendingCreate] = useState(false)
   
   // Service enabled state
   const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
@@ -176,10 +186,10 @@ export default function Pipelines() {
   }, [serviceEnabled])
 
   useEffect(() => {
-    if (serviceEnabled && searchParams.get("create") === "true") {
+    if (serviceEnabled && pendingCreate) {
       setIsCreateDialogOpen(true)
     }
-  }, [serviceEnabled, searchParams])
+  }, [serviceEnabled, pendingCreate])
 
   // Handle pipeline actions
   const handleRunPipeline = async (id: string) => {
@@ -355,6 +365,9 @@ export default function Pipelines() {
 
   return (
     <DashboardShell>
+      <Suspense fallback={null}>
+        <SearchParamsReader onCreateRequested={() => setPendingCreate(true)} />
+      </Suspense>
       <DashboardHeader 
         heading="CI/CD Pipelines" 
         text="Manage and run your continuous integration and deployment pipelines"

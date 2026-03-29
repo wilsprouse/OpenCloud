@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -83,8 +83,17 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
 }
 
-export default function ContainersPage() {
+function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
   const searchParams = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get("create") === "true") {
+      onCreateRequested()
+    }
+  }, [searchParams, onCreateRequested])
+  return null
+}
+
+export default function ContainersPage() {
   const [containers, setContainers] = useState<ContainerItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -143,12 +152,6 @@ export default function ContainersPage() {
   useEffect(() => {
     fetchContainers()
   }, [])
-
-  useEffect(() => {
-    if (searchParams.get("create") === "true") {
-      setIsPullRunDialogOpen(true)
-    }
-  }, [searchParams])
 
   // Manage container actions
   const handleAction = async (id: string, action: "start" | "stop") => {
@@ -304,6 +307,9 @@ export default function ContainersPage() {
 
   return (
     <DashboardShell>
+      <Suspense fallback={null}>
+        <SearchParamsReader onCreateRequested={() => setIsPullRunDialogOpen(true)} />
+      </Suspense>
       <DashboardHeader heading="Containers" text="Manage your containers">
         <div className="flex items-center space-x-2">
           <Button variant="outline" onClick={fetchContainers} disabled={loading}>
