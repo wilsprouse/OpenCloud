@@ -94,6 +94,12 @@ export default function ContainerRegistry() {
   const [nocache, setNocache] = useState(false)
   const [platform, setPlatform] = useState("linux/amd64")
 
+  // Pull image dialog state
+  const [isPullDialogOpen, setIsPullDialogOpen] = useState(false)
+  const [pullImageName, setPullImageName] = useState("")
+  const [pullRegistry, setPullRegistry] = useState<"docker.io" | "quay.io">("docker.io")
+  const [isPulling, setIsPulling] = useState(false)
+
   // Check if service is enabled
   const checkServiceStatus = async () => {
     try {
@@ -282,6 +288,30 @@ export default function ContainerRegistry() {
       toast.error("Failed to build image. Please check the logs.")
     } finally {
       setIsBuilding(false)
+    }
+  }
+
+  // Pull an image from a public registry
+  const handlePullImage = async () => {
+    const trimmed = pullImageName.trim()
+    if (!trimmed) {
+      toast.error("Please provide an image name")
+      return
+    }
+
+    setIsPulling(true)
+    try {
+      await client.post("/pull-image", { imageName: trimmed, registry: pullRegistry })
+      setPullImageName("")
+      setPullRegistry("docker.io")
+      setIsPullDialogOpen(false)
+      await fetchImages()
+      toast.success(`Image "${trimmed}" pulled successfully!`)
+    } catch (err) {
+      console.error("Failed to pull image:", err)
+      toast.error("Failed to pull image. Please check the image name and try again.")
+    } finally {
+      setIsPulling(false)
     }
   }
 
@@ -653,17 +683,84 @@ export default function ContainerRegistry() {
                 </DialogContent>
               </Dialog>
 
-              <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 rounded-lg bg-white text-green-600 shrink-0">
-                    <Download className="h-4 w-4" />
+              <Dialog open={isPullDialogOpen} onOpenChange={setIsPullDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 rounded-lg bg-white text-green-600 shrink-0">
+                        <Download className="h-4 w-4" />
+                      </div>
+                      <div className="text-left min-w-0">
+                        <div className="font-medium text-sm">Pull Image</div>
+                        <div className="text-xs text-muted-foreground whitespace-normal">Download from registry</div>
+                      </div>
+                    </div>
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Pull Container Image</DialogTitle>
+                    <DialogDescription>
+                      Download a container image from a public registry.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="pull-image-name">Image Name</Label>
+                      <Input
+                        id="pull-image-name"
+                        placeholder="e.g. nginx:latest or library/alpine:3.18"
+                        value={pullImageName}
+                        onChange={(e) => setPullImageName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handlePullImage() }}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Source Registry</Label>
+                      <div className="flex flex-col gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="pullRegistry"
+                            checked={pullRegistry === "docker.io"}
+                            onChange={() => setPullRegistry("docker.io")}
+                            className="h-4 w-4 border-gray-300"
+                          />
+                          <span className="text-sm">Docker Hub (docker.io)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="pullRegistry"
+                            checked={pullRegistry === "quay.io"}
+                            onChange={() => setPullRegistry("quay.io")}
+                            className="h-4 w-4 border-gray-300"
+                          />
+                          <span className="text-sm">Quay.io (quay.io)</span>
+                        </label>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-left min-w-0">
-                    <div className="font-medium text-sm">Pull Image</div>
-                    <div className="text-xs text-muted-foreground whitespace-normal">Download from registry</div>
-                  </div>
-                </div>
-              </Button>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setIsPullDialogOpen(false)} disabled={isPulling}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handlePullImage} disabled={isPulling || !pullImageName.trim()}>
+                      {isPulling ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          Pulling...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="mr-2 h-4 w-4" />
+                          Pull Image
+                        </>
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
 

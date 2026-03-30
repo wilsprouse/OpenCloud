@@ -56,6 +56,10 @@ type ContainerImageEntry struct {
 	Platform   string `json:"platform,omitempty"`
 	NoCache    bool   `json:"nocache"`
 	BuiltAt    string `json:"builtAt"`
+	// PulledAt is set when the image was pulled from a remote registry rather than built locally.
+	PulledAt string `json:"pulledAt,omitempty"`
+	// Registry is the source registry used when pulling the image (e.g. "docker.io", "quay.io").
+	Registry string `json:"registry,omitempty"`
 }
 
 // ServiceStatus represents the status of a single service
@@ -790,6 +794,36 @@ func UpdateContainerImageEntry(imageName, dockerfile, context, platform string, 
 		Platform:   platform,
 		NoCache:    noCache,
 		BuiltAt:    builtAt,
+	}
+
+	ledger["container_registry"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// RecordPulledImageEntry stores a pulled container image entry in the container_registry service ledger.
+// Unlike UpdateContainerImageEntry, a pulled image has no Dockerfile — only the image reference and
+// the registry it was fetched from are recorded.
+func RecordPulledImageEntry(imageName, registry, pulledAt string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["container_registry"]
+	if !exists {
+		serviceStatus = ServiceStatus{Enabled: false, ContainerImages: make(map[string]ContainerImageEntry)}
+	} else if serviceStatus.ContainerImages == nil {
+		serviceStatus.ContainerImages = make(map[string]ContainerImageEntry)
+	}
+
+	serviceStatus.ContainerImages[imageName] = ContainerImageEntry{
+		ImageName: imageName,
+		Registry:  registry,
+		PulledAt:  pulledAt,
 	}
 
 	ledger["container_registry"] = serviceStatus
