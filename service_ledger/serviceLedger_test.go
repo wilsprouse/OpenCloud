@@ -796,3 +796,263 @@ func TestGetAllContainerImageEntriesEmpty(t *testing.T) {
 	}
 }
 
+// resetBuckets removes all bucket entries from the shared service ledger.
+// This is used by tests that rely on an exact count or clean state, since the ledger file
+// is stored in the source tree and persists across test runs.
+func resetBuckets(t *testing.T) {
+	t.Helper()
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		t.Fatalf("resetBuckets: failed to read ledger: %v", err)
+	}
+	if status, exists := ledger["blob_storage"]; exists {
+		status.Buckets = make(map[string]BucketEntry)
+		ledger["blob_storage"] = status
+	}
+	if err := WriteServiceLedger(ledger); err != nil {
+		t.Fatalf("resetBuckets: failed to write ledger: %v", err)
+	}
+}
+
+// TestUpdateBucketEntry tests that a bucket entry is stored in the ledger
+func TestUpdateBucketEntry(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetBuckets(t)
+	t.Cleanup(func() { resetBuckets(t) })
+
+	bucketName := "my-test-bucket"
+	createdAt := "2024-01-01T00:00:00Z"
+
+	if err := UpdateBucketEntry(bucketName, createdAt); err != nil {
+		t.Fatalf("UpdateBucketEntry failed: %v", err)
+	}
+
+	entry, err := GetBucketEntry(bucketName)
+	if err != nil {
+		t.Fatalf("GetBucketEntry failed: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("Expected bucket entry, got nil")
+	}
+
+	if entry.Name != bucketName {
+		t.Errorf("Expected name %q, got %q", bucketName, entry.Name)
+	}
+	if entry.CreatedAt != createdAt {
+		t.Errorf("Expected createdAt %q, got %q", createdAt, entry.CreatedAt)
+	}
+}
+
+// TestUpdateBucketEntryOverwrite tests that updating an existing bucket overwrites its fields
+func TestUpdateBucketEntryOverwrite(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetBuckets(t)
+	t.Cleanup(func() { resetBuckets(t) })
+
+	bucketName := "my-overwrite-bucket"
+	firstCreatedAt := "2024-01-01T00:00:00Z"
+	secondCreatedAt := "2024-06-01T00:00:00Z"
+
+	if err := UpdateBucketEntry(bucketName, firstCreatedAt); err != nil {
+		t.Fatalf("First UpdateBucketEntry failed: %v", err)
+	}
+	if err := UpdateBucketEntry(bucketName, secondCreatedAt); err != nil {
+		t.Fatalf("Second UpdateBucketEntry failed: %v", err)
+	}
+
+	entry, err := GetBucketEntry(bucketName)
+	if err != nil {
+		t.Fatalf("GetBucketEntry failed: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("Expected bucket entry, got nil")
+	}
+
+	if entry.CreatedAt != secondCreatedAt {
+		t.Errorf("Expected updated createdAt %q, got %q", secondCreatedAt, entry.CreatedAt)
+	}
+}
+
+// TestDeleteBucketEntry tests that a bucket entry can be removed from the ledger
+func TestDeleteBucketEntry(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetBuckets(t)
+	t.Cleanup(func() { resetBuckets(t) })
+
+	bucketName := "to-delete-bucket"
+	if err := UpdateBucketEntry(bucketName, "2024-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("UpdateBucketEntry failed: %v", err)
+	}
+
+	if err := DeleteBucketEntry(bucketName); err != nil {
+		t.Fatalf("DeleteBucketEntry failed: %v", err)
+	}
+
+	entry, err := GetBucketEntry(bucketName)
+	if err != nil {
+		t.Fatalf("GetBucketEntry after delete failed: %v", err)
+	}
+	if entry != nil {
+		t.Error("Expected nil entry after deletion, but got one")
+	}
+}
+
+// TestDeleteBucketEntryNonExistent tests that deleting a non-existent entry is a no-op
+func TestDeleteBucketEntryNonExistent(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	if err := DeleteBucketEntry("does-not-exist-bucket"); err != nil {
+		t.Errorf("DeleteBucketEntry should not fail for non-existent entry: %v", err)
+	}
+}
+
+// TestGetBucketEntryNonExistent tests that getting a non-existent entry returns nil
+func TestGetBucketEntryNonExistent(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	entry, err := GetBucketEntry("not-there-bucket")
+	if err != nil {
+		t.Fatalf("GetBucketEntry returned unexpected error: %v", err)
+	}
+	if entry != nil {
+		t.Error("Expected nil for non-existent entry, got non-nil")
+	}
+}
+
+// TestGetAllBucketEntries tests that all stored buckets are returned
+func TestGetAllBucketEntries(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetBuckets(t)
+	t.Cleanup(func() { resetBuckets(t) })
+
+	buckets := map[string]string{
+		"bucket-alpha": "2024-01-01T00:00:00Z",
+		"bucket-beta":  "2024-03-15T12:00:00Z",
+	}
+	for name, createdAt := range buckets {
+		if err := UpdateBucketEntry(name, createdAt); err != nil {
+			t.Fatalf("UpdateBucketEntry(%s) failed: %v", name, err)
+		}
+	}
+
+	all, err := GetAllBucketEntries()
+	if err != nil {
+		t.Fatalf("GetAllBucketEntries failed: %v", err)
+	}
+
+	if len(all) != len(buckets) {
+		t.Errorf("Expected %d entries, got %d", len(buckets), len(all))
+	}
+	for name, expectedCreatedAt := range buckets {
+		entry, ok := all[name]
+		if !ok {
+			t.Errorf("Expected entry for %q not found", name)
+			continue
+		}
+		if entry.CreatedAt != expectedCreatedAt {
+			t.Errorf("Entry %q: expected createdAt %q, got %q", name, expectedCreatedAt, entry.CreatedAt)
+		}
+	}
+}
+
+// TestGetAllBucketEntriesEmpty tests that an empty map is returned when no buckets are stored
+func TestGetAllBucketEntriesEmpty(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetBuckets(t)
+	t.Cleanup(func() { resetBuckets(t) })
+
+	all, err := GetAllBucketEntries()
+	if err != nil {
+		t.Fatalf("GetAllBucketEntries failed: %v", err)
+	}
+	if len(all) != 0 {
+		t.Errorf("Expected empty map, got %d entries", len(all))
+	}
+}
+
+// TestRenameBucketEntry tests that a bucket entry is correctly renamed in the ledger
+func TestRenameBucketEntry(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetBuckets(t)
+	t.Cleanup(func() { resetBuckets(t) })
+
+	originalName := "original-bucket"
+	newName := "renamed-bucket"
+	createdAt := "2024-01-01T00:00:00Z"
+
+	if err := UpdateBucketEntry(originalName, createdAt); err != nil {
+		t.Fatalf("UpdateBucketEntry failed: %v", err)
+	}
+
+	if err := RenameBucketEntry(originalName, newName); err != nil {
+		t.Fatalf("RenameBucketEntry failed: %v", err)
+	}
+
+	// Old entry should be gone
+	oldEntry, err := GetBucketEntry(originalName)
+	if err != nil {
+		t.Fatalf("GetBucketEntry for old name failed: %v", err)
+	}
+	if oldEntry != nil {
+		t.Error("Expected old bucket entry to be removed, but it still exists")
+	}
+
+	// New entry should exist with preserved CreatedAt
+	newEntry, err := GetBucketEntry(newName)
+	if err != nil {
+		t.Fatalf("GetBucketEntry for new name failed: %v", err)
+	}
+	if newEntry == nil {
+		t.Fatal("Expected new bucket entry, got nil")
+	}
+	if newEntry.Name != newName {
+		t.Errorf("Expected name %q, got %q", newName, newEntry.Name)
+	}
+	if newEntry.CreatedAt != createdAt {
+		t.Errorf("Expected preserved createdAt %q, got %q", createdAt, newEntry.CreatedAt)
+	}
+}
+
+// TestRenameBucketEntryNonExistent tests that renaming a non-existent bucket entry is a no-op
+func TestRenameBucketEntryNonExistent(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	if err := RenameBucketEntry("ghost-bucket", "new-name"); err != nil {
+		t.Errorf("RenameBucketEntry should not fail for non-existent entry: %v", err)
+	}
+}
