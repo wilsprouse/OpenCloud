@@ -139,6 +139,9 @@ tags := append([]string(nil), img.RepoTags...)
 if len(tags) == 0 {
 tags = append(tags, img.Names...)
 }
+for i, t := range tags {
+tags[i] = strings.TrimPrefix(t, "localhost/")
+}
 
 displayName := img.ID
 if len(tags) > 0 {
@@ -358,6 +361,11 @@ return
 if _, errs := images.Remove(conn, []string{req.ImageName}, new(images.RemoveOptions)); len(errs) > 0 {
 http.Error(w, fmt.Sprintf("Failed to delete image: %v", errs[0]), http.StatusInternalServerError)
 return
+}
+
+ledgerName := strings.TrimPrefix(req.ImageName, "localhost/")
+if ledgerErr := service_ledger.DeleteContainerImageEntry(ledgerName); ledgerErr != nil {
+log.Printf("Warning: failed to remove image %s from service ledger: %v", ledgerName, ledgerErr)
 }
 
 w.Header().Set("Content-Type", "application/json")
