@@ -139,6 +139,9 @@ tags := append([]string(nil), img.RepoTags...)
 if len(tags) == 0 {
 tags = append(tags, img.Names...)
 }
+for i, t := range tags {
+tags[i] = strings.TrimPrefix(t, "localhost/")
+}
 
 displayName := img.ID
 if len(tags) > 0 {
