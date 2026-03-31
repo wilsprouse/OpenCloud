@@ -544,3 +544,103 @@ func TestRenameBucketConflict(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusConflict, resp.StatusCode)
 	}
 }
+
+// TestDeleteBucketInvalidMethod tests that DeleteBucket rejects non-DELETE requests
+func TestDeleteBucketInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/delete-bucket", nil)
+	w := httptest.NewRecorder()
+
+	DeleteBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
+	}
+}
+
+// TestDeleteBucketInvalidJSON tests that DeleteBucket rejects invalid JSON
+func TestDeleteBucketInvalidJSON(t *testing.T) {
+	invalidJSON := bytes.NewBufferString("{invalid json")
+	req := httptest.NewRequest(http.MethodDelete, "/delete-bucket", invalidJSON)
+	w := httptest.NewRecorder()
+
+	DeleteBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestDeleteBucketMissingName tests that DeleteBucket rejects a request with no bucket name
+func TestDeleteBucketMissingName(t *testing.T) {
+	body, _ := json.Marshal(map[string]string{"name": ""})
+	req := httptest.NewRequest(http.MethodDelete, "/delete-bucket", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	DeleteBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestDeleteBucketNotFound tests that DeleteBucket returns 404 for a non-existent bucket
+func TestDeleteBucketNotFound(t *testing.T) {
+	body, _ := json.Marshal(map[string]string{"name": "bucket-that-does-not-exist-xyz"})
+	req := httptest.NewRequest(http.MethodDelete, "/delete-bucket", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	DeleteBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected status %d, got %d", http.StatusNotFound, resp.StatusCode)
+	}
+}
+
+// TestDeleteBucketSuccess tests that DeleteBucket removes an existing bucket and its objects
+func TestDeleteBucketSuccess(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("Cannot determine home directory, skipping test")
+	}
+
+	basePath := filepath.Join(home, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(basePath, 0755); err != nil {
+		t.Skipf("Cannot create blob_storage directory: %v", err)
+	}
+
+	bucketName := "test-delete-bucket-success"
+	bucketPath := filepath.Join(basePath, bucketName)
+
+	os.RemoveAll(bucketPath)
+
+	if err := os.Mkdir(bucketPath, 0755); err != nil {
+		t.Fatalf("Failed to create test bucket: %v", err)
+	}
+
+	// Place an object inside the bucket to verify recursive deletion
+	objectPath := filepath.Join(bucketPath, "test-object.txt")
+	if err := os.WriteFile(objectPath, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test object: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"name": bucketName})
+	req := httptest.NewRequest(http.MethodDelete, "/delete-bucket", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	DeleteBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	// Verify the bucket directory was removed
+	if _, err := os.Stat(bucketPath); !os.IsNotExist(err) {
+		t.Errorf("Expected bucket directory to be removed after deletion")
+		os.RemoveAll(bucketPath)
+	}
+}
