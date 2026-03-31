@@ -118,6 +118,72 @@ func marshalFilesForLedger(files map[string]string, legacyContext string) string
 	return legacyContext
 }
 
+// imageTagEntry holds the subset of fields from a Podman ImageSummary that are
+// needed to expand a single physical image into one ImageInfo per tag.
+type imageTagEntry struct {
+	ID          string
+	RepoTags    []string
+	Names       []string
+	RepoDigests []string
+	Created     int64
+	Size        int64
+	VirtualSize int64
+	Labels      map[string]string
+}
+
+// expandImageTags converts a single imageTagEntry into one ImageInfo per unique
+// repository:tag combination, mirroring the per-row display of `podman images`.
+// The "localhost/" prefix is stripped from all tags and fallback Names entries so
+// that locally-built images are presented without the implicit registry prefix.
+// An image with no tags is returned as a single entry identified by its ID.
+func expandImageTags(entry imageTagEntry) []opencloudapi.ImageInfo {
+	tags := append([]string(nil), entry.RepoTags...)
+	if len(tags) == 0 {
+		tags = append(tags, entry.Names...)
+	}
+	for i, t := range tags {
+		tags[i] = strings.TrimPrefix(t, "localhost/")
+	}
+
+	status := fmt.Sprintf("Created %s", time.Unix(entry.Created, 0).Format(time.RFC3339))
+	repoDigests := append([]string(nil), entry.RepoDigests...)
+	names := append([]string(nil), entry.Names...)
+
+	if len(tags) == 0 {
+		return []opencloudapi.ImageInfo{{
+			ID:          entry.ID,
+			RepoTags:    nil,
+			RepoDigests: repoDigests,
+			Created:     entry.Created,
+			Size:        entry.Size,
+			VirtualSize: entry.VirtualSize,
+			Labels:      entry.Labels,
+			Names:       names,
+			Image:       entry.ID,
+			State:       "available",
+			Status:      status,
+		}}
+	}
+
+	result := make([]opencloudapi.ImageInfo, 0, len(tags))
+	for _, tag := range tags {
+		result = append(result, opencloudapi.ImageInfo{
+			ID:          entry.ID,
+			RepoTags:    []string{tag},
+			RepoDigests: repoDigests,
+			Created:     entry.Created,
+			Size:        entry.Size,
+			VirtualSize: entry.VirtualSize,
+			Labels:      entry.Labels,
+			Names:       names,
+			Image:       tag,
+			State:       "available",
+			Status:      status,
+		})
+	}
+	return result
+}
+
 // GetContainerRegistry lists all container images available through Podman.
 func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
 	socket, err := opencloudapi.RootlessPodmanSocket()
@@ -143,34 +209,16 @@ func GetContainerRegistry(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]opencloudapi.ImageInfo, 0, len(imageList))
 	for _, img := range imageList {
-		tags := append([]string(nil), img.RepoTags...)
-		if len(tags) == 0 {
-			tags = append(tags, img.Names...)
-		}
-		for i, t := range tags {
-			tags[i] = strings.TrimPrefix(t, "localhost/")
-		}
-
-		displayName := img.ID
-		if len(tags) > 0 {
-			displayName = tags[0]
-		}
-
-		imageInfo := opencloudapi.ImageInfo{
+		result = append(result, expandImageTags(imageTagEntry{
 			ID:          img.ID,
-			RepoTags:    tags,
-			RepoDigests: append([]string(nil), img.RepoDigests...),
+			RepoTags:    img.RepoTags,
+			Names:       img.Names,
+			RepoDigests: img.RepoDigests,
 			Created:     img.Created,
 			Size:        img.Size,
 			VirtualSize: img.VirtualSize,
 			Labels:      img.Labels,
-			Names:       append([]string(nil), img.Names...),
-			Image:       displayName,
-			State:       "available",
-			Status:      fmt.Sprintf("Created %s", time.Unix(img.Created, 0).Format(time.RFC3339)),
-		}
-
-		result = append(result, imageInfo)
+		})...)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

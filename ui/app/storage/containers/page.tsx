@@ -481,7 +481,7 @@ export default function ContainerRegistry() {
               <div className="space-y-4">
                 {filteredImages.map((c) => (
                     <div
-                      key={c.Id}
+                      key={`${c.Id}-${c.Image}`}
                       className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
                     >
                       <div className="flex items-center space-x-4 flex-1">

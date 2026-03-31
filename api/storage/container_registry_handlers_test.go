@@ -25,6 +25,108 @@ func TestImageInfoEmptySliceMarshalsToJSONArray(t *testing.T) {
 	}
 }
 
+// TestExpandImageTagsSingleTag verifies that an image with one tag produces exactly
+// one ImageInfo entry and that the localhost/ prefix is stripped from the display name.
+func TestExpandImageTagsSingleTag(t *testing.T) {
+	entry := imageTagEntry{
+		ID:       "sha256:abc123",
+		RepoTags: []string{"localhost/myapp:latest"},
+		Names:    []string{"localhost/myapp:latest"},
+	}
+
+	result := expandImageTags(entry)
+
+	if len(result) != 1 {
+		t.Fatalf("Expected 1 entry, got %d", len(result))
+	}
+	// The localhost/ prefix must have been stripped from the original tag.
+	if result[0].Image == "localhost/myapp:latest" {
+		t.Errorf("localhost/ prefix was not stripped; Image=%q", result[0].Image)
+	}
+	if result[0].Image != "myapp:latest" {
+		t.Errorf("Expected Image=%q, got %q", "myapp:latest", result[0].Image)
+	}
+	if len(result[0].RepoTags) != 1 || result[0].RepoTags[0] != "myapp:latest" {
+		t.Errorf("Expected RepoTags=[myapp:latest], got %v", result[0].RepoTags)
+	}
+}
+
+// TestExpandImageTagsMultipleTags verifies that an image with multiple tags (e.g. a
+// locally-built image that also carries the upstream base-image tag) produces one
+// ImageInfo entry per tag – matching the per-row display of `podman images`.
+func TestExpandImageTagsMultipleTags(t *testing.T) {
+	entry := imageTagEntry{
+		ID: "sha256:abc123",
+		RepoTags: []string{
+			"localhost/nginx_wil:latest",
+			"docker.io/library/nginx:latest",
+		},
+	}
+
+	result := expandImageTags(entry)
+
+	if len(result) != 2 {
+		t.Fatalf("Expected 2 entries (one per tag), got %d", len(result))
+	}
+
+	// Both entries must share the same image ID.
+	for _, r := range result {
+		if r.ID != entry.ID {
+			t.Errorf("Expected ID=%q, got %q", entry.ID, r.ID)
+		}
+		if len(r.RepoTags) != 1 {
+			t.Errorf("Expected exactly 1 RepoTag per entry, got %v", r.RepoTags)
+		}
+	}
+
+	// localhost/ prefix must be stripped from the first tag.
+	if result[0].Image != "nginx_wil:latest" {
+		t.Errorf("Expected Image=%q, got %q", "nginx_wil:latest", result[0].Image)
+	}
+	if result[1].Image != "docker.io/library/nginx:latest" {
+		t.Errorf("Expected Image=%q, got %q", "docker.io/library/nginx:latest", result[1].Image)
+	}
+}
+
+// TestExpandImageTagsNoTags verifies that an image with no tags or names produces a
+// single entry whose display name is the raw image ID.
+func TestExpandImageTagsNoTags(t *testing.T) {
+	entry := imageTagEntry{
+		ID:       "sha256:deadbeef",
+		RepoTags: nil,
+		Names:    nil,
+	}
+
+	result := expandImageTags(entry)
+
+	if len(result) != 1 {
+		t.Fatalf("Expected 1 entry for untagged image, got %d", len(result))
+	}
+	if result[0].Image != entry.ID {
+		t.Errorf("Expected Image=%q (raw ID), got %q", entry.ID, result[0].Image)
+	}
+	if result[0].RepoTags != nil {
+		t.Errorf("Expected nil RepoTags for untagged image, got %v", result[0].RepoTags)
+	}
+}
+
+// TestExpandImageTagsStripsLocalhostPrefix verifies the localhost/ prefix is removed.
+func TestExpandImageTagsStripsLocalhostPrefix(t *testing.T) {
+	entry := imageTagEntry{
+		ID:       "sha256:abc123",
+		RepoTags: []string{"localhost/myservice:v1"},
+	}
+
+	result := expandImageTags(entry)
+
+	if len(result) != 1 {
+		t.Fatalf("Expected 1 entry, got %d", len(result))
+	}
+	if result[0].Image != "myservice:v1" {
+		t.Errorf("Expected localhost/ to be stripped; got Image=%q", result[0].Image)
+	}
+}
+
 // TestBuildImageInvalidMethod tests that BuildImage rejects non-POST requests
 func TestBuildImageInvalidMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/build-image", nil)
