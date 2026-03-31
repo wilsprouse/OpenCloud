@@ -1056,3 +1056,87 @@ func TestRenameBucketEntryNonExistent(t *testing.T) {
 		t.Errorf("RenameBucketEntry should not fail for non-existent entry: %v", err)
 	}
 }
+
+// TestContainersInstallerScriptExists verifies that the containers service installer script exists
+// and is executable, ensuring the "Enable Containers" flow can be triggered from the UI.
+func TestContainersInstallerScriptExists(t *testing.T) {
+	installerDir := getInstallerDir(t)
+	scriptPath := filepath.Join(installerDir, "containers.sh")
+
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatalf("containers.sh installer script not found at %s: %v", scriptPath, err)
+	}
+
+	// Verify the file is not empty
+	if info.Size() == 0 {
+		t.Error("containers.sh installer script is empty")
+	}
+
+	// Verify the file is executable
+	if info.Mode()&0111 == 0 {
+		t.Error("containers.sh installer script is not executable")
+	}
+}
+
+// TestInitializeServiceLedgerContainersService verifies that the containers service is
+// included in the initial service ledger and starts in a disabled state.
+func TestInitializeServiceLedgerContainersService(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("InitializeServiceLedger failed: %v", err)
+	}
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		t.Fatalf("ReadServiceLedger failed: %v", err)
+	}
+
+	status, exists := ledger["containers"]
+	if !exists {
+		t.Fatal("'containers' service not found in initialized ledger")
+	}
+
+	if status.Enabled {
+		t.Error("'containers' service should be disabled by default after initialization")
+	}
+}
+
+// TestEnableContainersService verifies that the containers service can be enabled via
+// EnableService when a valid installer script is present.
+func TestEnableContainersService(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("InitializeServiceLedger failed: %v", err)
+	}
+
+	installerDir := getInstallerDir(t)
+
+	// Use a uniquely named test script to avoid colliding with the real containers.sh
+	testServiceName := "containers_test_enable"
+	installerPath, err := createTestScript(installerDir, testServiceName, 0, "Containers service installed successfully")
+	if err != nil {
+		t.Fatalf("Failed to create test installer: %v", err)
+	}
+	defer os.Remove(installerPath)
+
+	if err := EnableService(testServiceName); err != nil {
+		t.Errorf("EnableService should succeed with a valid installer: %v", err)
+	}
+
+	enabled, err := IsServiceEnabled(testServiceName)
+	if err != nil {
+		t.Fatalf("IsServiceEnabled failed: %v", err)
+	}
+	if !enabled {
+		t.Error("containers service should be enabled after a successful EnableService call")
+	}
+}
