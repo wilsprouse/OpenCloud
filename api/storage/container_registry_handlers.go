@@ -36,6 +36,14 @@ type DeleteImageRequest struct {
 	ImageName string `json:"imageName"`
 }
 
+// PullImageRequest represents the JSON payload for pulling a container image from a registry.
+type PullImageRequest struct {
+	// ImageName is the image reference to pull, e.g. "nginx:latest" or "quay.io/prometheus/prometheus:latest".
+	ImageName string `json:"imageName"`
+	// Registry is the source registry: "docker.io" (default) or "quay.io".
+	Registry string `json:"registry"`
+}
+
 // hasFromInstruction checks whether a Dockerfile string contains a FROM instruction,
 // ignoring comment lines (lines starting with #).
 func hasFromInstruction(dockerfile string) bool {
@@ -373,5 +381,84 @@ func DeleteImage(w http.ResponseWriter, r *http.Request) {
 		"status":    "deleted",
 		"imageName": req.ImageName,
 		"socket":    socket,
+	})
+}
+
+// PullImage pulls a container image from a public registry (docker.io or quay.io)
+// using Podman and records the pulled image in the service ledger.
+func PullImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	defer r.Body.Close()
+
+	var req PullImageRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	req.ImageName = strings.TrimSpace(req.ImageName)
+	if req.ImageName == "" {
+		http.Error(w, "imageName is required", http.StatusBadRequest)
+		return
+	}
+
+	req.Registry = strings.TrimSpace(req.Registry)
+	if req.Registry == "" {
+		req.Registry = "docker.io"
+	}
+	if req.Registry != "docker.io" && req.Registry != "quay.io" {
+		http.Error(w, "registry must be \"docker.io\" or \"quay.io\"", http.StatusBadRequest)
+		return
+	}
+
+	if errMsg := opencloudapi.ValidateImageName(req.ImageName); errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	// Build the fully-qualified image reference.
+	imageRef := req.ImageName
+	// Only prepend the registry when the name does not already contain one.
+	if !strings.ContainsRune(imageRef, '/') || !strings.Contains(strings.SplitN(imageRef, "/", 2)[0], ".") {
+		imageRef = req.Registry + "/" + imageRef
+	}
+
+	socket, err := opencloudapi.RootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	conn, err := bindings.NewConnection(ctx, socket)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := images.Pull(conn, imageRef, new(images.PullOptions).WithQuiet(false)); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to pull image %q: %v", imageRef, err), http.StatusInternalServerError)
+		return
+	}
+
+	if ledgerErr := service_ledger.RecordPulledImageEntry(
+		req.ImageName,
+		req.Registry,
+		time.Now().UTC().Format(time.RFC3339),
+	); ledgerErr != nil {
+		log.Printf("Warning: failed to record pulled image %s in service ledger: %v", req.ImageName, ledgerErr)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":    "success",
+		"message":   fmt.Sprintf("Image %q pulled successfully", imageRef),
+		"imageName": imageRef,
 	})
 }
