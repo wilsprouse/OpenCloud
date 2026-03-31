@@ -17,9 +17,24 @@ import (
 	service_ledger "github.com/WavexSoftware/OpenCloud/service_ledger"
 	buildahDefine "github.com/containers/buildah/define"
 	"github.com/containers/podman/v5/pkg/bindings"
+	"github.com/containers/podman/v5/pkg/bindings/containers"
 	"github.com/containers/podman/v5/pkg/bindings/images"
 	podmanEntities "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
+
+// newDeleteImageConnection establishes a Podman bindings connection for the
+// DeleteImage handler.  It is a package-level variable so tests can substitute
+// a no-op implementation that returns the context unchanged.
+var newDeleteImageConnection = func(ctx context.Context, socket string) (context.Context, error) {
+	return bindings.NewConnection(ctx, socket)
+}
+
+// listContainersForImage is a package-level variable that can be overridden in
+// tests to avoid a real Podman connection when checking for containers that use
+// an image before deletion.
+var listContainersForImage = func(ctx context.Context, opts *containers.ListOptions) ([]podmanEntities.ListContainer, error) {
+	return containers.List(ctx, opts)
+}
 
 // BuildImageRequest represents the JSON payload for building a container image
 type BuildImageRequest struct {
@@ -377,6 +392,39 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// normalizeImageRef strips the "localhost/" prefix from an image reference so
+// that locally-built images can be compared uniformly regardless of how they
+// were stored or referenced (e.g. "localhost/myapp:latest" vs "myapp:latest").
+func normalizeImageRef(ref string) string {
+	return strings.TrimPrefix(ref, "localhost/")
+}
+
+// rejectIfImageInUse returns an error if any container in the Podman runtime
+// references the given image. The comparison is done after normalizing both
+// sides with normalizeImageRef to handle the "localhost/" prefix difference.
+func rejectIfImageInUse(conn context.Context, imageName string) error {
+	ctrs, err := listContainersForImage(conn, new(containers.ListOptions).WithAll(true))
+	if err != nil {
+		// If we cannot list containers, be conservative and block the deletion.
+		return fmt.Errorf("failed to list containers before deleting image: %v", err)
+	}
+
+	normalizedTarget := normalizeImageRef(imageName)
+	for _, ctr := range ctrs {
+		if normalizeImageRef(ctr.Image) == normalizedTarget {
+			names := ctr.Names
+			if len(names) == 0 {
+				names = []string{ctr.ID}
+			}
+			return fmt.Errorf(
+				"image %q is in use by container %q; remove the container before deleting the image",
+				imageName, names[0],
+			)
+		}
+	}
+	return nil
+}
+
 // DeleteImage handles deletion of a container image from the Podman image store.
 // It accepts a POST request with a JSON body containing the image name to delete.
 func DeleteImage(w http.ResponseWriter, r *http.Request) {
@@ -408,9 +456,15 @@ func DeleteImage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	conn, err := bindings.NewConnection(ctx, socket)
+	conn, err := newDeleteImageConnection(ctx, socket)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Guard: reject deletion if any container in Container Compute is using this image.
+	if err := rejectIfImageInUse(conn, req.ImageName); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 
