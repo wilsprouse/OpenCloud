@@ -1,7 +1,7 @@
 'use client'
 
 import { Suspense, useEffect, useRef, useState } from "react"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DashboardHeader } from "@/components/dashboard-header"
@@ -97,6 +97,7 @@ function SearchParamsReader({ onCreateRequested }: { onCreateRequested: (image?:
 }
 
 export default function ContainersPage() {
+  const router = useRouter()
   const [containers, setContainers] = useState<ContainerItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -265,6 +266,7 @@ export default function ContainersPage() {
 
       resetPullRunForm()
       setIsPullRunDialogOpen(false)
+      router.replace("/compute/containers")
       await fetchContainers()
       toast.success("Container pulled and started successfully!")
     } catch (err) {
@@ -498,6 +500,7 @@ export default function ContainersPage() {
                     fetchAvailableImages()
                   } else {
                     resetPullRunForm()
+                    router.replace("/compute/containers")
                   }
                 }}
               >
