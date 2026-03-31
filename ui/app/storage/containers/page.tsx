@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/select"
 import { toast } from "sonner"
 import client from "@/app/utility/post"
+import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
+import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
 import { 
   Container, 
   RefreshCw, 
@@ -89,10 +91,15 @@ export default function ContainerRegistry() {
   // Dockerfile form state
   const [dockerfileContent, setDockerfileContent] = useState("")
   const [imageName, setImageName] = useState("")
+  const isImageNameValid = imageName.length > 0 && isValidFunctionName(imageName)
+  const {
+    handleBeforeInput: handleImageNameBeforeInput,
+    handleChange: handleImageNameChange,
+    handlePaste: handleImageNamePaste,
+    resetWarning: resetImageNameWarning,
+  } = useFunctionNameWarning(setImageName)
   const [imageTag, setImageTag] = useState("latest")
-  const [buildContext, setBuildContext] = useState(".")
   const [nocache, setNocache] = useState(false)
-  const [platform, setPlatform] = useState("linux/amd64")
 
   // Pull image dialog state
   const [isPullDialogOpen, setIsPullDialogOpen] = useState(false)
@@ -259,24 +266,28 @@ export default function ContainerRegistry() {
       return
     }
 
+    if (!isImageNameValid) {
+      toast.error("Image name cannot contain spaces and must be 50 characters or fewer")
+      return
+    }
+
     setIsBuilding(true)
     try {
       // Send the dockerfile and build parameters to the backend
       await client.post("/build-image", {
         dockerfile: dockerfileContent,
         imageName: `${imageName}:${imageTag}`,
-        context: buildContext,
+        context: ".",
         nocache: nocache,
-        platform: platform,
+        platform: "linux/amd64",
       })
       
       // Reset form and close dialog
       setDockerfileContent("")
       setImageName("")
+      resetImageNameWarning()
       setImageTag("latest")
-      setBuildContext(".")
       setNocache(false)
-      setPlatform("linux/amd64")
       setIsDialogOpen(false)
       
       // Refresh the image list
@@ -541,7 +552,10 @@ export default function ContainerRegistry() {
               <CardDescription>Common registry operations</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+              <Dialog open={isDialogOpen} onOpenChange={(open) => {
+                setIsDialogOpen(open)
+                if (!open) resetImageNameWarning()
+              }}>
                 <DialogTrigger asChild>
                   <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100">
                     <div className="flex items-center space-x-3">
@@ -571,10 +585,13 @@ export default function ContainerRegistry() {
                         id="imageName"
                         placeholder="my-app"
                         value={imageName}
-                        onChange={(e) => setImageName(e.target.value)}
+                        onChange={(e) => handleImageNameChange(e.target.value)}
+                        onBeforeInput={handleImageNameBeforeInput}
+                        onPaste={handleImageNamePaste}
+                        maxLength={FUNCTION_NAME_MAX_LENGTH}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Name for your container image (e.g., my-app, nginx-custom)
+                        Name for your container image (e.g., my-app, nginx-custom). Cannot contain spaces and must be 50 characters or fewer.
                       </p>
                     </div>
 
@@ -607,39 +624,6 @@ export default function ContainerRegistry() {
                       </p>
                     </div>
 
-                    {/* Build Context */}
-                    <div className="grid gap-2">
-                      <Label htmlFor="buildContext">Build Context Path</Label>
-                      <Input
-                        id="buildContext"
-                        placeholder="."
-                        value={buildContext}
-                        onChange={(e) => setBuildContext(e.target.value)}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Path to build context (default: current directory)
-                      </p>
-                    </div>
-
-                    {/* Platform Selection */}
-                    <div className="grid gap-2">
-                      <Label htmlFor="platform">Target Platform</Label>
-                      <Select value={platform} onValueChange={setPlatform}>
-                        <SelectTrigger id="platform">
-                          <SelectValue placeholder="Select platform" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="linux/amd64">Linux AMD64</SelectItem>
-                          <SelectItem value="linux/arm64">Linux ARM64</SelectItem>
-                          <SelectItem value="linux/arm/v7">Linux ARM v7</SelectItem>
-                          <SelectItem value="linux/386">Linux 386</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        Target architecture for the image
-                      </p>
-                    </div>
-
                     {/* No Cache Option */}
                     <div className="flex items-center space-x-2">
                       <input
@@ -665,7 +649,7 @@ export default function ContainerRegistry() {
                     </Button>
                     <Button
                       onClick={handleBuildImage}
-                      disabled={isBuilding || !dockerfileContent || !imageName}
+                      disabled={isBuilding || !dockerfileContent || !imageName || !isImageNameValid}
                     >
                       {isBuilding ? (
                         <>
