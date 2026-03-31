@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import client from "@/app/utility/post"
+import { toast } from "sonner"
 import { BUCKET_NAME_MAX_LENGTH, isValidBucketName } from "@/lib/bucket-name"
 import { useBucketNameWarning } from "@/lib/use-bucket-name-warning"
 import { 
@@ -30,7 +31,8 @@ import {
   Folder,
   ChevronRight,
   Database,
-  Power
+  Power,
+  Trash2
 } from "lucide-react"
 
 type Bucket = {
@@ -58,6 +60,8 @@ export default function BlobStorage() {
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [isBucketDialogOpen, setIsBucketDialogOpen] = useState(false)
+  const [isDeleteBucketDialogOpen, setIsDeleteBucketDialogOpen] = useState(false)
+  const [bucketToDelete, setBucketToDelete] = useState<string | null>(null)
 
   // Service enabled state
   const [serviceEnabled, setServiceEnabled] = useState<boolean | null>(null)
@@ -138,6 +142,34 @@ export default function BlobStorage() {
 
   const handleBucketClick = (bucketName: string) => {
     router.push(`/storage/blob/${encodeURIComponent(bucketName)}`)
+  }
+
+  const openDeleteBucketDialog = (name: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setBucketToDelete(name)
+    setIsDeleteBucketDialogOpen(true)
+  }
+
+  const closeDeleteBucketDialog = () => {
+    setBucketToDelete(null)
+    setIsDeleteBucketDialogOpen(false)
+  }
+
+  const handleDeleteBucket = async () => {
+    if (!bucketToDelete) return
+    try {
+      const res = await client.delete("/delete-bucket", { data: { name: bucketToDelete } })
+      if (res.status === 200) {
+        closeDeleteBucketDialog()
+        fetchBuckets()
+      } else {
+        console.error("Failed to delete bucket:", res.statusText)
+        toast.error("Failed to delete bucket")
+      }
+    } catch (err) {
+      console.error("Failed to delete bucket:", err)
+      toast.error("Failed to delete bucket")
+    }
   }
 
   // Format file size
@@ -354,6 +386,14 @@ export default function BlobStorage() {
                   </div>
                 </div>
                 <div className="flex items-center space-x-2 ml-4">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => openDeleteBucketDialog(bucket.name, e)}
+                    title="Delete bucket"
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
                   <ChevronRight className="h-5 w-5 text-muted-foreground" />
                 </div>
               </div>
@@ -370,6 +410,26 @@ export default function BlobStorage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Delete Bucket Confirmation Dialog */}
+      <Dialog open={isDeleteBucketDialogOpen} onOpenChange={(open) => { if (!open) closeDeleteBucketDialog() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Bucket</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>{bucketToDelete}</strong> and all of its objects? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeDeleteBucketDialog}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteBucket}>
+              Delete Bucket
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardShell>
   )
 }

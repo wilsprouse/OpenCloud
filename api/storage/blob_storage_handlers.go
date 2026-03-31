@@ -338,6 +338,52 @@ func UploadObject(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DeleteBucket deletes a blob storage bucket and all of its contents.
+func DeleteBucket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if body.Name == "" {
+		http.Error(w, "Bucket name is required", http.StatusBadRequest)
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	bucketPath := filepath.Join(home, ".opencloud", "blob_storage", body.Name)
+
+	if _, err := os.Stat(bucketPath); os.IsNotExist(err) {
+		http.Error(w, "Bucket not found", http.StatusNotFound)
+		return
+	}
+
+	if err := os.RemoveAll(bucketPath); err != nil {
+		http.Error(w, "Failed to delete bucket", http.StatusInternalServerError)
+		return
+	}
+
+	if ledgerErr := service_ledger.DeleteBucketEntry(body.Name); ledgerErr != nil {
+		log.Printf("Warning: failed to remove bucket %s from service ledger: %v", body.Name, ledgerErr)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "bucket": body.Name})
+}
+
 // DeleteObject deletes a file from blob storage
 func DeleteObject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
