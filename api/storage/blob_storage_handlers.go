@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	service_ledger "github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 // Blob represents a single object stored in blob storage.
@@ -177,6 +180,10 @@ func CreateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ledgerErr := service_ledger.UpdateBucketEntry(body.Name, time.Now().UTC().Format(time.RFC3339)); ledgerErr != nil {
+		log.Printf("Warning: failed to record bucket %s in service ledger: %v", body.Name, ledgerErr)
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "bucket": body.Name})
 }
@@ -242,6 +249,10 @@ func RenameBucket(w http.ResponseWriter, r *http.Request) {
 	if err := os.Rename(currentPath, newPath); err != nil {
 		http.Error(w, "Failed to rename bucket", http.StatusInternalServerError)
 		return
+	}
+
+	if ledgerErr := service_ledger.RenameBucketEntry(body.CurrentName, body.NewName); ledgerErr != nil {
+		log.Printf("Warning: failed to rename bucket %s to %s in service ledger: %v", body.CurrentName, body.NewName, ledgerErr)
 	}
 
 	w.WriteHeader(http.StatusOK)

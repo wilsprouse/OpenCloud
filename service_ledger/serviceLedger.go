@@ -62,12 +62,19 @@ type ContainerImageEntry struct {
 	Registry string `json:"registry,omitempty"`
 }
 
+// BucketEntry stores metadata for a blob storage bucket in the service ledger
+type BucketEntry struct {
+	Name      string `json:"name"`
+	CreatedAt string `json:"createdAt"`
+}
+
 // ServiceStatus represents the status of a single service
 type ServiceStatus struct {
 	Enabled         bool                          `json:"enabled"`
 	Functions       map[string]FunctionEntry      `json:"functions,omitempty"`
 	Pipelines       map[string]PipelineEntry      `json:"pipelines,omitempty"`
 	ContainerImages map[string]ContainerImageEntry `json:"containerImages,omitempty"`
+	Buckets         map[string]BucketEntry        `json:"buckets,omitempty"`
 }
 
 // ServiceLedger represents the complete service ledger
@@ -1006,4 +1013,123 @@ func SyncFunctionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateBucketEntry stores or updates a blob storage bucket entry in the blob_storage service ledger.
+func UpdateBucketEntry(bucketName, createdAt string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["blob_storage"]
+	if !exists {
+		serviceStatus = ServiceStatus{Enabled: false, Buckets: make(map[string]BucketEntry)}
+	} else if serviceStatus.Buckets == nil {
+		serviceStatus.Buckets = make(map[string]BucketEntry)
+	}
+
+	serviceStatus.Buckets[bucketName] = BucketEntry{
+		Name:      bucketName,
+		CreatedAt: createdAt,
+	}
+
+	ledger["blob_storage"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// DeleteBucketEntry removes a bucket entry from the blob_storage service ledger
+func DeleteBucketEntry(bucketName string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["blob_storage"]
+	if !exists || serviceStatus.Buckets == nil {
+		return nil // Nothing to delete
+	}
+
+	delete(serviceStatus.Buckets, bucketName)
+	ledger["blob_storage"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// GetBucketEntry retrieves a specific bucket entry from the blob_storage service ledger
+func GetBucketEntry(bucketName string) (*BucketEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["blob_storage"]
+	if !exists || serviceStatus.Buckets == nil {
+		return nil, nil
+	}
+
+	entry, exists := serviceStatus.Buckets[bucketName]
+	if !exists {
+		return nil, nil
+	}
+
+	return &entry, nil
+}
+
+// GetAllBucketEntries retrieves all bucket entries from the blob_storage service ledger
+func GetAllBucketEntries() (map[string]BucketEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["blob_storage"]
+	if !exists || serviceStatus.Buckets == nil {
+		return make(map[string]BucketEntry), nil
+	}
+
+	return serviceStatus.Buckets, nil
+}
+
+// RenameBucketEntry renames a bucket entry in the blob_storage service ledger,
+// preserving the original CreatedAt timestamp.
+func RenameBucketEntry(currentName, newName string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["blob_storage"]
+	if !exists {
+		serviceStatus = ServiceStatus{Enabled: false, Buckets: make(map[string]BucketEntry)}
+	} else if serviceStatus.Buckets == nil {
+		serviceStatus.Buckets = make(map[string]BucketEntry)
+	}
+
+	existing, exists := serviceStatus.Buckets[currentName]
+	if !exists {
+		// No entry to rename; nothing to do
+		return nil
+	}
+
+	// Copy the entry under the new name and remove the old entry
+	serviceStatus.Buckets[newName] = BucketEntry{
+		Name:      newName,
+		CreatedAt: existing.CreatedAt,
+	}
+	delete(serviceStatus.Buckets, currentName)
+
+	ledger["blob_storage"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
 }
