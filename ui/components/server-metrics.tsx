@@ -1,8 +1,8 @@
 "use client"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Cpu, HardDrive, Activity, Clock } from "lucide-react"
+import { Cpu, HardDrive, Activity } from "lucide-react"
 import { useState, useEffect } from "react";
 import client from "../app/utility/post";
 
@@ -75,112 +75,6 @@ export function ServerMetrics() {
             <Progress value={parseInt(PercentageUsed)} className="mt-2" />
             <div className="flex justify-between text-xs text-muted-foreground mt-2">
               <span>{PercentageUsed}% Used of {TotalStorage} GB</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              System Uptime
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">47 days</div>
-            <p className="text-sm text-muted-foreground">Last restart: Dec 1, 2023</p>
-            <div className="mt-4 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Load Average (1m)</span>
-                <span className="font-medium">2.34</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>Load Average (5m)</span>
-                <span className="font-medium">2.18</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>Load Average (15m)</span>
-                <span className="font-medium">1.95</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Process Information</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Total Processes</span>
-                <span className="font-medium">247</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Running</span>
-                <span className="font-medium text-green-600">156</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Sleeping</span>
-                <span className="font-medium text-blue-600">89</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm">Zombie</span>
-                <span className="font-medium text-red-600">2</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Top Processes</CardTitle>
-            <CardDescription>By CPU usage</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <div>
-                  <div className="font-medium text-sm">node</div>
-                  <div className="text-xs text-muted-foreground">PID: 1247</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-medium text-sm">23.4%</div>
-                  <div className="text-xs text-muted-foreground">2.1 GB</div>
-                </div>
-              </div>
-              <div className="flex justify-between items-center">
-                <div>
-                  <div className="font-medium text-sm">docker</div>
-                  <div className="text-xs text-muted-foreground">PID: 892</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-medium text-sm">18.7%</div>
-                  <div className="text-xs text-muted-foreground">1.8 GB</div>
-                </div>
-              </div>
-              <div className="flex justify-between items-center">
-                <div>
-                  <div className="font-medium text-sm">postgres</div>
-                  <div className="text-xs text-muted-foreground">PID: 1456</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-medium text-sm">12.3%</div>
-                  <div className="text-xs text-muted-foreground">3.2 GB</div>
-                </div>
-              </div>
-              <div className="flex justify-between items-center">
-                <div>
-                  <div className="font-medium text-sm">nginx</div>
-                  <div className="text-xs text-muted-foreground">PID: 678</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-medium text-sm">8.9%</div>
-                  <div className="text-xs text-muted-foreground">256 MB</div>
-                </div>
-              </div>
             </div>
           </CardContent>
         </Card>
