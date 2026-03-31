@@ -21,6 +21,8 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import client from "@/app/utility/post"
+import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
+import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
 import { 
   RefreshCw, 
   Search,
@@ -120,6 +122,15 @@ export default function ContainersPage() {
   const [runImage, setRunImage] = useState("")
   const [runCustomImage, setRunCustomImage] = useState("")
   const [runContainerName, setRunContainerName] = useState("")
+  // Container name is optional (empty string is valid), but if provided it must follow
+  // the same naming rules as function names: no spaces, max 50 characters.
+  const isContainerNameValid = runContainerName === "" || isValidFunctionName(runContainerName)
+  const {
+    handleBeforeInput: handleContainerNameBeforeInput,
+    handleChange: handleContainerNameChange,
+    handlePaste: handleContainerNamePaste,
+    resetWarning: resetContainerNameWarning,
+  } = useFunctionNameWarning(setRunContainerName)
   const [runPorts, setRunPorts] = useState<PortMapping[]>([{ hostPort: "", containerPort: "" }])
   const [runEnvVars, setRunEnvVars] = useState<EnvVar[]>([{ key: "", value: "" }])
   const [runVolumes, setRunVolumes] = useState<VolumeMount[]>([{ hostPath: "", containerPath: "" }])
@@ -221,6 +232,7 @@ export default function ContainersPage() {
     setRunImage("")
     setRunCustomImage("")
     setRunContainerName("")
+    resetContainerNameWarning()
     setRunPorts([{ hostPort: "", containerPort: "" }])
     setRunEnvVars([{ key: "", value: "" }])
     setRunVolumes([{ hostPath: "", containerPath: "" }])
@@ -577,7 +589,7 @@ export default function ContainersPage() {
                         />
                       )}
                       <p className="text-xs text-muted-foreground">
-                        Choose from your OpenCloud Container Registry or enter a custom image name
+                        Choose from your OpenCloud Container Registry
                       </p>
                     </div>
 
@@ -588,10 +600,13 @@ export default function ContainersPage() {
                         id="runContainerName"
                         placeholder="my-container"
                         value={runContainerName}
-                        onChange={(e) => setRunContainerName(e.target.value)}
+                        onChange={(e) => handleContainerNameChange(e.target.value)}
+                        onBeforeInput={handleContainerNameBeforeInput}
+                        onPaste={handleContainerNamePaste}
+                        maxLength={FUNCTION_NAME_MAX_LENGTH}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Optional name for the container (--name)
+                        Optional name for the container (--name). Cannot contain spaces and must be 50 characters or fewer.
                       </p>
                     </div>
 
@@ -777,7 +792,8 @@ export default function ContainersPage() {
                         isPullingAndRunning ||
                         !runImage ||
                         runImage === NO_IMAGES_VALUE ||
-                        (runImage === CUSTOM_IMAGE_VALUE && !runCustomImage)
+                        (runImage === CUSTOM_IMAGE_VALUE && !runCustomImage) ||
+                        !isContainerNameValid
                       }
                     >
                       {isPullingAndRunning ? (
