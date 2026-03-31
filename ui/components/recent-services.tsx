@@ -88,9 +88,9 @@ export function RecentServices() {
     const fetchAllServices = async () => {
       const items: RecentServiceItem[] = []
 
-      // Fetch blob storage containers.
+      // Fetch blob storage buckets.
       try {
-        const res = await client.get<BlobContainer[]>("/list-blob-containers")
+        const res = await client.get<BlobContainer[]>("/list-blob-buckets")
         for (const c of res.data ?? []) {
           const t = new Date(c.lastModified).getTime()
           items.push({
