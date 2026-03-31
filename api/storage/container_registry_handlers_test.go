@@ -316,3 +316,102 @@ func TestDeleteImageConnectsToPodman(t *testing.T) {
 		t.Errorf("Valid request should not return BadRequest; got %d", resp.StatusCode)
 	}
 }
+
+// TestPullImageInvalidMethod tests that PullImage rejects non-POST requests.
+func TestPullImageInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/pull-image", nil)
+	w := httptest.NewRecorder()
+
+	PullImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
+	}
+}
+
+// TestPullImageInvalidJSON tests that PullImage rejects malformed JSON.
+func TestPullImageInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/pull-image", bytes.NewBufferString("{invalid"))
+	w := httptest.NewRecorder()
+
+	PullImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestPullImageMissingImageName tests that PullImage rejects an empty imageName.
+func TestPullImageMissingImageName(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "", Registry: "docker.io"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestPullImageInvalidRegistry tests that PullImage rejects an unsupported registry.
+func TestPullImageInvalidRegistry(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "nginx:latest", Registry: "gcr.io"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestPullImageValidRequestReachesPodman tests that a valid PullImage request passes
+// all validation and attempts to reach Podman (which may not be running in CI).
+func TestPullImageValidRequestReachesPodman(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "nginx:latest", Registry: "docker.io"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImage(w, req)
+
+	resp := w.Result()
+	// A BadRequest here would indicate that validation incorrectly rejected a valid request.
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("Valid request should not return BadRequest; got %d", resp.StatusCode)
+	}
+}
+
+// TestPullImageDefaultsToDockerHub tests that omitting registry defaults to docker.io.
+func TestPullImageDefaultsToDockerHub(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "nginx:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImage(w, req)
+
+	resp := w.Result()
+	// BadRequest would indicate the empty registry was incorrectly rejected.
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("Empty registry should default to docker.io and not return BadRequest; got %d", resp.StatusCode)
+	}
+}
+
+// TestPullImageQuayIORegistry tests that quay.io is an accepted registry value.
+func TestPullImageQuayIORegistry(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "prometheus/prometheus:latest", Registry: "quay.io"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("quay.io should be a valid registry; got BadRequest")
+	}
+}
