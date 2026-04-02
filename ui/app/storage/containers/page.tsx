@@ -233,8 +233,18 @@ export default function ContainerRegistry() {
       fetchImages()
       setIsDeleteDialogOpen(false)
       setImageToDelete(null)
-    } catch (err) {
-      console.error("Failed to delete image:", err)
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { status?: number; data?: unknown } }
+      if (axiosErr?.response?.status === 409) {
+        const rawData = axiosErr.response.data
+        const message = typeof rawData === "string" && rawData.trim()
+          ? rawData.trim()
+          : "This image is in use by a container. Remove the container before deleting the image."
+        toast.error(message)
+      } else {
+        toast.error("Failed to delete image. Please try again.")
+        console.error("Failed to delete image:", err)
+      }
     }
   }
 

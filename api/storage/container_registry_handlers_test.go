@@ -2,12 +2,15 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	opencloudapi "github.com/WavexSoftware/OpenCloud/api"
+	"github.com/containers/podman/v5/pkg/bindings/containers"
+	podmanTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
 // TestImageInfoEmptySliceMarshalsToJSONArray guards the frontend contract used by
@@ -416,6 +419,131 @@ func TestDeleteImageConnectsToPodman(t *testing.T) {
 	// A BadRequest here would indicate incorrect validation logic.
 	if resp.StatusCode == http.StatusBadRequest {
 		t.Errorf("Valid request should not return BadRequest; got %d", resp.StatusCode)
+	}
+}
+
+// TestNormalizeImageRef verifies that normalizeImageRef strips the localhost/ prefix.
+func TestNormalizeImageRef(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"localhost/myapp:latest", "myapp:latest"},
+		{"myapp:latest", "myapp:latest"},
+		{"docker.io/library/nginx:latest", "docker.io/library/nginx:latest"},
+		{"localhost/myapp", "myapp"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		got := normalizeImageRef(tc.input)
+		if got != tc.expected {
+			t.Errorf("normalizeImageRef(%q) = %q; want %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+// TestRejectIfImageInUseWithMatchingContainer verifies that rejectIfImageInUse
+// returns an error when a container is using the target image.
+func TestRejectIfImageInUseWithMatchingContainer(t *testing.T) {
+	orig := listContainersForImage
+	t.Cleanup(func() { listContainersForImage = orig })
+
+	listContainersForImage = func(_ context.Context, _ *containers.ListOptions) ([]podmanTypes.ListContainer, error) {
+		return []podmanTypes.ListContainer{
+			{ID: "abc123", Names: []string{"mycontainer"}, Image: "myapp:latest"},
+		}, nil
+	}
+
+	err := rejectIfImageInUse(context.Background(), "myapp:latest")
+	if err == nil {
+		t.Fatal("expected error when container is using the image, got nil")
+	}
+}
+
+// TestRejectIfImageInUseWithLocalhostPrefixMismatch verifies that the localhost/
+// prefix difference between the image name and the container's Image field does
+// not prevent the in-use check from matching.
+func TestRejectIfImageInUseWithLocalhostPrefixMismatch(t *testing.T) {
+	orig := listContainersForImage
+	t.Cleanup(func() { listContainersForImage = orig })
+
+	// Container stores image with localhost/ prefix; request arrives without it.
+	listContainersForImage = func(_ context.Context, _ *containers.ListOptions) ([]podmanTypes.ListContainer, error) {
+		return []podmanTypes.ListContainer{
+			{ID: "abc123", Names: []string{"mycontainer"}, Image: "localhost/myapp:latest"},
+		}, nil
+	}
+
+	err := rejectIfImageInUse(context.Background(), "myapp:latest")
+	if err == nil {
+		t.Fatal("expected error when container image has localhost/ prefix mismatch, got nil")
+	}
+}
+
+// TestRejectIfImageInUseNoMatchingContainer verifies that rejectIfImageInUse
+// returns nil when no container is using the target image.
+func TestRejectIfImageInUseNoMatchingContainer(t *testing.T) {
+	orig := listContainersForImage
+	t.Cleanup(func() { listContainersForImage = orig })
+
+	listContainersForImage = func(_ context.Context, _ *containers.ListOptions) ([]podmanTypes.ListContainer, error) {
+		return []podmanTypes.ListContainer{
+			{ID: "abc123", Names: []string{"other"}, Image: "nginx:latest"},
+		}, nil
+	}
+
+	err := rejectIfImageInUse(context.Background(), "myapp:latest")
+	if err != nil {
+		t.Fatalf("expected no error when no container uses the image, got: %v", err)
+	}
+}
+
+// TestRejectIfImageInUseEmptyContainerList verifies that rejectIfImageInUse
+// returns nil when there are no containers at all.
+func TestRejectIfImageInUseEmptyContainerList(t *testing.T) {
+	orig := listContainersForImage
+	t.Cleanup(func() { listContainersForImage = orig })
+
+	listContainersForImage = func(_ context.Context, _ *containers.ListOptions) ([]podmanTypes.ListContainer, error) {
+		return []podmanTypes.ListContainer{}, nil
+	}
+
+	err := rejectIfImageInUse(context.Background(), "myapp:latest")
+	if err != nil {
+		t.Fatalf("expected no error when container list is empty, got: %v", err)
+	}
+}
+
+// TestDeleteImageBlockedWhenImageInUse verifies that DeleteImage returns HTTP 409
+// Conflict when a container is actively using the target image.
+func TestDeleteImageBlockedWhenImageInUse(t *testing.T) {
+	origConn := newDeleteImageConnection
+	origList := listContainersForImage
+	t.Cleanup(func() {
+		newDeleteImageConnection = origConn
+		listContainersForImage = origList
+	})
+
+	newDeleteImageConnection = func(ctx context.Context, _ string) (context.Context, error) {
+		return ctx, nil
+	}
+
+	listContainersForImage = func(_ context.Context, _ *containers.ListOptions) ([]podmanTypes.ListContainer, error) {
+		return []podmanTypes.ListContainer{
+			{ID: "ctr1", Names: []string{"web"}, Image: "myapp:latest"},
+		}, nil
+	}
+
+	body, _ := json.Marshal(DeleteImageRequest{ImageName: "myapp:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/delete-image", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	DeleteImage(w, req)
+
+	resp := w.Result()
+	// The handler must return 409 Conflict — not 400, 200, or 500.
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("Expected status %d (Conflict), got %d", http.StatusConflict, resp.StatusCode)
 	}
 }
 
