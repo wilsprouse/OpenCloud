@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Cloud, Bell, Settings, HelpCircle, ChevronDown, HardDrive, LogOut } from "lucide-react"
+import { Cloud, Settings, ChevronDown, HardDrive, LogOut } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -131,15 +131,11 @@ export function MainNav() {
         </nav>
       </div>
       <div className="flex items-center gap-2">
-      {/*<Button variant="ghost" size="icon">
-          <Bell className="h-5 w-5" />
+        <Button variant="ghost" size="icon" asChild>
+          <Link href="/settings" aria-label="Settings">
+            <Settings className="h-5 w-5" />
+          </Link>
         </Button>
-        <Button variant="ghost" size="icon">
-          <HelpCircle className="h-5 w-5" />
-        </Button>
-        <Button variant="ghost" size="icon">
-          <Settings className="h-5 w-5" />
-        </Button>*/}
 
         {/* User menu — shows username and logout option */}
         <DropdownMenu.Root>
