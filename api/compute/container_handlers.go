@@ -746,7 +746,7 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 					sendError(event.Error)
 					return
 				}
-				msg := strings.TrimRight(event.Stream, "\n")
+				msg := strings.TrimSpace(event.Stream)
 				if msg == "" {
 					msg = event.Status
 					if event.ID != "" {
