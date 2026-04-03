@@ -767,7 +767,7 @@ export default function ContainerRegistry() {
                     </div>
                   </Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>Pull Container Image</DialogTitle>
                     <DialogDescription>
@@ -818,7 +818,7 @@ export default function ContainerRegistry() {
                     {(isPulling || pullOutput.length > 0 || pullError) && (
                       <div className="space-y-1">
                         <Label>Pull Progress</Label>
-                        <div className="h-40 overflow-y-auto rounded-md border bg-black p-3 font-mono text-xs text-green-400">
+                        <div className="max-h-32 overflow-y-auto rounded-md border bg-black p-3 font-mono text-xs text-green-400">
                           {pullOutput.map((line, i) => (
                             <div key={i}>{line}</div>
                           ))}
