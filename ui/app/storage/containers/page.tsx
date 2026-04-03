@@ -567,13 +567,13 @@ export default function ContainerRegistry() {
                 if (!open) resetImageNameWarning()
               }}>
                 <DialogTrigger asChild>
-                  <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100">
+                  <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/50">
                     <div className="flex items-center space-x-3">
-                      <div className="p-2 rounded-lg bg-white text-blue-600 shrink-0">
+                      <div className="p-2 rounded-lg bg-white dark:bg-white/10 text-blue-600 dark:text-blue-400 shrink-0">
                         <Upload className="h-4 w-4" />
                       </div>
                       <div className="text-left min-w-0">
-                        <div className="font-medium text-sm text-foreground">Build from Dockerfile</div>
+                        <div className="font-semibold text-sm text-gray-900 dark:text-white">Build from Dockerfile</div>
                         <div className="text-xs text-muted-foreground whitespace-normal">Upload and build container image</div>
                       </div>
                     </div>
@@ -679,13 +679,13 @@ export default function ContainerRegistry() {
 
               <Dialog open={isPullDialogOpen} onOpenChange={setIsPullDialogOpen}>
                 <DialogTrigger asChild>
-                  <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100">
+                  <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100 dark:bg-green-950/40 dark:hover:bg-green-900/50">
                     <div className="flex items-center space-x-3">
-                      <div className="p-2 rounded-lg bg-white text-green-600 shrink-0">
+                      <div className="p-2 rounded-lg bg-white dark:bg-white/10 text-green-600 dark:text-green-400 shrink-0">
                         <Download className="h-4 w-4" />
                       </div>
                       <div className="text-left min-w-0">
-                        <div className="font-medium text-sm text-foreground">Pull Image</div>
+                        <div className="font-semibold text-sm text-gray-900 dark:text-white">Pull Image</div>
                         <div className="text-xs text-muted-foreground whitespace-normal">Download from registry</div>
                       </div>
                     </div>

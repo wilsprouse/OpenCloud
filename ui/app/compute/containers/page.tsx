@@ -680,13 +680,13 @@ export default function ContainersPage() {
                 }}
               >
                 <DialogTrigger asChild>
-                  <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100">
+                  <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/50">
                     <div className="flex items-center space-x-3 min-w-0">
-                      <div className="shrink-0 p-2 rounded-lg bg-white text-blue-600">
+                      <div className="shrink-0 p-2 rounded-lg bg-white dark:bg-white/10 text-blue-600 dark:text-blue-400">
                         <Download className="h-4 w-4" />
                       </div>
                       <div className="text-left min-w-0">
-                        <div className="font-medium text-sm text-foreground whitespace-normal break-words">Pull and Run Container</div>
+                        <div className="font-semibold text-sm text-gray-900 dark:text-white whitespace-normal break-words">Pull and Run Container</div>
                         <div className="text-xs text-muted-foreground whitespace-normal break-words">Pull an image from your Container Registry</div>
                       </div>
                     </div>
