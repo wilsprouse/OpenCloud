@@ -30,11 +30,12 @@ type FunctionLog struct {
 
 // FunctionEntry represents an individual function's metadata in the ledger
 type FunctionEntry struct {
-	Runtime  string        `json:"runtime"`
-	Trigger  string        `json:"trigger,omitempty"`
-	Schedule string        `json:"schedule,omitempty"`
-	Content  string        `json:"content"`
-	Logs     []FunctionLog `json:"logs,omitempty"`
+	Runtime     string        `json:"runtime"`
+	Trigger     string        `json:"trigger,omitempty"`
+	Schedule    string        `json:"schedule,omitempty"`
+	Content     string        `json:"content"`
+	Logs        []FunctionLog `json:"logs,omitempty"`
+	Invocations int           `json:"invocations"`
 }
 
 // PipelineEntry represents an individual pipeline's metadata in the ledger
@@ -484,19 +485,22 @@ func UpdateFunctionEntry(functionName, runtime, trigger, schedule, content strin
 		status.Functions = make(map[string]FunctionEntry)
 	}
 
-	// Preserve existing logs when updating
+	// Preserve existing logs and invocations when updating
 	existingEntry, exists := status.Functions[functionName]
 	var existingLogs []FunctionLog
+	var existingInvocations int
 	if exists {
 		existingLogs = existingEntry.Logs
+		existingInvocations = existingEntry.Invocations
 	}
 
 	status.Functions[functionName] = FunctionEntry{
-		Runtime:  runtime,
-		Trigger:  trigger,
-		Schedule: schedule,
-		Content:  content,
-		Logs:     existingLogs, // Preserve existing logs
+		Runtime:     runtime,
+		Trigger:     trigger,
+		Schedule:    schedule,
+		Content:     content,
+		Logs:        existingLogs,        // Preserve existing logs
+		Invocations: existingInvocations, // Preserve existing invocation count
 	}
 
 	ledger["Functions"] = status
@@ -558,6 +562,33 @@ func GetAllFunctionEntries() (map[string]FunctionEntry, error) {
 	}
 
 	return status.Functions, nil
+}
+
+// IncrementFunctionInvocations increments the invocation count for a function in the service ledger
+func IncrementFunctionInvocations(functionName string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	status, exists := ledger["Functions"]
+	if !exists || status.Functions == nil {
+		return nil // Nothing to update
+	}
+
+	entry, exists := status.Functions[functionName]
+	if !exists {
+		return nil // Function not in ledger, skip
+	}
+
+	entry.Invocations++
+	status.Functions[functionName] = entry
+	ledger["Functions"] = status
+
+	return WriteServiceLedger(ledger)
 }
 
 // UpdatePipelineEntry updates a specific pipeline entry in the pipelines service ledger
