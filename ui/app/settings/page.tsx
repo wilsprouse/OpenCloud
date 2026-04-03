@@ -9,7 +9,7 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
 
-  function handleToggle(checked: boolean) {
+  function handleThemeToggle(checked: boolean) {
     setTheme(checked ? "dark" : "light")
   }
 
@@ -38,7 +38,7 @@ export default function SettingsPage() {
           <Switch
             id="dark-mode-toggle"
             checked={isDark}
-            onCheckedChange={handleToggle}
+            onCheckedChange={handleThemeToggle}
             aria-label="Toggle dark mode"
           />
         </div>
