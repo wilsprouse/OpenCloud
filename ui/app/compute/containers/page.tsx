@@ -577,8 +577,7 @@ export default function ContainersPage() {
                       </div>
                       <div className="space-y-1 flex-1 min-w-0">
                         <div className="flex items-center space-x-2">
-                          <h4 className="font-medium truncate">
-                            {c.Names?.[0]?.replace(/^\//, "") || "Unnamed"}
+                          <h4 className="font-medium text-foreground truncate">
                           </h4>
                           <Badge variant={c.State === "running" ? "default" : "secondary"}>
                             {c.State}
@@ -686,7 +685,7 @@ export default function ContainersPage() {
                         <Download className="h-4 w-4" />
                       </div>
                       <div className="text-left min-w-0">
-                        <div className="font-medium text-sm whitespace-normal break-words">Pull and Run Container</div>
+                        <div className="font-medium text-sm text-foreground whitespace-normal break-words">Pull and Run Container</div>
                         <div className="text-xs text-muted-foreground whitespace-normal break-words">Pull an image from your Container Registry</div>
                       </div>
                     </div>

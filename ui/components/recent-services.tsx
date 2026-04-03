@@ -223,7 +223,7 @@ export function RecentServices() {
                   </div>
                   <div className="space-y-1">
                     <div className="flex items-center space-x-2">
-                      <h4 className="font-medium">{service.name}</h4>
+                      <h4 className="font-medium text-foreground">{service.name}</h4>
                       <Badge variant="outline" className={service.statusColor}>
                         {service.status}
                       </Badge>

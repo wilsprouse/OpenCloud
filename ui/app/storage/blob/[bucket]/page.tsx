@@ -415,7 +415,7 @@ export default function BucketDetail({ params }: { params: Promise<{ bucket: str
                   </div>
                   <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
-                      <h4 className="font-medium truncate">{blob.name}</h4>
+                      <h4 className="font-medium text-foreground truncate">{blob.name}</h4>
                     </div>
                     <p className="text-sm text-muted-foreground truncate">{blob.contentType || 'unknown'}</p>
                     <div className="flex items-center space-x-4 text-xs text-muted-foreground">

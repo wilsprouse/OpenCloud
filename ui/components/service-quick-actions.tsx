@@ -70,7 +70,7 @@ export function ServiceQuickActions() {
                     <IconComponent className="h-4 w-4" />
                   </div>
                   <div className="text-left min-w-0">
-                    <div className="font-medium text-sm whitespace-normal break-words">{action.name}</div>
+                    <div className="font-medium text-sm text-foreground whitespace-normal break-words">{action.name}</div>
                     <div className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</div>
                   </div>
                 </div>
