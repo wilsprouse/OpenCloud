@@ -818,12 +818,12 @@ export default function ContainerRegistry() {
                     {(isPulling || pullOutput.length > 0 || pullError) && (
                       <div className="space-y-1">
                         <Label>Pull Progress</Label>
-                        <div className="max-h-32 overflow-y-auto rounded-md border bg-black p-3 font-mono text-xs text-green-400">
+                        <div className="max-h-32 overflow-y-auto overflow-x-hidden rounded-md border bg-black p-3 font-mono text-xs text-green-400">
                           {pullOutput.map((line, i) => (
-                            <div key={i}>{line}</div>
+                            <div key={i} className="break-all whitespace-pre-wrap">{line}</div>
                           ))}
                           {pullError && (
-                            <div className="text-red-400">{pullError}</div>
+                            <div className="text-red-400 break-all whitespace-pre-wrap">{pullError}</div>
                           )}
                           {isPulling && (
                             <div className="animate-pulse">▌</div>
