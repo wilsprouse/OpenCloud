@@ -233,7 +233,7 @@ export default function DashboardPage() {
                     >
                       <IconComponent className={`h-4 w-4 shrink-0 ${service.color}`} />
                       <div>
-                        <div className="font-medium">{service.name}</div>
+                        <div className="font-medium text-foreground">{service.name}</div>
                         <div className="text-xs text-muted-foreground">{service.description}</div>
                       </div>
                     </DropdownMenu.Item>

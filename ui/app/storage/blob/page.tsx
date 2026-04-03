@@ -368,7 +368,7 @@ export default function BlobStorage() {
                   </div>
                   <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
-                      <h4 className="font-medium truncate">{bucket.name}</h4>
+                      <h4 className="font-medium text-foreground truncate">{bucket.name}</h4>
                     </div>
                     <div className="flex items-center space-x-4 text-xs text-muted-foreground">
                       <span className="flex items-center">
