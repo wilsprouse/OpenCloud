@@ -106,6 +106,9 @@ export default function ContainerRegistry() {
   const [pullImageName, setPullImageName] = useState("")
   const [pullRegistry, setPullRegistry] = useState<"docker.io" | "quay.io">("docker.io")
   const [isPulling, setIsPulling] = useState(false)
+  const [pullOutput, setPullOutput] = useState<string[]>([])
+  const [pullError, setPullError] = useState<string | null>(null)
+  const pullOutputEndRef = useRef<HTMLDivElement>(null)
 
   // Check if service is enabled
   const checkServiceStatus = async () => {
@@ -124,6 +127,13 @@ export default function ContainerRegistry() {
       outputBoxRef.current.scrollTop = outputBoxRef.current.scrollHeight
     }
   }, [enableOutput])
+
+  // Auto-scroll pull output box when new lines arrive
+  useEffect(() => {
+    if (pullOutputEndRef.current) {
+      pullOutputEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [pullOutput])
 
   // Enable the service with streaming output
   const handleEnableService = async () => {
@@ -312,7 +322,14 @@ export default function ContainerRegistry() {
     }
   }
 
-  // Pull an image from a public registry
+  // Closes the pull image dialog and resets all associated state.
+  const handleClosePullDialog = () => {
+    setIsPullDialogOpen(false)
+    setPullOutput([])
+    setPullError(null)
+  }
+
+  // Pull an image from a public registry, streaming real-time progress updates.
   const handlePullImage = async () => {
     const trimmed = pullImageName.trim()
     if (!trimmed) {
@@ -321,16 +338,75 @@ export default function ContainerRegistry() {
     }
 
     setIsPulling(true)
+    setPullOutput([])
+    setPullError(null)
+
+    const appendLine = (line: string) => {
+      setPullOutput(prev => [...prev, line])
+    }
+
     try {
-      await client.post("/pull-image", { imageName: trimmed, registry: pullRegistry })
-      setPullImageName("")
-      setPullRegistry("docker.io")
-      setIsPullDialogOpen(false)
-      await fetchImages()
-      toast.success(`Image "${trimmed}" pulled successfully!`)
+      const response = await fetch("/api/pull-image-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageName: trimmed, registry: pullRegistry }),
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `Server returned ${response.status}`)
+      }
+
+      if (!response.body) {
+        throw new Error("No response body")
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      let succeeded = false
+      let errorMsg = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data) appendLine(data)
+          } else if (line.startsWith("event: done")) {
+            succeeded = true
+          } else if (line.startsWith("event: error")) {
+            // Error message will arrive on the next data: line
+            errorMsg = "Pull failed"
+          }
+        }
+      }
+
+      if (succeeded) {
+        await fetchImages()
+        toast.success(`Image "${trimmed}" pulled successfully!`)
+        // Keep dialog open briefly so the user can see the completed output,
+        // then close it after a short delay.
+        setTimeout(() => {
+          setIsPullDialogOpen(false)
+          setPullImageName("")
+          setPullRegistry("docker.io")
+          setPullOutput([])
+        }, 1500)
+      } else {
+        // The error message may have been appended to pullOutput already.
+        setPullError(errorMsg || "Failed to pull image. Please check the image name and try again.")
+      }
     } catch (err) {
       console.error("Failed to pull image:", err)
-      toast.error("Failed to pull image. Please check the image name and try again.")
+      const msg = err instanceof Error ? err.message : "Failed to pull image. Please check the image name and try again."
+      setPullError(msg)
     } finally {
       setIsPulling(false)
     }
@@ -677,7 +753,7 @@ export default function ContainerRegistry() {
                 </DialogContent>
               </Dialog>
 
-              <Dialog open={isPullDialogOpen} onOpenChange={setIsPullDialogOpen}>
+              <Dialog open={isPullDialogOpen} onOpenChange={(open) => { if (!open) handleClosePullDialog(); else setIsPullDialogOpen(true) }}>
                 <DialogTrigger asChild>
                   <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100 dark:bg-green-950/40 dark:hover:bg-green-900/50">
                     <div className="flex items-center space-x-3">
@@ -691,7 +767,7 @@ export default function ContainerRegistry() {
                     </div>
                   </Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>Pull Container Image</DialogTitle>
                     <DialogDescription>
@@ -707,6 +783,7 @@ export default function ContainerRegistry() {
                         value={pullImageName}
                         onChange={(e) => setPullImageName(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") handlePullImage() }}
+                        disabled={isPulling}
                       />
                     </div>
                     <div className="space-y-2">
@@ -719,6 +796,7 @@ export default function ContainerRegistry() {
                             checked={pullRegistry === "docker.io"}
                             onChange={() => setPullRegistry("docker.io")}
                             className="h-4 w-4 border-gray-300"
+                            disabled={isPulling}
                           />
                           <span className="text-sm">Docker Hub (docker.io)</span>
                         </label>
@@ -729,14 +807,34 @@ export default function ContainerRegistry() {
                             checked={pullRegistry === "quay.io"}
                             onChange={() => setPullRegistry("quay.io")}
                             className="h-4 w-4 border-gray-300"
+                            disabled={isPulling}
                           />
                           <span className="text-sm">Quay.io (quay.io)</span>
                         </label>
                       </div>
                     </div>
+
+                    {/* Streaming progress output */}
+                    {(isPulling || pullOutput.length > 0 || pullError) && (
+                      <div className="space-y-1">
+                        <Label>Pull Progress</Label>
+                        <div className="max-h-32 overflow-y-auto overflow-x-hidden rounded-md border bg-black p-3 font-mono text-xs text-green-400">
+                          {pullOutput.map((line, i) => (
+                            <div key={i} className="break-all whitespace-pre-wrap">{line}</div>
+                          ))}
+                          {pullError && (
+                            <div className="text-red-400 break-all whitespace-pre-wrap">{pullError}</div>
+                          )}
+                          {isPulling && (
+                            <div className="animate-pulse">▌</div>
+                          )}
+                          <div ref={pullOutputEndRef} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsPullDialogOpen(false)} disabled={isPulling}>
+                    <Button variant="outline" onClick={handleClosePullDialog} disabled={isPulling}>
                       Cancel
                     </Button>
                     <Button onClick={handlePullImage} disabled={isPulling || !pullImageName.trim()}>

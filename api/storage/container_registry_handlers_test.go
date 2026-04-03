@@ -645,3 +645,109 @@ func TestPullImageQuayIORegistry(t *testing.T) {
 		t.Errorf("quay.io should be a valid registry; got BadRequest")
 	}
 }
+
+// --- PullImageStream tests ---
+
+// TestPullImageStreamInvalidMethod tests that PullImageStream rejects non-POST requests.
+func TestPullImageStreamInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/pull-image-stream", nil)
+	w := httptest.NewRecorder()
+
+	PullImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
+	}
+}
+
+// TestPullImageStreamInvalidJSON tests that PullImageStream rejects malformed JSON.
+func TestPullImageStreamInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/pull-image-stream", bytes.NewBufferString("{invalid"))
+	w := httptest.NewRecorder()
+
+	PullImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestPullImageStreamMissingImageName tests that PullImageStream rejects an empty imageName.
+func TestPullImageStreamMissingImageName(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "", Registry: "docker.io"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image-stream", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestPullImageStreamInvalidRegistry tests that PullImageStream rejects an unsupported registry.
+func TestPullImageStreamInvalidRegistry(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "nginx:latest", Registry: "gcr.io"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image-stream", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestPullImageStreamDefaultsToDockerHub tests that omitting registry defaults to docker.io.
+func TestPullImageStreamDefaultsToDockerHub(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "nginx:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image-stream", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImageStream(w, req)
+
+	resp := w.Result()
+	// BadRequest would indicate the empty registry was incorrectly rejected.
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("Empty registry should default to docker.io and not return BadRequest; got %d", resp.StatusCode)
+	}
+}
+
+// TestPullImageStreamValidRequestReachesPodman tests that a valid PullImageStream
+// request passes all validation and attempts to reach Podman (which may not be
+// running in CI). The SSE response headers should be set correctly.
+func TestPullImageStreamValidRequestReachesPodman(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "nginx:latest", Registry: "docker.io"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image-stream", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImageStream(w, req)
+
+	resp := w.Result()
+	// A BadRequest here would indicate that validation incorrectly rejected a valid request.
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("Valid request should not return BadRequest; got %d", resp.StatusCode)
+	}
+	// Verify that SSE headers are set (they should be, regardless of Podman availability).
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Expected Content-Type text/event-stream, got %q", ct)
+	}
+}
+
+// TestPullImageStreamQuayIORegistry tests that quay.io is an accepted registry value.
+func TestPullImageStreamQuayIORegistry(t *testing.T) {
+	body, _ := json.Marshal(PullImageRequest{ImageName: "prometheus/prometheus:latest", Registry: "quay.io"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-image-stream", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	PullImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Errorf("quay.io should be a valid registry; got BadRequest")
+	}
+}

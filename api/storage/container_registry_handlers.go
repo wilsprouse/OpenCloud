@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -563,4 +564,169 @@ func PullImage(w http.ResponseWriter, r *http.Request) {
 		"message":   fmt.Sprintf("Image %q pulled successfully", imageRef),
 		"imageName": imageRef,
 	})
+}
+
+// pullProgressEvent is the JSON structure emitted by Podman's progress writer
+// during an image pull.  Fields mirror Docker's JSON progress protocol.
+type pullProgressEvent struct {
+	Status   string `json:"status"`
+	Progress string `json:"progress"`
+	Stream   string `json:"stream"`
+	Error    string `json:"error"`
+	ID       string `json:"id"`
+}
+
+// PullImageStream pulls a container image from a public registry and streams
+// real-time progress updates to the client using Server-Sent Events (SSE).
+//
+// Request:  POST /pull-image-stream  body: {"imageName":"nginx:latest","registry":"docker.io"}
+// Response: text/event-stream
+//
+//	data: <progress line>
+//	...
+//	event: done
+//	data: {"status":"success","imageName":"docker.io/nginx:latest"}
+//
+//	On error:
+//	event: error
+//	data: <error message>
+func PullImageStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	defer r.Body.Close()
+
+	var req PullImageRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	req.ImageName = strings.TrimSpace(req.ImageName)
+	if req.ImageName == "" {
+		http.Error(w, "imageName is required", http.StatusBadRequest)
+		return
+	}
+
+	req.Registry = strings.TrimSpace(req.Registry)
+	if req.Registry == "" {
+		req.Registry = "docker.io"
+	}
+	if req.Registry != "docker.io" && req.Registry != "quay.io" {
+		http.Error(w, "registry must be \"docker.io\" or \"quay.io\"", http.StatusBadRequest)
+		return
+	}
+
+	if errMsg := opencloudapi.ValidateImageName(req.ImageName); errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	// Build the fully-qualified image reference.
+	imageRef := req.ImageName
+	if !strings.ContainsRune(imageRef, '/') || !strings.Contains(strings.SplitN(imageRef, "/", 2)[0], ".") {
+		imageRef = req.Registry + "/" + imageRef
+	}
+
+	socket, err := opencloudapi.RootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Upgrade the connection to SSE before any long-running operations.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	sendLine := func(line string) {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	conn, err := bindings.NewConnection(ctx, socket)
+	if err != nil {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", fmt.Sprintf("Failed to connect to Podman: %v", err))
+		flusher.Flush()
+		return
+	}
+
+	// Use a pipe so progress lines can be streamed to the client while Pull runs.
+	pr, pw := io.Pipe()
+
+	pullErr := make(chan error, 1)
+	go func() {
+		opts := new(images.PullOptions).WithQuiet(false).WithProgressWriter(pw)
+		_, err := images.Pull(conn, imageRef, opts)
+		pw.Close()
+		pullErr <- err
+	}()
+
+	// Stream each progress line to the SSE client, parsing Podman's JSON
+	// progress-event format when possible to produce a readable message.
+	scanner := bufio.NewScanner(pr)
+	for scanner.Scan() {
+		raw := scanner.Text()
+		if raw == "" {
+			continue
+		}
+
+		var event pullProgressEvent
+		if json.Unmarshal([]byte(raw), &event) == nil {
+			// Propagate explicit pull errors embedded in the progress stream.
+			if event.Error != "" {
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", event.Error)
+				flusher.Flush()
+				return
+			}
+			// Prefer the human-readable "stream" field (e.g. "Pulling from …"),
+			// then the "status" field, optionally decorated with progress bar text.
+			msg := strings.TrimRight(event.Stream, "\n")
+			if msg == "" {
+				msg = event.Status
+				if event.ID != "" {
+					msg = event.ID + ": " + msg
+				}
+				if event.Progress != "" {
+					msg += " " + event.Progress
+				}
+			}
+			if msg != "" {
+				sendLine(msg)
+			}
+		} else {
+			// Not JSON – send the raw line as-is.
+			sendLine(raw)
+		}
+	}
+
+	if err := <-pullErr; err != nil {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", fmt.Sprintf("Failed to pull image %q: %v", imageRef, err))
+		flusher.Flush()
+		return
+	}
+
+	// Record the pulled image in the service ledger.
+	if ledgerErr := service_ledger.RecordPulledImageEntry(
+		req.ImageName,
+		req.Registry,
+		time.Now().UTC().Format(time.RFC3339),
+	); ledgerErr != nil {
+		log.Printf("Warning: failed to record pulled image %s in service ledger: %v", req.ImageName, ledgerErr)
+	}
+
+	donePayload, _ := json.Marshal(map[string]string{"status": "success", "imageName": imageRef})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", donePayload)
+	flusher.Flush()
 }

@@ -181,6 +181,7 @@ func main() {
 	mux.HandleFunc("/build-image", storageapi.BuildImage)
 	mux.HandleFunc("/delete-image", storageapi.DeleteImage)
 	mux.HandleFunc("/pull-image", storageapi.PullImage)
+	mux.HandleFunc("/pull-image-stream", storageapi.PullImageStream)
 	mux.HandleFunc("/delete-container", computeapi.DeleteContainer)
 	mux.HandleFunc("/containers/", computeapi.ContainerAction)
 	mux.HandleFunc("/pull-and-run", computeapi.PullAndRun)
