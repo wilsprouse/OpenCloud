@@ -557,6 +557,7 @@ export default function FunctionsPage() {
                   <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
                       <h4 className="font-medium text-foreground truncate">
+                        {getDisplayFunctionName(fn.name)}
                       </h4>
                     </div>
                     <div className="flex items-center space-x-4 text-xs text-muted-foreground">

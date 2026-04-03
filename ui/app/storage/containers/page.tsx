@@ -500,6 +500,7 @@ export default function ContainerRegistry() {
                         </div>
                         <div className="space-y-1 flex-1 min-w-0">
                           <h4 className="font-medium text-foreground truncate">
+                            {c.RepoTags?.[0]?.replace(/^\//, "") || "Unnamed"}
                           </h4>
                           <p className="text-sm text-muted-foreground truncate">{c.Image}</p>
                           <div className="flex items-center space-x-4 text-xs text-muted-foreground">

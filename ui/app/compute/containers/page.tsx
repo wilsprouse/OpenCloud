@@ -578,6 +578,7 @@ export default function ContainersPage() {
                       <div className="space-y-1 flex-1 min-w-0">
                         <div className="flex items-center space-x-2">
                           <h4 className="font-medium text-foreground truncate">
+                            {c.Names?.[0]?.replace(/^\//, "") || "Unnamed"}
                           </h4>
                           <Badge variant={c.State === "running" ? "default" : "secondary"}>
                             {c.State}
