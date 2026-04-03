@@ -1140,3 +1140,98 @@ func TestEnableContainersService(t *testing.T) {
 		t.Error("containers service should be enabled after a successful EnableService call")
 	}
 }
+
+// TestIncrementFunctionInvocations verifies that IncrementFunctionInvocations correctly
+// increments the invocation count for a function entry in the service ledger.
+func TestIncrementFunctionInvocations(t *testing.T) {
+	fnName := "test_invocation_counter.py"
+
+	// Create a function entry in the ledger and clean it up when done
+	if err := UpdateFunctionEntry(fnName, "python", "", "", "print('hello')"); err != nil {
+		t.Fatalf("Failed to create function entry: %v", err)
+	}
+	defer DeleteFunctionEntry(fnName)
+
+	// Verify initial invocation count is 0
+	entry, err := GetFunctionEntry(fnName)
+	if err != nil {
+		t.Fatalf("Failed to get function entry: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("Function entry should exist in ledger")
+	}
+	if entry.Invocations != 0 {
+		t.Errorf("Initial invocations should be 0, got %d", entry.Invocations)
+	}
+
+	// Increment once
+	if err := IncrementFunctionInvocations(fnName); err != nil {
+		t.Fatalf("IncrementFunctionInvocations failed: %v", err)
+	}
+
+	entry, err = GetFunctionEntry(fnName)
+	if err != nil {
+		t.Fatalf("Failed to get function entry after first increment: %v", err)
+	}
+	if entry.Invocations != 1 {
+		t.Errorf("Expected invocations to be 1 after first increment, got %d", entry.Invocations)
+	}
+
+	// Increment again
+	if err := IncrementFunctionInvocations(fnName); err != nil {
+		t.Fatalf("IncrementFunctionInvocations failed on second call: %v", err)
+	}
+
+	entry, err = GetFunctionEntry(fnName)
+	if err != nil {
+		t.Fatalf("Failed to get function entry after second increment: %v", err)
+	}
+	if entry.Invocations != 2 {
+		t.Errorf("Expected invocations to be 2 after second increment, got %d", entry.Invocations)
+	}
+}
+
+// TestIncrementFunctionInvocationsNonExistent verifies that IncrementFunctionInvocations
+// returns nil (no error) when the function does not exist in the ledger.
+func TestIncrementFunctionInvocationsNonExistent(t *testing.T) {
+	err := IncrementFunctionInvocations("nonexistent_test_function.py")
+	if err != nil {
+		t.Errorf("IncrementFunctionInvocations should not error for non-existent function, got: %v", err)
+	}
+}
+
+// TestUpdateFunctionEntryPreservesInvocations verifies that calling UpdateFunctionEntry
+// preserves the existing invocation count (does not reset it to zero).
+func TestUpdateFunctionEntryPreservesInvocations(t *testing.T) {
+	fnName := "test_preserve_invocations.py"
+
+	// Create initial entry
+	if err := UpdateFunctionEntry(fnName, "python", "", "", "print('v1')"); err != nil {
+		t.Fatalf("Failed to create function entry: %v", err)
+	}
+	defer DeleteFunctionEntry(fnName)
+
+	// Increment invocations three times
+	for i := 0; i < 3; i++ {
+		if err := IncrementFunctionInvocations(fnName); err != nil {
+			t.Fatalf("IncrementFunctionInvocations failed: %v", err)
+		}
+	}
+
+	// Update the function entry (simulates a code update)
+	if err := UpdateFunctionEntry(fnName, "python", "cron", "0 0 * * *", "print('v2')"); err != nil {
+		t.Fatalf("Failed to update function entry: %v", err)
+	}
+
+	// Verify that invocation count was preserved
+	entry, err := GetFunctionEntry(fnName)
+	if err != nil {
+		t.Fatalf("Failed to get function entry after update: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("Function entry should exist after update")
+	}
+	if entry.Invocations != 3 {
+		t.Errorf("Expected invocations to be preserved at 3 after update, got %d", entry.Invocations)
+	}
+}

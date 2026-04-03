@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/WavexSoftware/OpenCloud/service_ledger"
 	"github.com/containers/podman/v5/pkg/bindings/containers"
 	"github.com/containers/podman/v5/pkg/domain/entities/reports"
 	podmanTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
@@ -587,12 +588,140 @@ func TestFunctionRename(t *testing.T) {
 	}
 }
 
+// TestListFunctionsIncludesInvocations verifies that ListFunctions returns invocation counts
+// read from the service ledger rather than always returning zero.
+func TestListFunctionsIncludesInvocations(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Create the functions directory and a test function file
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create functions directory: %v", err)
+	}
+
+	fnName := "test_list_invocations.py"
+	fnPath := filepath.Join(funcDir, fnName)
+	if err := os.WriteFile(fnPath, []byte("print('hello')"), 0644); err != nil {
+		t.Fatalf("Failed to create test function file: %v", err)
+	}
+
+	// Add an entry to the service ledger with a known invocation count
+	// using direct ledger manipulation to set a specific count
+	if err := service_ledger.UpdateFunctionEntry(fnName, "python", "", "", "print('hello')"); err != nil {
+		t.Fatalf("Failed to create function entry in ledger: %v", err)
+	}
+	defer service_ledger.DeleteFunctionEntry(fnName)
+
+	// Increment invocations twice so we have a non-zero count
+	for i := 0; i < 2; i++ {
+		if err := service_ledger.IncrementFunctionInvocations(fnName); err != nil {
+			t.Fatalf("Failed to increment invocations: %v", err)
+		}
+	}
+
+	// Call ListFunctions handler
+	req := httptest.NewRequest(http.MethodGet, "/list-functions", nil)
+	w := httptest.NewRecorder()
+	ListFunctions(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", resp.StatusCode)
+	}
+
+	// Parse response
+	var functions []FunctionItem
+	if err := json.NewDecoder(resp.Body).Decode(&functions); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Find our test function and check invocation count
+	found := false
+	for _, fn := range functions {
+		if fn.Name == fnName {
+			found = true
+			if fn.Invocations != 2 {
+				t.Errorf("Expected invocations to be 2 for %s, got %d", fnName, fn.Invocations)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Function %s not found in ListFunctions response", fnName)
+	}
+}
+
+// TestGetFunctionIncludesInvocations verifies that GetFunction returns the invocation count
+// from the service ledger rather than always returning zero.
+func TestGetFunctionIncludesInvocations(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Create the functions directory and a test function file
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("Failed to create functions directory: %v", err)
+	}
+
+	fnName := "test_get_invocations.py"
+	fnPath := filepath.Join(funcDir, fnName)
+	if err := os.WriteFile(fnPath, []byte("print('hello')"), 0644); err != nil {
+		t.Fatalf("Failed to create test function file: %v", err)
+	}
+
+	// Add an entry to the service ledger
+	if err := service_ledger.UpdateFunctionEntry(fnName, "python", "", "", "print('hello')"); err != nil {
+		t.Fatalf("Failed to create function entry in ledger: %v", err)
+	}
+	defer service_ledger.DeleteFunctionEntry(fnName)
+
+	// Increment invocations five times
+	for i := 0; i < 5; i++ {
+		if err := service_ledger.IncrementFunctionInvocations(fnName); err != nil {
+			t.Fatalf("Failed to increment invocations: %v", err)
+		}
+	}
+
+	// Call GetFunction handler
+	req := httptest.NewRequest(http.MethodGet, "/get-function/"+fnName, nil)
+	req.RequestURI = "/get-function/" + fnName
+	w := httptest.NewRecorder()
+	GetFunction(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", resp.StatusCode)
+	}
+
+	// Parse response
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// The response uses "Invocations" (capital I) - check it
+	inv, ok := result["Invocations"]
+	if !ok {
+		t.Fatal("Response missing 'Invocations' field")
+	}
+	// JSON numbers decode as float64
+	if int(inv.(float64)) != 5 {
+		t.Errorf("Expected Invocations to be 5, got %v", inv)
+	}
+}
+
+
 // TestGetContainersHandler verifies that GetContainers does not panic and
 // returns either 200 (Podman available) or 500 (Podman unavailable)
 // in a test environment.  When Podman is unavailable the handler must
 // still return a valid HTTP status; when it is available and no containers
 // exist the response body must be a JSON array (not null) so that the
-// frontend can safely iterate over the result.
+// frontend can safely call .filter() / .length without crashing.
 func TestGetContainersHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/get-containers", nil)
 	w := httptest.NewRecorder()

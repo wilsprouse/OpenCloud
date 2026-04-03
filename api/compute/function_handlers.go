@@ -100,6 +100,7 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 
 		// Check if this function has metadata in the service ledger
 		if ledgerEntry, exists := ledgerFunctions[file.Name()]; exists {
+			fn.Invocations = ledgerEntry.Invocations
 			// If the function has a trigger and schedule in the ledger, populate it.
 			// The presence of trigger and schedule indicates the trigger is enabled.
 			if ledgerEntry.Trigger != "" && ledgerEntry.Schedule != "" {
@@ -209,6 +210,11 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		if _, writeErr := logFile.WriteString(logEntry); writeErr != nil {
 			fmt.Printf("Warning: failed to write log file: %v\n", writeErr)
 		}
+	}
+
+	// Increment the invocation count in the service ledger
+	if incrementErr := service_ledger.IncrementFunctionInvocations(fnName); incrementErr != nil {
+		fmt.Printf("Warning: failed to increment invocation count: %v\n", incrementErr)
 	}
 
 	fmt.Print(out.String() + stderr.String())
@@ -325,9 +331,11 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get trigger information from service ledger
+	// Get trigger information and invocations from service ledger
 	var trigger *Trigger
+	var invocations int
 	if ledgerEntry, err := service_ledger.GetFunctionEntry(fnName); err == nil && ledgerEntry != nil {
+		invocations = ledgerEntry.Invocations
 		// The presence of trigger and schedule in the ledger indicates the trigger is enabled
 		if ledgerEntry.Trigger != "" && ledgerEntry.Schedule != "" {
 			trigger = &Trigger{
@@ -341,7 +349,7 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"name":         fnName,
 		"path":         fnPath,
-		"Invocations":  0,
+		"Invocations":  invocations,
 		"runtime":      detectRuntime(fnName),
 		"lastModified": info.ModTime().Format(time.RFC3339),
 		"sizeBytes":    info.Size(),
@@ -727,6 +735,12 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
 	}
 
+	// Read invocations count from service ledger for the response
+	var invocations int
+	if ledgerEntry, err := service_ledger.GetFunctionEntry(id); err == nil && ledgerEntry != nil {
+		invocations = ledgerEntry.Invocations
+	}
+
 	// Respond with updated function info
 	resp := map[string]interface{}{
 		"id":           id,
@@ -735,7 +749,7 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		"memorySize":   req.MemorySize,
 		"timeout":      req.Timeout,
 		"lastModified": time.Now().Format(time.RFC3339),
-		"invocations":  0, //getInvocationCount(id), // implement this if you track invocations
+		"invocations":  invocations,
 		"code":         req.Code,
 		"status":       "active",
 		"trigger":      req.Trigger,
