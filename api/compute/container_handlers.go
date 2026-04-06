@@ -1,9 +1,11 @@
 package compute
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -586,4 +588,269 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		"containerId": createResponse.ID,
 		"socket":      socket,
 	})
+}
+
+// pullProgressEvent mirrors Docker's JSON progress protocol as emitted by
+// Podman's progress writer during an image pull.
+type pullProgressEvent struct {
+	Status   string `json:"status"`
+	Progress string `json:"progress"`
+	Stream   string `json:"stream"`
+	Error    string `json:"error"`
+	ID       string `json:"id"`
+}
+
+// PullAndRunStream pulls the specified container image and starts a new
+// container through Podman, streaming real-time pull progress to the client
+// using Server-Sent Events (SSE).
+//
+// Request:  POST /pull-and-run-stream  body: PullAndRunRequest JSON
+// Response: text/event-stream
+//
+//	data: <pull progress line>
+//	...
+//	data: Starting container…
+//	event: done
+//	data: {"status":"success","containerId":"<id>"}
+//
+//	On error:
+//	event: error
+//	data: <error message>
+func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	defer r.Body.Close()
+
+	var req PullAndRunRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	req.Image = strings.TrimSpace(req.Image)
+	req.Name = strings.TrimSpace(req.Name)
+
+	if req.Image == "" {
+		http.Error(w, "image is required", http.StatusBadRequest)
+		return
+	}
+
+	if errMsg := opencloudapi.ValidateImageName(req.Image); errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	if req.Name != "" {
+		if errMsg := validateContainerName(req.Name); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	for _, port := range req.Ports {
+		if errMsg := validatePortMapping(port); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	for _, vol := range req.Volumes {
+		if errMsg := validateVolumeMount(vol); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	if req.RestartPolicy != "" && !validRestartPolicies[req.RestartPolicy] {
+		http.Error(w, "invalid restart policy: must be one of no, always, on-failure, unless-stopped", http.StatusBadRequest)
+		return
+	}
+
+	if req.AutoRemove && req.RestartPolicy != "" && req.RestartPolicy != "no" {
+		http.Error(w, "autoRemove cannot be used with a restart policy other than 'no'", http.StatusBadRequest)
+		return
+	}
+
+	socket, err := opencloudapi.RootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Upgrade the connection to SSE before any long-running operations.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	sendLine := func(line string) {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+	}
+	sendError := func(msg string) {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg)
+		flusher.Flush()
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), opencloudapi.BuildTimeout)
+	defer cancel()
+
+	conn, err := bindings.NewConnection(ctx, socket)
+	if err != nil {
+		sendError(fmt.Sprintf("Failed to connect to Podman: %v", err))
+		return
+	}
+
+	// Resolve the image reference, preferring a locally cached copy.
+	imageRef := opencloudapi.NormalizeImageRef(req.Image)
+
+	// Check whether the image already exists locally; if not, pull it with
+	// streaming progress so the client can observe each layer download.
+	localExists := false
+	if exists, err := images.Exists(conn, req.Image, nil); err == nil && exists {
+		localExists = true
+		imageRef = req.Image
+	} else if exists, err := images.Exists(conn, imageRef, nil); err == nil && exists {
+		localExists = true
+	}
+
+	if !localExists {
+		sendLine(fmt.Sprintf("Pulling image %s…", imageRef))
+
+		pr, pw := io.Pipe()
+		pullErr := make(chan error, 1)
+		go func() {
+			opts := new(images.PullOptions).WithQuiet(false).WithProgressWriter(pw)
+			_, err := images.Pull(conn, imageRef, opts)
+			pw.Close()
+			pullErr <- err
+		}()
+
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			raw := scanner.Text()
+			if raw == "" {
+				continue
+			}
+			var event pullProgressEvent
+			if json.Unmarshal([]byte(raw), &event) == nil {
+				if event.Error != "" {
+					sendError(event.Error)
+					return
+				}
+				msg := strings.TrimSpace(event.Stream)
+				if msg == "" {
+					msg = event.Status
+					if event.ID != "" {
+						msg = event.ID + ": " + msg
+					}
+					if event.Progress != "" {
+						msg += " " + event.Progress
+					}
+				}
+				if msg != "" {
+					sendLine(msg)
+				}
+			} else {
+				sendLine(raw)
+			}
+		}
+
+		if err := <-pullErr; err != nil {
+			sendError(fmt.Sprintf("Failed to pull image %q: %v", imageRef, err))
+			return
+		}
+	}
+
+	// Build the unique container ID from the requested name (or a timestamp fallback).
+	containerID := req.Name
+	if containerID == "" {
+		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
+	}
+
+	var mounts []specs.Mount
+	for _, vol := range req.Volumes {
+		parts := strings.SplitN(vol, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		mounts = append(mounts, specs.Mount{
+			Type:        "bind",
+			Source:      parts[0],
+			Destination: parts[1],
+			Options:     []string{"rbind", "rw"},
+		})
+	}
+
+	var portMappings []nettypes.PortMapping
+	for _, mapping := range req.Ports {
+		pm, err := parsePortMapping(mapping)
+		if err != nil {
+			sendError(err.Error())
+			return
+		}
+		portMappings = append(portMappings, pm)
+	}
+
+	envMap := envListToMap(req.Env)
+
+	labels := map[string]string{
+		"opencloud/name": containerID,
+	}
+	if req.RestartPolicy != "" {
+		labels["opencloud/restart-policy"] = req.RestartPolicy
+	}
+	if req.AutoRemove {
+		labels["opencloud/auto-remove"] = "true"
+	}
+	if len(req.Ports) > 0 {
+		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
+	}
+
+	spec := specgen.NewSpecGenerator(imageRef, false)
+	spec.Name = containerID
+	spec.Labels = labels
+	spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
+	spec.Env = envMap
+	spec.Mounts = mounts
+	spec.PortMappings = portMappings
+	spec.RestartPolicy = req.RestartPolicy
+	spec.Remove = &req.AutoRemove
+
+	if req.Command != "" {
+		spec.Entrypoint = []string{}
+		spec.Command = strings.Fields(req.Command)
+	}
+
+	sendLine("Creating container…")
+
+	createResponse, err := containers.CreateWithSpec(conn, spec, nil)
+	if err != nil {
+		sendError(fmt.Sprintf("Failed to create container: %v", err))
+		return
+	}
+
+	sendLine("Starting container…")
+
+	if err := containers.Start(conn, createResponse.ID, nil); err != nil {
+		_, _ = containers.Remove(conn, createResponse.ID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true))
+		sendError(fmt.Sprintf("Failed to start container: %v", err))
+		return
+	}
+
+	donePayload, _ := json.Marshal(map[string]string{
+		"status":      "success",
+		"message":     fmt.Sprintf("Container started from image %s", imageRef),
+		"containerId": createResponse.ID,
+	})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", donePayload)
+	flusher.Flush()
 }

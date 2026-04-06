@@ -145,6 +145,10 @@ export default function ContainersPage() {
   const [runRestartPolicy, setRunRestartPolicy] = useState("no")
   const [runAutoRemove, setRunAutoRemove] = useState(false)
   const [runCommand, setRunCommand] = useState("")
+  // Streaming progress output for pull-and-run
+  const [pullRunOutput, setPullRunOutput] = useState<string[]>([])
+  const [pullRunError, setPullRunError] = useState<string | null>(null)
+  const pullRunOutputEndRef = useRef<HTMLDivElement>(null)
 
   // Check if service is enabled
   const checkServiceStatus = async () => {
@@ -163,6 +167,13 @@ export default function ContainersPage() {
       outputBoxRef.current.scrollTop = outputBoxRef.current.scrollHeight
     }
   }, [enableOutput])
+
+  // Auto-scroll the pull-and-run output box whenever a new line is appended
+  useEffect(() => {
+    if (pullRunOutputEndRef.current) {
+      pullRunOutputEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [pullRunOutput])
 
   // Enable the service with streaming output
   const handleEnableService = async () => {
@@ -335,6 +346,8 @@ export default function ContainersPage() {
     setRunRestartPolicy("no")
     setRunAutoRemove(false)
     setRunCommand("")
+    setPullRunOutput([])
+    setPullRunError(null)
   }
 
   // Submit handler for pulling and running a container
@@ -347,6 +360,13 @@ export default function ContainersPage() {
     }
 
     setIsPullingAndRunning(true)
+    setPullRunOutput([])
+    setPullRunError(null)
+
+    const appendLine = (line: string) => {
+      setPullRunOutput(prev => [...prev, line])
+    }
+
     try {
       // Build the request payload with non-empty port, env, and volume entries
       const ports = runPorts
@@ -361,25 +381,71 @@ export default function ContainersPage() {
         .filter(v => v.hostPath && v.containerPath)
         .map(v => `${v.hostPath}:${v.containerPath}`)
 
-      await client.post("/pull-and-run", {
-        image: resolvedImage,
-        name: runContainerName || undefined,
-        ports,
-        env: envVars,
-        volumes,
-        restartPolicy: runRestartPolicy,
-        autoRemove: runAutoRemove,
-        command: runCommand || undefined,
+      const response = await fetch("/api/pull-and-run-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: resolvedImage,
+          name: runContainerName || undefined,
+          ports,
+          env: envVars,
+          volumes,
+          restartPolicy: runRestartPolicy,
+          autoRemove: runAutoRemove,
+          command: runCommand || undefined,
+        }),
       })
 
-      resetPullRunForm()
-      setIsPullRunDialogOpen(false)
-      router.replace("/compute/containers")
-      await fetchContainers()
-      toast.success("Container pulled and started successfully!")
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `Server returned ${response.status}`)
+      }
+
+      if (!response.body) {
+        throw new Error("No response body")
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      let succeeded = false
+      let errorMsg = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data) appendLine(data)
+          } else if (line.startsWith("event: done")) {
+            succeeded = true
+          } else if (line.startsWith("event: error")) {
+            errorMsg = "Pull and run failed"
+          }
+        }
+      }
+
+      if (succeeded) {
+        await fetchContainers()
+        toast.success("Container pulled and started successfully!")
+        setTimeout(() => {
+          resetPullRunForm()
+          setIsPullRunDialogOpen(false)
+          router.replace("/compute/containers")
+        }, 1500)
+      } else {
+        setPullRunError(errorMsg || "Failed to pull and run container. Please check the image name and try again.")
+      }
     } catch (err) {
       console.error("Failed to pull and run container:", err)
-      toast.error("Failed to pull and run container. Please check the logs.")
+      const msg = err instanceof Error ? err.message : "Failed to pull and run container. Please check the logs."
+      setPullRunError(msg)
     } finally {
       setIsPullingAndRunning(false)
     }
@@ -939,6 +1005,25 @@ export default function ContainersPage() {
                         Automatically remove container when it stops (--rm)
                       </Label>
                     </div>
+
+                    {/* Streaming progress output */}
+                    {(isPullingAndRunning || pullRunOutput.length > 0 || pullRunError) && (
+                      <div className="space-y-1">
+                        <Label>Pull Progress</Label>
+                        <div className="max-h-32 overflow-y-auto overflow-x-hidden rounded-md border bg-black p-3 font-mono text-xs text-green-400">
+                          {pullRunOutput.map((line, i) => (
+                            <div key={i} className="break-all whitespace-pre-wrap">{line}</div>
+                          ))}
+                          {pullRunError && (
+                            <div className="text-red-400 break-all whitespace-pre-wrap">{pullRunError}</div>
+                          )}
+                          {isPullingAndRunning && (
+                            <div className="animate-pulse">▌</div>
+                          )}
+                          <div ref={pullRunOutputEndRef} />
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <DialogFooter>

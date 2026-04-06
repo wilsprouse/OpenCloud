@@ -1273,6 +1273,161 @@ func TestPullAndRunHandlerValidRequest(t *testing.T) {
 	}
 }
 
+// TestPullAndRunStreamHandlerMethodNotAllowed verifies that non-POST requests are rejected with 405.
+func TestPullAndRunStreamHandlerMethodNotAllowed(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/pull-and-run-stream", nil)
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Method %s: expected 405, got %d", method, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunStreamHandlerInvalidJSON verifies that malformed JSON returns 400.
+func TestPullAndRunStreamHandlerInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader("{invalid json}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PullAndRunStream(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+// TestPullAndRunStreamHandlerMissingImage verifies that a request without an image returns 400.
+func TestPullAndRunStreamHandlerMissingImage(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(`{"name":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PullAndRunStream(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+// TestPullAndRunStreamHandlerInvalidImageName verifies that a dangerous image name returns 400.
+func TestPullAndRunStreamHandlerInvalidImageName(t *testing.T) {
+	cases := []string{"../etc/passwd", "/etc/passwd", "my image", "image\\name"}
+	for _, img := range cases {
+		body := `{"image":"` + img + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Image %q: expected 400, got %d", img, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunStreamHandlerInvalidContainerName verifies that an invalid container name returns 400.
+func TestPullAndRunStreamHandlerInvalidContainerName(t *testing.T) {
+	cases := []string{"-bad", ".bad", "bad name", "bad/name"}
+	for _, name := range cases {
+		body, _ := json.Marshal(map[string]string{"image": "nginx:latest", "name": name})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Container name %q: expected 400, got %d", name, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunStreamHandlerInvalidPort verifies that an invalid port mapping returns 400.
+func TestPullAndRunStreamHandlerInvalidPort(t *testing.T) {
+	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	for _, port := range cases {
+		body, _ := json.Marshal(map[string]interface{}{"image": "nginx:latest", "ports": []string{port}})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Port %q: expected 400, got %d", port, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunStreamHandlerInvalidVolume verifies that a volume with path traversal returns 400.
+func TestPullAndRunStreamHandlerInvalidVolume(t *testing.T) {
+	cases := []string{"../../etc:/data", "/data/../../etc:/data", "/host", "/host:../container"}
+	for _, vol := range cases {
+		body, _ := json.Marshal(map[string]interface{}{"image": "nginx:latest", "volumes": []string{vol}})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Volume %q: expected 400, got %d", vol, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunStreamHandlerInvalidRestartPolicy verifies that an unknown restart policy returns 400.
+func TestPullAndRunStreamHandlerInvalidRestartPolicy(t *testing.T) {
+	body, _ := json.Marshal(map[string]string{"image": "nginx:latest", "restartPolicy": "invalid-policy"})
+	req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PullAndRunStream(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for invalid restart policy, got %d", w.Code)
+	}
+}
+
+// TestPullAndRunStreamHandlerAutoRemoveWithRestartPolicy verifies that combining autoRemove
+// with a non-"no" restart policy returns 400.
+func TestPullAndRunStreamHandlerAutoRemoveWithRestartPolicy(t *testing.T) {
+	for _, policy := range []string{"always", "on-failure", "unless-stopped"} {
+		body, _ := json.Marshal(map[string]interface{}{
+			"image":         "nginx:latest",
+			"autoRemove":    true,
+			"restartPolicy": policy,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Policy %q with autoRemove: expected 400, got %d", policy, w.Code)
+		}
+	}
+}
+
+// TestPullAndRunStreamHandlerValidRequest verifies that a well-formed request passes all
+// validation and either streams SSE (200) or returns 500 when Podman is unavailable.
+func TestPullAndRunStreamHandlerValidRequest(t *testing.T) {
+	body, _ := json.Marshal(PullAndRunRequest{
+		Image:         "nginx:latest",
+		Name:          "test-stream-container",
+		Ports:         []string{"8081:80"},
+		Env:           []string{"FOO=bar"},
+		Volumes:       []string{"/tmp:/data"},
+		RestartPolicy: "no",
+		AutoRemove:    false,
+		Command:       "",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PullAndRunStream(w, req)
+	// In CI Podman is unavailable so 500 is expected; in production 200 with SSE.
+	if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected 200 or 500, got %d", w.Code)
+	}
+	// When the handler succeeds it must set the SSE content-type.
+	if w.Code == http.StatusOK {
+		ct := w.Header().Get("Content-Type")
+		if ct != "text/event-stream" {
+			t.Errorf("Expected Content-Type text/event-stream, got %q", ct)
+		}
+	}
+}
+
 // TestValidateContainerName verifies valid and invalid container names.
 func TestValidateContainerName(t *testing.T) {
 	tests := []struct {
