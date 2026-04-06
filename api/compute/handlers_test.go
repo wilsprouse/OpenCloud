@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
+	"github.com/containers/podman/v5/libpod/define"
 	"github.com/containers/podman/v5/pkg/bindings/containers"
 	"github.com/containers/podman/v5/pkg/domain/entities/reports"
 	podmanTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
@@ -1552,5 +1553,274 @@ func TestValidateVolumeMount(t *testing.T) {
 		} else if !tt.wantErr && result != "" {
 			t.Errorf("validateVolumeMount(%q): expected no error, got %q", tt.input, result)
 		}
+	}
+}
+
+// TestGetContainerInvalidMethod verifies that non-GET requests are rejected with 405.
+func TestGetContainerInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/get-container?id=abc123", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestGetContainerMissingID verifies that a missing "id" query parameter returns 400.
+func TestGetContainerMissingID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/get-container", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestGetContainerReturnsDetail verifies that GetContainer calls Podman Inspect
+// and returns the container details correctly encoded as JSON.
+func TestGetContainerReturnsDetail(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	now := time.Now()
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		if nameOrID != "test-container-id" {
+			t.Fatalf("expected container ID test-container-id, got %q", nameOrID)
+		}
+		return &define.InspectContainerData{
+			ID:        "test-container-id",
+			Name:      "/my-container",
+			ImageName: "nginx:latest",
+			Created:   now,
+			State: &define.InspectContainerState{
+				Status: "running",
+				Pid:    0,
+			},
+			Config: &define.InspectContainerConfig{
+				Env: []string{"FOO=bar", "BAZ=qux"},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				Binds:      []string{"/host/data:/container/data"},
+				AutoRemove: false,
+				RestartPolicy: &define.InspectRestartPolicy{
+					Name: "always",
+				},
+				PortBindings: map[string][]define.InspectHostPort{
+					"80/tcp": {{HostIP: "", HostPort: "8080"}},
+				},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-container-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if detail.ID != "test-container-id" {
+		t.Errorf("expected ID test-container-id, got %q", detail.ID)
+	}
+	if detail.Name != "my-container" {
+		t.Errorf("expected Name my-container, got %q", detail.Name)
+	}
+	if detail.Image != "nginx:latest" {
+		t.Errorf("expected Image nginx:latest, got %q", detail.Image)
+	}
+	if detail.State != "running" {
+		t.Errorf("expected State running, got %q", detail.State)
+	}
+	if detail.RestartPolicy != "always" {
+		t.Errorf("expected RestartPolicy always, got %q", detail.RestartPolicy)
+	}
+	if len(detail.Env) != 2 {
+		t.Errorf("expected 2 env vars, got %d", len(detail.Env))
+	}
+	if len(detail.Binds) != 1 || detail.Binds[0] != "/host/data:/container/data" {
+		t.Errorf("unexpected Binds: %v", detail.Binds)
+	}
+	if len(detail.Ports) != 1 {
+		t.Errorf("expected 1 port mapping, got %d", len(detail.Ports))
+	}
+}
+
+// TestGetContainerInspectFailure verifies that Podman Inspect errors result in 500.
+func TestGetContainerInspectFailure(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return nil, errors.New("container not found")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=missing-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+// TestGetContainerLogsInvalidMethod verifies that non-GET requests are rejected with 405.
+func TestGetContainerLogsInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/container-logs?id=abc123", nil)
+	w := httptest.NewRecorder()
+
+	GetContainerLogs(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestGetContainerLogsMissingID verifies that a missing "id" query parameter returns 400.
+func TestGetContainerLogsMissingID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/container-logs", nil)
+	w := httptest.NewRecorder()
+
+	GetContainerLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestGetContainerLogsInvalidTail verifies that an out-of-range tail parameter returns 400.
+func TestGetContainerLogsInvalidTail(t *testing.T) {
+	tests := []string{"0", "-1", "1001", "abc"}
+	for _, tail := range tests {
+		req := httptest.NewRequest(http.MethodGet, "/container-logs?id=abc123&tail="+tail, nil)
+		w := httptest.NewRecorder()
+		GetContainerLogs(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("tail=%q: expected 400, got %d", tail, w.Code)
+		}
+	}
+}
+
+// TestGetContainerLogsReturnLines verifies that GetContainerLogs merges
+// stdout and stderr lines from Podman into a newline-separated body.
+func TestGetContainerLogsReturnLines(t *testing.T) {
+	origConnection := containerLogsConnection
+	origLogs := podmanContainerLogs
+	t.Cleanup(func() {
+		containerLogsConnection = origConnection
+		podmanContainerLogs = origLogs
+	})
+
+	containerLogsConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	podmanContainerLogs = func(ctx context.Context, nameOrID string, opts *containers.LogOptions, stdoutChan, stderrChan chan string) error {
+		if nameOrID != "my-container" {
+			t.Fatalf("expected container ID my-container, got %q", nameOrID)
+		}
+		stdoutChan <- "stdout line 1\n"
+		stdoutChan <- "stdout line 2\n"
+		stderrChan <- "stderr line 1\n"
+		return nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/container-logs?id=my-container&tail=50", nil)
+	w := httptest.NewRecorder()
+
+	GetContainerLogs(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "stdout line 1") {
+		t.Errorf("expected stdout line 1 in body, got: %q", body)
+	}
+	if !strings.Contains(body, "stdout line 2") {
+		t.Errorf("expected stdout line 2 in body, got: %q", body)
+	}
+	if !strings.Contains(body, "stderr line 1") {
+		t.Errorf("expected stderr line 1 in body, got: %q", body)
+	}
+}
+
+// TestGetContainerLogsAllTail verifies that "tail=all" is accepted.
+func TestGetContainerLogsAllTail(t *testing.T) {
+	origConnection := containerLogsConnection
+	origLogs := podmanContainerLogs
+	t.Cleanup(func() {
+		containerLogsConnection = origConnection
+		podmanContainerLogs = origLogs
+	})
+
+	containerLogsConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	podmanContainerLogs = func(ctx context.Context, nameOrID string, opts *containers.LogOptions, stdoutChan, stderrChan chan string) error {
+		stdoutChan <- "all logs\n"
+		return nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/container-logs?id=ctr&tail=all", nil)
+	w := httptest.NewRecorder()
+
+	GetContainerLogs(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// TestGetContainerLogsFailure verifies that Podman Logs errors result in 500.
+func TestGetContainerLogsFailure(t *testing.T) {
+	origConnection := containerLogsConnection
+	origLogs := podmanContainerLogs
+	t.Cleanup(func() {
+		containerLogsConnection = origConnection
+		podmanContainerLogs = origLogs
+	})
+
+	containerLogsConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	podmanContainerLogs = func(ctx context.Context, nameOrID string, opts *containers.LogOptions, stdoutChan, stderrChan chan string) error {
+		return errors.New("container not running")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/container-logs?id=ctr", nil)
+	w := httptest.NewRecorder()
+
+	GetContainerLogs(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
 	}
 }

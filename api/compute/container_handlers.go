@@ -29,6 +29,10 @@ var (
 	containerActionConnection = opencloudapi.RootlessPodmanConnection
 	startPodmanContainer      = containers.Start
 	stopPodmanContainer       = containers.Stop
+	getContainerConnection    = opencloudapi.RootlessPodmanConnection
+	inspectPodmanContainer    = containers.Inspect
+	containerLogsConnection   = opencloudapi.RootlessPodmanConnection
+	podmanContainerLogs       = containers.Logs
 )
 
 type ContainerInfo = opencloudapi.ContainerInfo
@@ -198,6 +202,211 @@ func ContainerAction(w http.ResponseWriter, r *http.Request) {
 		"status":      status,
 		"containerId": containerID,
 	})
+}
+
+// ContainerDetail holds the detailed configuration and runtime state of a
+// single container as returned by GET /get-container.
+type ContainerDetail struct {
+	// ID is the full Podman container ID.
+	ID string `json:"id"`
+	// Name is the human-readable container name.
+	Name string `json:"name"`
+	// Image is the image reference used to create the container.
+	Image string `json:"image"`
+	// State is the current lifecycle state (e.g. "running", "exited").
+	State string `json:"state"`
+	// Status is a human-readable status string.
+	Status string `json:"status"`
+	// Created is the Unix timestamp when the container was created.
+	Created int64 `json:"created"`
+	// Env is the list of environment variables in "KEY=VALUE" format.
+	Env []string `json:"env"`
+	// Ports is the list of port mappings in "hostIP:hostPort:containerPort/proto" form.
+	Ports []string `json:"ports"`
+	// Binds is the list of volume binds in "hostPath:containerPath[:options]" form.
+	Binds []string `json:"binds"`
+	// RestartPolicy is the restart policy name (e.g. "always", "no").
+	RestartPolicy string `json:"restartPolicy"`
+	// AutoRemove indicates whether the container will be removed on exit.
+	AutoRemove bool `json:"autoRemove"`
+	// MemoryUsageBytes is the RSS memory usage of the container in bytes.
+	MemoryUsageBytes int64 `json:"memoryUsageBytes"`
+}
+
+// GetContainer inspects a single Podman container by ID or name and returns
+// its detailed configuration. It accepts GET requests with a required "id"
+// query parameter.
+//
+// Route: GET /get-container?id=<containerId>
+func GetContainer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	containerID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if containerID == "" {
+		http.Error(w, "id query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	conn, err := getContainerConnection(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	data, err := inspectPodmanContainer(conn, containerID, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to inspect container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	detail := ContainerDetail{
+		ID:      data.ID,
+		Name:    strings.TrimPrefix(data.Name, "/"),
+		Image:   data.ImageName,
+		Created: data.Created.Unix(),
+	}
+
+	if data.State != nil {
+		detail.State = data.State.Status
+		pid := uint32(0)
+		if data.State.Pid > 0 {
+			pid = uint32(data.State.Pid)
+		}
+		if pid > 0 {
+			detail.MemoryUsageBytes = containerMemoryUsageBytes(pid)
+		}
+	}
+
+	if data.Config != nil {
+		detail.Env = data.Config.Env
+	}
+
+	if data.HostConfig != nil {
+		detail.Binds = data.HostConfig.Binds
+		detail.AutoRemove = data.HostConfig.AutoRemove
+
+		if data.HostConfig.RestartPolicy != nil {
+			detail.RestartPolicy = data.HostConfig.RestartPolicy.Name
+		}
+
+		// Convert the PortBindings map into "hostIP:hostPort:containerPort/proto" strings.
+		for containerPort, hostBindings := range data.HostConfig.PortBindings {
+			for _, hb := range hostBindings {
+				var mapping string
+				if hb.HostIP != "" {
+					mapping = fmt.Sprintf("%s:%s:%s", hb.HostIP, hb.HostPort, containerPort)
+				} else {
+					mapping = fmt.Sprintf("%s:%s", hb.HostPort, containerPort)
+				}
+				detail.Ports = append(detail.Ports, mapping)
+			}
+		}
+	}
+
+	// Populate status from the list endpoint's human-readable string when
+	// available through a lightweight re-list for a single container.
+	detail.Status = detail.State
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(detail); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// GetContainerLogs fetches the tail of a container's stdout and stderr logs
+// and returns them as a newline-separated plain-text response.
+//
+// Route: GET /container-logs?id=<containerId>&tail=<n>
+//
+// The optional "tail" query parameter controls how many lines to return
+// (default 100, max 1000). A value of "all" returns all available log lines.
+func GetContainerLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	containerID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if containerID == "" {
+		http.Error(w, "id query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	tail := "100"
+	if t := strings.TrimSpace(r.URL.Query().Get("tail")); t != "" {
+		if t == "all" {
+			tail = "all"
+		} else {
+			n, err := strconv.Atoi(t)
+			if err != nil || n < 1 || n > 1000 {
+				http.Error(w, "tail must be a positive integer up to 1000 or 'all'", http.StatusBadRequest)
+				return
+			}
+			tail = strconv.Itoa(n)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	conn, err := containerLogsConnection(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	stdoutChan := make(chan string, 512)
+	stderrChan := make(chan string, 512)
+
+	logOpts := new(containers.LogOptions).
+		WithStdout(true).
+		WithStderr(true).
+		WithTail(tail)
+
+	var logErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		logErr = podmanContainerLogs(conn, containerID, logOpts, stdoutChan, stderrChan)
+		close(stdoutChan)
+		close(stderrChan)
+	}()
+
+	// Drain both channels into a single slice, preserving order as best we
+	// can given that stdout and stderr arrive independently.
+	var lines []string
+	outDone, errDone := false, false
+	for !outDone || !errDone {
+		select {
+		case line, ok := <-stdoutChan:
+			if !ok {
+				outDone = true
+			} else {
+				lines = append(lines, strings.TrimRight(line, "\r\n"))
+			}
+		case line, ok := <-stderrChan:
+			if !ok {
+				errDone = true
+			} else {
+				lines = append(lines, strings.TrimRight(line, "\r\n"))
+			}
+		}
+	}
+
+	<-done
+	if logErr != nil {
+		http.Error(w, fmt.Sprintf("Failed to retrieve container logs: %v", logErr), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(strings.Join(lines, "\n")))
 }
 
 // containerMemoryUsageBytes reads the resident set size (RSS) of the process
