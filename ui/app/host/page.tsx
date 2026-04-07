@@ -10,6 +10,9 @@ import { useEffect, useRef } from "react"
 export default function HostPage() {
   // termRef is attached to the div that xterm.js renders into.
   const termRef = useRef<HTMLDivElement>(null)
+  // Holds the resize handler so the effect cleanup can remove the exact same
+  // function instance that was added to window.
+  const handleResizeRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     // Dynamic imports keep xterm out of the server-side bundle.
@@ -126,6 +129,7 @@ export default function HostPage() {
 
       resizeObserver = new ResizeObserver(handleResize)
       if (termRef.current) resizeObserver.observe(termRef.current)
+      handleResizeRef.current = handleResize
       window.addEventListener("resize", handleResize)
     }
 
@@ -133,7 +137,9 @@ export default function HostPage() {
 
     return () => {
       resizeObserver?.disconnect()
-      window.removeEventListener("resize", () => {})
+      if (handleResizeRef.current) {
+        window.removeEventListener("resize", handleResizeRef.current)
+      }
       ws?.close()
       terminal?.dispose()
     }
