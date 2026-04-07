@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	opencloudapi "github.com/WavexSoftware/OpenCloud/api"
 	"github.com/containers/podman/v5/pkg/bindings/containers"
+	"github.com/containers/podman/v5/pkg/bindings/images"
+	podmanInspect "github.com/containers/podman/v5/pkg/inspect"
 	podmanTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
@@ -749,5 +752,95 @@ func TestPullImageStreamQuayIORegistry(t *testing.T) {
 	resp := w.Result()
 	if resp.StatusCode == http.StatusBadRequest {
 		t.Errorf("quay.io should be a valid registry; got BadRequest")
+	}
+}
+
+// TestGetImageInvalidMethod verifies that GetImage rejects non-GET requests.
+func TestGetImageInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/get-image", nil)
+	w := httptest.NewRecorder()
+
+	GetImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected %d for non-GET, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
+	}
+}
+
+// TestGetImageMissingName verifies that GetImage rejects requests without a name parameter.
+func TestGetImageMissingName(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/get-image", nil)
+	w := httptest.NewRecorder()
+
+	GetImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected %d for missing name, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestGetImageEmptyName verifies that GetImage rejects a whitespace-only name parameter.
+func TestGetImageEmptyName(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/get-image?name=", nil)
+	w := httptest.NewRecorder()
+
+	GetImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected %d for empty name, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestGetImageStripsLocalhostPrefixFromTags verifies that GetImage strips the
+// "localhost/" prefix from RepoTags just as the list endpoint does.
+func TestGetImageStripsLocalhostPrefixFromTags(t *testing.T) {
+	created := time.Unix(1700000000, 0).UTC()
+
+	// Override the Podman connection so no real socket is needed.
+	origConn := newGetImageConnection
+	defer func() { newGetImageConnection = origConn }()
+	newGetImageConnection = func(ctx context.Context, _ string) (context.Context, error) {
+		return ctx, nil
+	}
+
+	// Override the image-inspect function to return a predictable result.
+	origInspect := inspectPodmanImage
+	defer func() { inspectPodmanImage = origInspect }()
+	inspectPodmanImage = func(_ context.Context, _ string, _ *images.GetOptions) (*podmanTypes.ImageInspectReport, error) {
+		return &podmanTypes.ImageInspectReport{
+			ImageData: &podmanInspect.ImageData{
+				ID:       "sha256:abc123",
+				RepoTags: []string{"localhost/myapp:latest"},
+				Created:  &created,
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-image?name=myapp:latest", nil)
+	w := httptest.NewRecorder()
+
+	GetImage(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	var detail ImageDetail
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if len(detail.RepoTags) != 1 || detail.RepoTags[0] != "myapp:latest" {
+		t.Errorf("Expected RepoTags=[myapp:latest] after prefix strip, got %v", detail.RepoTags)
+	}
+	if detail.ID != "sha256:abc123" {
+		t.Errorf("Expected ID=sha256:abc123, got %q", detail.ID)
+	}
+	if detail.Created != created.Unix() {
+		t.Errorf("Expected Created=%d, got %d", created.Unix(), detail.Created)
 	}
 }

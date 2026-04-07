@@ -568,7 +568,11 @@ export default function ContainerRegistry() {
                 {filteredImages.map((c) => (
                     <div
                       key={`${c.Id}-${c.Image}`}
-                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                      onClick={() => {
+                        const name = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
+                        router.push(`/storage/containers/${encodeURIComponent(name)}`)
+                      }}
                     >
                       <div className="flex items-center space-x-4 flex-1">
                         <div className="p-2 rounded-lg bg-muted">
@@ -598,7 +602,8 @@ export default function ContainerRegistry() {
                         <Button 
                           variant="ghost" 
                           size="icon"
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation()
                             const imageName = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
                             router.push(`/compute/containers?create=true&image=${encodeURIComponent(imageName)}`)
                           }}
@@ -609,7 +614,10 @@ export default function ContainerRegistry() {
                         <Button
                           variant="destructive"
                           size="sm"
-                          onClick={() => openDeleteDialog(c)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openDeleteDialog(c)
+                          }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
