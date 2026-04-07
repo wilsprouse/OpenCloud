@@ -231,7 +231,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                 {container.state}
               </Badge>
             </div>
-            <p className="text-sm text-muted-foreground">{container.id.slice(7, 19)}</p>
+            <p className="text-sm text-muted-foreground">{container.id.slice(0, 12)}</p>
           </div>
         </div>
 
@@ -339,7 +339,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Full ID</span>
-                  <span className="font-mono text-xs truncate max-w-[60%]">{container.id.slice(7, 19)}</span>
+                  <span className="font-mono text-xs truncate max-w-[60%]">{container.id.slice(0, 12)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground flex items-center">
@@ -496,7 +496,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
             <DialogTitle>Stop Container</DialogTitle>
             <DialogDescription>
               Are you sure you want to stop{" "}
-              <span className="font-semibold">{container.name || container.id.slice(7, 19)}</span>?
+              <span className="font-semibold">{container.name || container.id.slice(0, 12)}</span>?
               The container will remain available to restart.
             </DialogDescription>
           </DialogHeader>
@@ -526,7 +526,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
             <DialogTitle>Delete Container</DialogTitle>
             <DialogDescription>
               Are you sure you want to permanently delete{" "}
-              <span className="font-semibold">{container.name || container.id.slice(7, 19)}</span>?
+              <span className="font-semibold">{container.name || container.id.slice(0, 12)}</span>?
               This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
