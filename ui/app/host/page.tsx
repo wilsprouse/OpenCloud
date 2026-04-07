@@ -61,9 +61,24 @@ export default function HostPage() {
     }
   }, [lines, running])
 
-  // Focus the input on mount so the user can start typing immediately.
+  // Focus the input on mount so the user can start typing immediately, and
+  // keep focus there whenever a key is pressed anywhere on the page.
+  // This means the user never has to click the terminal to start typing —
+  // any keystroke, from any focus state, lands in the command input.
   useEffect(() => {
     inputRef.current?.focus()
+
+    const handleGlobalKey = (e: KeyboardEvent) => {
+      // Skip modifier-only keypresses (Ctrl, Alt, Meta combos used for shortcuts).
+      if (e.ctrlKey || e.altKey || e.metaKey) return
+      // Only steal focus when the active element is outside the input itself.
+      if (document.activeElement !== inputRef.current) {
+        inputRef.current?.focus()
+      }
+    }
+
+    document.addEventListener("keydown", handleGlobalKey)
+    return () => document.removeEventListener("keydown", handleGlobalKey)
   }, [])
 
   const appendLine = (text: string, type: TerminalLine["type"] = "output") => {
