@@ -128,7 +128,7 @@ func TestExecuteHostCommandTooLong(t *testing.T) {
 	}
 }
 
-
+// TestExecuteHostCommandMultiLineOutput verifies that multi-line output is
 // split correctly into individual SSE data events.
 func TestExecuteHostCommandMultiLineOutput(t *testing.T) {
 	body, _ := json.Marshal(ExecRequest{Command: "printf 'line1\\nline2\\nline3\\n'"})
