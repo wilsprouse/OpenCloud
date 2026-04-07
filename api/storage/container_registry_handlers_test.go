@@ -844,3 +844,82 @@ func TestGetImageStripsLocalhostPrefixFromTags(t *testing.T) {
 		t.Errorf("Expected Created=%d, got %d", created.Unix(), detail.Created)
 	}
 }
+
+// TestBuildImageStreamInvalidMethod tests that BuildImageStream rejects non-POST requests
+func TestBuildImageStreamInvalidMethod(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/build-image-stream", nil)
+	w := httptest.NewRecorder()
+
+	BuildImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
+	}
+}
+
+// TestBuildImageStreamInvalidJSON tests that BuildImageStream rejects invalid JSON
+func TestBuildImageStreamInvalidJSON(t *testing.T) {
+	invalidJSON := bytes.NewBufferString("{invalid json")
+	req := httptest.NewRequest(http.MethodPost, "/build-image-stream", invalidJSON)
+	w := httptest.NewRecorder()
+
+	BuildImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestBuildImageStreamMissingDockerfile tests that BuildImageStream rejects missing dockerfile
+func TestBuildImageStreamMissingDockerfile(t *testing.T) {
+	reqBody := BuildImageRequest{
+		ImageName: "test-image",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/build-image-stream", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	BuildImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestBuildImageStreamMissingImageName tests that BuildImageStream rejects missing image name
+func TestBuildImageStreamMissingImageName(t *testing.T) {
+	reqBody := BuildImageRequest{
+		Dockerfile: "FROM alpine:latest\nRUN echo 'test'",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/build-image-stream", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	BuildImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}
+
+// TestBuildImageStreamMissingFromInstruction tests that BuildImageStream rejects Dockerfile without FROM
+func TestBuildImageStreamMissingFromInstruction(t *testing.T) {
+	reqBody := BuildImageRequest{
+		Dockerfile: "RUN echo hello",
+		ImageName:  "test-image",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/build-image-stream", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	BuildImageStream(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+}

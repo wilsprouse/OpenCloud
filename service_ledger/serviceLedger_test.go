@@ -608,7 +608,7 @@ func TestUpdateContainerImageEntry(t *testing.T) {
 	noCache := false
 	builtAt := "2024-01-01T00:00:00Z"
 
-	if err := UpdateContainerImageEntry(imageName, dockerfile, context, platform, noCache, builtAt); err != nil {
+	if err := UpdateContainerImageEntry(imageName, dockerfile, context, platform, noCache, builtAt, ""); err != nil {
 		t.Fatalf("UpdateContainerImageEntry failed: %v", err)
 	}
 
@@ -640,6 +640,72 @@ func TestUpdateContainerImageEntry(t *testing.T) {
 	}
 }
 
+// TestUpdateContainerImageEntryLogs tests that build log output is persisted in the ledger
+func TestUpdateContainerImageEntryLogs(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetContainerImages(t)
+	t.Cleanup(func() { resetContainerImages(t) })
+
+	imageName := "log-app:latest"
+	buildLogs := "Step 1/2 : FROM alpine:latest\nStep 2/2 : RUN echo hello\nSuccessfully built abc123"
+
+	if err := UpdateContainerImageEntry(imageName, "FROM alpine:latest\nRUN echo hello", ".", "", false, "2024-01-01T00:00:00Z", buildLogs); err != nil {
+		t.Fatalf("UpdateContainerImageEntry failed: %v", err)
+	}
+
+	entry, err := GetContainerImageEntry(imageName)
+	if err != nil {
+		t.Fatalf("GetContainerImageEntry failed: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("Expected container image entry, got nil")
+	}
+	if entry.Logs != buildLogs {
+		t.Errorf("Expected logs %q, got %q", buildLogs, entry.Logs)
+	}
+}
+
+// TestRecordPulledImageEntryLogs tests that pull log output is persisted in the ledger
+func TestRecordPulledImageEntryLogs(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	resetContainerImages(t)
+	t.Cleanup(func() { resetContainerImages(t) })
+
+	imageName := "nginx:latest"
+	registry := "docker.io"
+	pulledAt := "2024-03-01T12:00:00Z"
+	pullLogs := "Pulling from library/nginx\nDigest: sha256:abc123\nStatus: Downloaded newer image"
+
+	if err := RecordPulledImageEntry(imageName, registry, pulledAt, pullLogs); err != nil {
+		t.Fatalf("RecordPulledImageEntry failed: %v", err)
+	}
+
+	entry, err := GetContainerImageEntry(imageName)
+	if err != nil {
+		t.Fatalf("GetContainerImageEntry failed: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("Expected container image entry, got nil")
+	}
+	if entry.Logs != pullLogs {
+		t.Errorf("Expected logs %q, got %q", pullLogs, entry.Logs)
+	}
+	if entry.Registry != registry {
+		t.Errorf("Expected registry %q, got %q", registry, entry.Registry)
+	}
+	if entry.PulledAt != pulledAt {
+		t.Errorf("Expected pulledAt %q, got %q", pulledAt, entry.PulledAt)
+	}
+}
+
 // TestUpdateContainerImageEntryOverwrite tests that updating an existing image overwrites its fields
 func TestUpdateContainerImageEntryOverwrite(t *testing.T) {
 	tmpHome := t.TempDir()
@@ -654,10 +720,10 @@ func TestUpdateContainerImageEntryOverwrite(t *testing.T) {
 	firstDockerfile := "FROM alpine:latest"
 	secondDockerfile := "FROM ubuntu:22.04\nRUN apt-get update"
 
-	if err := UpdateContainerImageEntry(imageName, firstDockerfile, ".", "", false, "2024-01-01T00:00:00Z"); err != nil {
+	if err := UpdateContainerImageEntry(imageName, firstDockerfile, ".", "", false, "2024-01-01T00:00:00Z", ""); err != nil {
 		t.Fatalf("First UpdateContainerImageEntry failed: %v", err)
 	}
-	if err := UpdateContainerImageEntry(imageName, secondDockerfile, ".", "linux/arm64", true, "2024-06-01T00:00:00Z"); err != nil {
+	if err := UpdateContainerImageEntry(imageName, secondDockerfile, ".", "linux/arm64", true, "2024-06-01T00:00:00Z", ""); err != nil {
 		t.Fatalf("Second UpdateContainerImageEntry failed: %v", err)
 	}
 
@@ -691,7 +757,7 @@ func TestDeleteContainerImageEntry(t *testing.T) {
 	t.Cleanup(func() { resetContainerImages(t) })
 
 	imageName := "to-delete:latest"
-	if err := UpdateContainerImageEntry(imageName, "FROM alpine:latest", ".", "", false, "2024-01-01T00:00:00Z"); err != nil {
+	if err := UpdateContainerImageEntry(imageName, "FROM alpine:latest", ".", "", false, "2024-01-01T00:00:00Z", ""); err != nil {
 		t.Fatalf("UpdateContainerImageEntry failed: %v", err)
 	}
 
@@ -752,7 +818,7 @@ func TestGetAllContainerImageEntries(t *testing.T) {
 		"app-b:v2":     "FROM ubuntu:22.04\nRUN echo b",
 	}
 	for name, df := range images {
-		if err := UpdateContainerImageEntry(name, df, ".", "", false, "2024-01-01T00:00:00Z"); err != nil {
+		if err := UpdateContainerImageEntry(name, df, ".", "", false, "2024-01-01T00:00:00Z", ""); err != nil {
 			t.Fatalf("UpdateContainerImageEntry(%s) failed: %v", name, err)
 		}
 	}

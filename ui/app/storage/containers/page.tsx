@@ -59,6 +59,10 @@ type Image = {
 
 // Constants
 const REGISTRY_URL = "registry.opencloud.local"
+// BUILD_SUCCESS_DIALOG_DELAY_MS controls how long the build dialog stays open
+// after a successful build so the user can read the final output before it
+// closes automatically.
+const BUILD_SUCCESS_DIALOG_DELAY_MS = 1500
 
 function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
   const searchParams = useSearchParams()
@@ -110,6 +114,11 @@ export default function ContainerRegistry() {
   const [pullError, setPullError] = useState<string | null>(null)
   const pullOutputEndRef = useRef<HTMLDivElement>(null)
 
+  // Build image dialog streaming state
+  const [buildOutput, setBuildOutput] = useState<string[]>([])
+  const [buildError, setBuildError] = useState<string | null>(null)
+  const buildOutputEndRef = useRef<HTMLDivElement>(null)
+
   // Check if service is enabled
   const checkServiceStatus = async () => {
     try {
@@ -134,6 +143,13 @@ export default function ContainerRegistry() {
       pullOutputEndRef.current.scrollIntoView({ behavior: "smooth" })
     }
   }, [pullOutput])
+
+  // Auto-scroll build output box when new lines arrive
+  useEffect(() => {
+    if (buildOutputEndRef.current) {
+      buildOutputEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [buildOutput])
 
   // Enable the service with streaming output
   const handleEnableService = async () => {
@@ -292,31 +308,81 @@ export default function ContainerRegistry() {
     }
 
     setIsBuilding(true)
+    setBuildOutput([])
+    setBuildError(null)
+
+    const appendLine = (line: string) => {
+      setBuildOutput(prev => [...prev, line])
+    }
+
     try {
-      // Send the dockerfile and build parameters to the backend
-      await client.post("/build-image", {
-        dockerfile: dockerfileContent,
-        imageName: `${imageName}:${imageTag}`,
-        context: ".",
-        nocache: nocache,
-        platform: "linux/amd64",
+      const response = await fetch("/api/build-image-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dockerfile: dockerfileContent,
+          imageName: `${imageName}:${imageTag}`,
+          context: ".",
+          nocache: nocache,
+          platform: "linux/amd64",
+        }),
       })
-      
-      // Reset form and close dialog
-      setDockerfileContent("")
-      setImageName("")
-      resetImageNameWarning()
-      setImageTag("latest")
-      setNocache(false)
-      setIsDialogOpen(false)
-      
-      // Refresh the image list
-      await fetchImages()
-      
-      toast.success("Image built successfully!")
+
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `Server returned ${response.status}`)
+      }
+
+      if (!response.body) {
+        throw new Error("No response body")
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      let succeeded = false
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim()
+            if (data) appendLine(data)
+          } else if (line.startsWith("event: done")) {
+            succeeded = true
+          } else if (line.startsWith("event: error")) {
+            // Error message will arrive on the next data: line
+          }
+        }
+      }
+
+      if (succeeded) {
+        // Reset form
+        setDockerfileContent("")
+        setImageName("")
+        resetImageNameWarning()
+        setImageTag("latest")
+        setNocache(false)
+        await fetchImages()
+        toast.success("Image built successfully!")
+        // Keep dialog open briefly so the user can see the completed output
+        setTimeout(() => {
+          setIsDialogOpen(false)
+          setBuildOutput([])
+        }, BUILD_SUCCESS_DIALOG_DELAY_MS)
+      } else {
+        setBuildError("Build failed. Check the output above for details.")
+      }
     } catch (err) {
       console.error("Failed to build image:", err)
-      toast.error("Failed to build image. Please check the logs.")
+      const msg = err instanceof Error ? err.message : "Failed to build image. Please check the logs."
+      setBuildError(msg)
     } finally {
       setIsBuilding(false)
     }
@@ -648,7 +714,11 @@ export default function ContainerRegistry() {
             <CardContent className="space-y-3">
               <Dialog open={isDialogOpen} onOpenChange={(open) => {
                 setIsDialogOpen(open)
-                if (!open) resetImageNameWarning()
+                if (!open) {
+                  resetImageNameWarning()
+                  setBuildOutput([])
+                  setBuildError(null)
+                }
               }}>
                 <DialogTrigger asChild>
                   <Button variant="ghost" className="w-full justify-start h-auto p-4 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/50">
@@ -732,6 +802,25 @@ export default function ContainerRegistry() {
                       </Label>
                     </div>
                   </div>
+
+                  {/* Real-time build output */}
+                  {(isBuilding || buildOutput.length > 0 || buildError) && (
+                    <div className="rounded-md border bg-black p-3 font-mono text-xs text-green-400 max-h-48 overflow-y-auto">
+                      {buildOutput.map((line, i) => (
+                        <div key={i}>{line}</div>
+                      ))}
+                      {isBuilding && (
+                        <div className="flex items-center gap-1 text-muted-foreground mt-1">
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          Building…
+                        </div>
+                      )}
+                      {buildError && (
+                        <div className="text-red-400 mt-1">{buildError}</div>
+                      )}
+                      <div ref={buildOutputEndRef} />
+                    </div>
+                  )}
 
                   <DialogFooter>
                     <Button

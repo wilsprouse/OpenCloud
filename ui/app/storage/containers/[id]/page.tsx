@@ -29,6 +29,9 @@ import {
   Cpu,
   BookOpen,
   Hash,
+  ChevronDown,
+  ChevronRight,
+  ScrollText,
 } from "lucide-react"
 
 // ImageDetail mirrors the ImageDetail struct returned by GET /get-image.
@@ -70,6 +73,9 @@ export default function ImageDetailPage({ params }: { params: Promise<{ id: stri
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [logsOpen, setLogsOpen] = useState(false)
+  const [imageLogs, setImageLogs] = useState<string | null>(null)
+  const [logsLoading, setLogsLoading] = useState(false)
 
   const fetchImage = useCallback(async () => {
     setLoading(true)
@@ -84,9 +90,32 @@ export default function ImageDetailPage({ params }: { params: Promise<{ id: stri
     }
   }, [imageName])
 
+  const fetchImageLogs = useCallback(async () => {
+    setLogsLoading(true)
+    try {
+      const res = await client.get<string>(`/get-image-logs?name=${encodeURIComponent(imageName)}`)
+      setImageLogs(typeof res.data === "string" ? res.data : "")
+    } catch (err) {
+      console.error("Failed to fetch image logs:", err)
+      toast.error("Failed to load image logs")
+      setImageLogs("")
+    } finally {
+      setLogsLoading(false)
+    }
+  }, [imageName])
+
   useEffect(() => {
     fetchImage()
   }, [fetchImage])
+
+  // Fetch logs the first time the dropdown is opened.
+  const handleToggleLogs = () => {
+    const willOpen = !logsOpen
+    setLogsOpen(willOpen)
+    if (willOpen && imageLogs === null) {
+      fetchImageLogs()
+    }
+  }
 
   const handleDeleteImage = async () => {
     setActionLoading(true)
@@ -203,6 +232,46 @@ export default function ImageDetailPage({ params }: { params: Promise<{ id: stri
             Delete
           </Button>
         </div>
+      </div>
+
+      {/* Build / Pull logs collapsible dropdown */}
+      <div className="mb-6">
+        <button
+          type="button"
+          onClick={handleToggleLogs}
+          className="flex w-full items-center justify-between rounded-lg border bg-card px-4 py-3 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+        >
+          <span className="flex items-center gap-2">
+            <ScrollText className="h-4 w-4 text-muted-foreground" />
+            Build / Pull Logs
+          </span>
+          {logsOpen ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          )}
+        </button>
+        {logsOpen && (
+          <div className="rounded-b-lg border border-t-0 bg-muted/40 px-4 py-3">
+            {logsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Loading logs…
+              </div>
+            ) : imageLogs ? (
+              <pre
+                tabIndex={0}
+                className="whitespace-pre-wrap break-all font-mono text-xs leading-relaxed max-h-96 overflow-y-auto"
+              >
+                {imageLogs}
+              </pre>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No build or pull logs recorded for this image.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Detail cards */}
