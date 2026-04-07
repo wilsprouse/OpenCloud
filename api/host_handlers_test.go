@@ -26,6 +26,87 @@ func newFlusherRecorder() *responseRecorderFlusher {
 	return &responseRecorderFlusher{httptest.NewRecorder()}
 }
 
+// --- GetHostInfo tests -------------------------------------------------------
+
+// TestGetHostInfoMethodNotAllowed verifies that POST requests are rejected.
+func TestGetHostInfoMethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/host/info", nil)
+	w := httptest.NewRecorder()
+
+	GetHostInfo(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected %d, got %d", http.StatusMethodNotAllowed, w.Code)
+	}
+}
+
+// TestGetHostInfoReturnsJSON verifies that the endpoint returns a valid JSON
+// payload containing at least user, hostname, and cwd fields.
+func TestGetHostInfoReturnsJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/host/info", nil)
+	w := httptest.NewRecorder()
+
+	GetHostInfo(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d — body: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	var info HostInfo
+	if err := json.NewDecoder(w.Body).Decode(&info); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if info.User == "" {
+		t.Error("expected non-empty user")
+	}
+	if info.Hostname == "" {
+		t.Error("expected non-empty hostname")
+	}
+	if info.Cwd == "" {
+		t.Error("expected non-empty cwd")
+	}
+}
+
+// --- shortenHome / resolveCwd unit tests ------------------------------------
+
+// TestShortenHome verifies that the home-directory prefix is replaced with "~".
+func TestShortenHome(t *testing.T) {
+	cases := []struct {
+		path, home, want string
+	}{
+		{"/home/alice", "/home/alice", "~"},
+		{"/home/alice/projects", "/home/alice", "~/projects"},
+		{"/tmp", "/home/alice", "/tmp"},
+		{"/home/alicefoo", "/home/alice", "/home/alicefoo"}, // prefix-only, no slash
+		{"", "/home/alice", ""},
+	}
+	for _, c := range cases {
+		if got := shortenHome(c.path, c.home); got != c.want {
+			t.Errorf("shortenHome(%q, %q) = %q, want %q", c.path, c.home, got, c.want)
+		}
+	}
+}
+
+// TestResolveCwd verifies that "~" and "~/..." are expanded correctly.
+func TestResolveCwd(t *testing.T) {
+	if got := resolveCwd(""); got != "" {
+		t.Errorf("resolveCwd(%q) = %q, want %q", "", got, "")
+	}
+	if got := resolveCwd("/tmp"); got != "/tmp" {
+		t.Errorf("resolveCwd(%q) = %q, want %q", "/tmp", got, "/tmp")
+	}
+	// "~" should expand to a non-empty absolute path.
+	if got := resolveCwd("~"); got == "" || got == "~" {
+		t.Errorf("resolveCwd(%q) = %q, want non-empty absolute path", "~", got)
+	}
+	// "~/foo" should expand without a double slash.
+	if got := resolveCwd("~/foo"); strings.Contains(got, "~") {
+		t.Errorf("resolveCwd(%q) = %q, still contains ~", "~/foo", got)
+	}
+}
+
+// --- ExecuteHostCommand tests ------------------------------------------------
+
 // TestExecuteHostCommandMethodNotAllowed verifies that GET requests are rejected.
 func TestExecuteHostCommandMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/host/exec", nil)
@@ -90,6 +171,11 @@ func TestExecuteHostCommandSuccess(t *testing.T) {
 	if !strings.Contains(response, "event: done") {
 		t.Errorf("expected 'event: done' in response, got:\n%s", response)
 	}
+
+	// The sentinel line must NOT appear in the plain data output.
+	if strings.Contains(response, "data: "+cwdSentinel) {
+		t.Errorf("sentinel leaked into data output:\n%s", response)
+	}
 }
 
 // TestExecuteHostCommandFailure verifies that a failing command produces an
@@ -145,3 +231,44 @@ func TestExecuteHostCommandMultiLineOutput(t *testing.T) {
 		}
 	}
 }
+
+// TestExecuteHostCommandCwdTracking verifies that after a cd command the
+// response contains an "event: cwd" SSE event with the new directory, and
+// that the sentinel line does not appear as plain data.
+func TestExecuteHostCommandCwdTracking(t *testing.T) {
+	body, _ := json.Marshal(ExecRequest{Command: "cd /tmp"})
+	req := httptest.NewRequest(http.MethodPost, "/host/exec", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := newFlusherRecorder()
+
+	ExecuteHostCommand(w, req)
+
+	response := w.Body.String()
+	if !strings.Contains(response, "event: cwd") {
+		t.Errorf("expected 'event: cwd' in response, got:\n%s", response)
+	}
+	if !strings.Contains(response, "data: /tmp") {
+		t.Errorf("expected 'data: /tmp' in cwd event, got:\n%s", response)
+	}
+	// Sentinel must not be visible to the user.
+	if strings.Contains(response, "data: "+cwdSentinel) {
+		t.Errorf("sentinel leaked into data output:\n%s", response)
+	}
+}
+
+// TestExecuteHostCommandCwdParam verifies that commands are run in the
+// directory supplied via the Cwd request field.
+func TestExecuteHostCommandCwdParam(t *testing.T) {
+	body, _ := json.Marshal(ExecRequest{Command: "pwd", Cwd: "/tmp"})
+	req := httptest.NewRequest(http.MethodPost, "/host/exec", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := newFlusherRecorder()
+
+	ExecuteHostCommand(w, req)
+
+	response := w.Body.String()
+	if !strings.Contains(response, "data: /tmp") {
+		t.Errorf("expected 'data: /tmp' in response (pwd output), got:\n%s", response)
+	}
+}
+
