@@ -835,9 +835,11 @@ func GetImage(w http.ResponseWriter, r *http.Request) {
 		detail.Created = data.Created.Unix()
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(detail); err != nil {
+	out, err := json.Marshal(detail)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out)
 }

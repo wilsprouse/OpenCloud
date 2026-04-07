@@ -565,14 +565,14 @@ export default function ContainerRegistry() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {filteredImages.map((c) => (
+                {filteredImages.map((c) => {
+                    // Strip a leading slash that Podman may prepend to image tags.
+                    const displayName = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
+                    return (
                     <div
                       key={`${c.Id}-${c.Image}`}
                       className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                      onClick={() => {
-                        const name = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
-                        router.push(`/storage/containers/${encodeURIComponent(name)}`)
-                      }}
+                      onClick={() => router.push(`/storage/containers/${encodeURIComponent(displayName)}`)}
                     >
                       <div className="flex items-center space-x-4 flex-1">
                         <div className="p-2 rounded-lg bg-muted">
@@ -580,7 +580,7 @@ export default function ContainerRegistry() {
                         </div>
                         <div className="space-y-1 flex-1 min-w-0">
                           <h4 className="font-medium text-foreground truncate">
-                            {c.RepoTags?.[0]?.replace(/^\//, "") || "Unnamed"}
+                            {displayName || "Unnamed"}
                           </h4>
                           <p className="text-sm text-muted-foreground truncate">{c.Image}</p>
                           <div className="flex items-center space-x-4 text-xs text-muted-foreground">
@@ -604,8 +604,7 @@ export default function ContainerRegistry() {
                           size="icon"
                           onClick={(e) => {
                             e.stopPropagation()
-                            const imageName = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
-                            router.push(`/compute/containers?create=true&image=${encodeURIComponent(imageName)}`)
+                            router.push(`/compute/containers?create=true&image=${encodeURIComponent(displayName)}`)
                           }}
                           title="Deploy container"
                         >
@@ -623,7 +622,8 @@ export default function ContainerRegistry() {
                         </Button>
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 {filteredImages.length === 0 && !loading && (
                   <div className="text-center py-12">
                     <Container className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
