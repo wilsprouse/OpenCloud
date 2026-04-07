@@ -565,10 +565,14 @@ export default function ContainerRegistry() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {filteredImages.map((c) => (
+                {filteredImages.map((c) => {
+                    // Strip a leading slash that Podman may prepend to image tags.
+                    const displayName = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
+                    return (
                     <div
                       key={`${c.Id}-${c.Image}`}
-                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                      onClick={() => router.push(`/storage/containers/${encodeURIComponent(displayName)}`)}
                     >
                       <div className="flex items-center space-x-4 flex-1">
                         <div className="p-2 rounded-lg bg-muted">
@@ -576,7 +580,7 @@ export default function ContainerRegistry() {
                         </div>
                         <div className="space-y-1 flex-1 min-w-0">
                           <h4 className="font-medium text-foreground truncate">
-                            {c.RepoTags?.[0]?.replace(/^\//, "") || "Unnamed"}
+                            {displayName || "Unnamed"}
                           </h4>
                           <p className="text-sm text-muted-foreground truncate">{c.Image}</p>
                           <div className="flex items-center space-x-4 text-xs text-muted-foreground">
@@ -598,9 +602,9 @@ export default function ContainerRegistry() {
                         <Button 
                           variant="ghost" 
                           size="icon"
-                          onClick={() => {
-                            const imageName = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
-                            router.push(`/compute/containers?create=true&image=${encodeURIComponent(imageName)}`)
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            router.push(`/compute/containers?create=true&image=${encodeURIComponent(displayName)}`)
                           }}
                           title="Deploy container"
                         >
@@ -609,13 +613,17 @@ export default function ContainerRegistry() {
                         <Button
                           variant="destructive"
                           size="sm"
-                          onClick={() => openDeleteDialog(c)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openDeleteDialog(c)
+                          }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 {filteredImages.length === 0 && !loading && (
                   <div className="text-center py-12">
                     <Container className="h-12 w-12 mx-auto text-muted-foreground mb-4" />

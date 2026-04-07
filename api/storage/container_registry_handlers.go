@@ -30,11 +30,53 @@ var newDeleteImageConnection = func(ctx context.Context, socket string) (context
 	return bindings.NewConnection(ctx, socket)
 }
 
+// newGetImageConnection establishes a Podman bindings connection for the
+// GetImage handler.  It is a package-level variable so tests can substitute
+// a no-op implementation that returns the context unchanged.
+var newGetImageConnection = func(ctx context.Context, socket string) (context.Context, error) {
+	return bindings.NewConnection(ctx, socket)
+}
+
 // listContainersForImage is a package-level variable that can be overridden in
 // tests to avoid a real Podman connection when checking for containers that use
 // an image before deletion.
 var listContainersForImage = func(ctx context.Context, opts *containers.ListOptions) ([]podmanEntities.ListContainer, error) {
 	return containers.List(ctx, opts)
+}
+
+// inspectPodmanImage is a package-level variable that can be overridden in
+// tests to avoid a real Podman connection when inspecting an image.
+var inspectPodmanImage = func(ctx context.Context, nameOrID string, opts *images.GetOptions) (*podmanEntities.ImageInspectReport, error) {
+	return images.GetImage(ctx, nameOrID, opts)
+}
+
+// ImageDetail holds the detailed metadata for a single container image as
+// returned by GET /get-image.
+type ImageDetail struct {
+	// ID is the full image content-addressable ID.
+	ID string `json:"id"`
+	// RepoTags is the list of repository tags associated with this image.
+	RepoTags []string `json:"repoTags"`
+	// RepoDigests is the list of content-addressable digests for this image.
+	RepoDigests []string `json:"repoDigests"`
+	// Created is the Unix timestamp when the image was built.
+	Created int64 `json:"created"`
+	// Size is the on-disk size of the image in bytes.
+	Size int64 `json:"size"`
+	// VirtualSize is the total virtual size (including shared layers) in bytes.
+	VirtualSize int64 `json:"virtualSize"`
+	// Labels contains metadata labels attached to the image.
+	Labels map[string]string `json:"labels"`
+	// Architecture is the CPU architecture the image was built for.
+	Architecture string `json:"architecture"`
+	// Os is the operating system the image was built for.
+	Os string `json:"os"`
+	// Author is the image author field, if present.
+	Author string `json:"author"`
+	// Comment is an optional comment stored in the image manifest.
+	Comment string `json:"comment"`
+	// NamesHistory contains the historical list of names this image has had.
+	NamesHistory []string `json:"namesHistory"`
 }
 
 // BuildImageRequest represents the JSON payload for building a container image
@@ -729,4 +771,75 @@ func PullImageStream(w http.ResponseWriter, r *http.Request) {
 	donePayload, _ := json.Marshal(map[string]string{"status": "success", "imageName": imageRef})
 	fmt.Fprintf(w, "event: done\ndata: %s\n\n", donePayload)
 	flusher.Flush()
+}
+
+// GetImage inspects a single container image by name or ID and returns its
+// detailed metadata. It accepts GET requests with a required "name" query
+// parameter containing the image name or ID.
+//
+// Route: GET /get-image?name=<imageNameOrID>
+func GetImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	nameOrID := strings.TrimSpace(r.URL.Query().Get("name"))
+	if nameOrID == "" {
+		http.Error(w, "name query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	socket, err := opencloudapi.RootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	conn, err := newGetImageConnection(ctx, socket)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman socket %q: %v", socket, err), http.StatusInternalServerError)
+		return
+	}
+
+	data, err := inspectPodmanImage(conn, nameOrID, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to inspect image: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	detail := ImageDetail{
+		ID:           data.ID,
+		RepoTags:     data.RepoTags,
+		RepoDigests:  data.RepoDigests,
+		Size:         data.Size,
+		VirtualSize:  data.VirtualSize,
+		Labels:       data.Labels,
+		Architecture: data.Architecture,
+		Os:           data.Os,
+		Author:       data.Author,
+		Comment:      data.Comment,
+		NamesHistory: data.NamesHistory,
+	}
+
+	// Strip the "localhost/" prefix from RepoTags so locally-built images are
+	// presented consistently with the list view.
+	for i, t := range detail.RepoTags {
+		detail.RepoTags[i] = strings.TrimPrefix(t, "localhost/")
+	}
+
+	if data.Created != nil {
+		detail.Created = data.Created.Unix()
+	}
+
+	out, err := json.Marshal(detail)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out)
 }
