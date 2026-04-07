@@ -388,7 +388,11 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			Output:           req.ImageName,
 			NoCache:          req.NoCache,
 			CommonBuildOpts:  &buildahDefine.CommonBuildOptions{},
-			ReportWriter:     &buildLogs,
+			// Capture all build output: step output (Out), error messages (Err),
+			// and base-image pull progress (ReportWriter) into a single buffer.
+			Out:          &buildLogs,
+			Err:          &buildLogs,
+			ReportWriter: &buildLogs,
 		},
 	}
 
@@ -437,6 +441,201 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// BuildImageStream builds a container image from a Dockerfile and streams
+// real-time build output to the client using Server-Sent Events (SSE).
+//
+// Request:  POST /build-image-stream  body: {"dockerfile":"...","imageName":"...","nocache":false,"platform":"linux/amd64"}
+// Response: text/event-stream
+//
+//	data: <build output line>
+//	...
+//	event: done
+//	data: {"status":"success","imageName":"..."}
+//
+//	On error:
+//	event: error
+//	data: <error message>
+func BuildImageStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	defer r.Body.Close()
+
+	var req BuildImageRequest
+	dec := json.NewDecoder(io.LimitReader(r.Body, 10<<20))
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid JSON payload: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	req.Dockerfile = strings.TrimSpace(req.Dockerfile)
+	req.ImageName = strings.TrimSpace(req.ImageName)
+
+	if req.Dockerfile == "" || req.ImageName == "" {
+		http.Error(w, "dockerfile and imageName are required", http.StatusBadRequest)
+		return
+	}
+
+	if !hasFromInstruction(req.Dockerfile) {
+		http.Error(w, "dockerfile must contain a FROM instruction", http.StatusBadRequest)
+		return
+	}
+
+	if errMsg := opencloudapi.ValidateImageName(req.ImageName); errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	tmpDir, err := os.MkdirTemp("", "opencloud-build-*")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create temp dir: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dfPath := filepath.Join(tmpDir, "Dockerfile")
+	if err := os.WriteFile(dfPath, []byte(req.Dockerfile), 0644); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write Dockerfile: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Backward compatibility: write legacy context as a file.
+	if req.Context != "" && len(req.Files) == 0 {
+		ctxPath := filepath.Join(tmpDir, "context.txt")
+		if err := os.WriteFile(ctxPath, []byte(req.Context), 0644); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write context: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Write real build context files.
+	for relPath, content := range req.Files {
+		cleanRel, err := sanitizeRelativePath(relPath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid file path %q: %v", relPath, err), http.StatusBadRequest)
+			return
+		}
+		fullPath := filepath.Join(tmpDir, cleanRel)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to create directory for %q: %v", relPath, err), http.StatusInternalServerError)
+			return
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write %q: %v", relPath, err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	socket, err := opencloudapi.RootlessPodmanSocket()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to determine rootless Podman socket: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Upgrade the connection to SSE before starting the build.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	sendLine := func(line string) {
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), opencloudapi.BuildTimeout)
+	defer cancel()
+
+	conn, err := bindings.NewConnection(ctx, socket)
+	if err != nil {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", fmt.Sprintf("Failed to connect to Podman: %v", err))
+		flusher.Flush()
+		return
+	}
+
+	// Use a pipe so build output lines can be streamed to the client as they arrive,
+	// while also being collected for storage in the service ledger.
+	pr, pw := io.Pipe()
+
+	buildErrCh := make(chan error, 1)
+	go func() {
+		buildOpts := podmanEntities.BuildOptions{
+			BuildOptions: buildahDefine.BuildOptions{
+				ContextDirectory: tmpDir,
+				Output:           req.ImageName,
+				NoCache:          req.NoCache,
+				CommonBuildOpts:  &buildahDefine.CommonBuildOptions{},
+				// Route all build output through the pipe writer so it can
+				// be streamed to the SSE client and saved to the ledger.
+				Out:          pw,
+				Err:          pw,
+				ReportWriter: pw,
+			},
+		}
+
+		if req.Platform != "" {
+			osName, arch, err := parsePlatform(req.Platform)
+			if err != nil {
+				pw.CloseWithError(err)
+				buildErrCh <- err
+				return
+			}
+			buildOpts.OS = osName
+			buildOpts.Architecture = arch
+		}
+
+		_, err := images.Build(conn, []string{"Dockerfile"}, buildOpts)
+		pw.Close()
+		buildErrCh <- err
+	}()
+
+	// Stream each build output line to the SSE client and collect them for the ledger.
+	var buildLogLines []string
+	scanner := bufio.NewScanner(pr)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			sendLine(line)
+			buildLogLines = append(buildLogLines, line)
+		}
+	}
+
+	if err := <-buildErrCh; err != nil {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", fmt.Sprintf("Build failed: %v", err))
+		flusher.Flush()
+		return
+	}
+
+	// Record the built image in the service ledger including the captured build output.
+	// Truncate build logs to 32,000 characters (roughly 32 KB) to prevent unbounded
+	// growth of the service ledger JSON file. Logs are truncated from the end so
+	// the beginning of the build output is preserved.
+	if ledgerErr := service_ledger.UpdateContainerImageEntry(
+		req.ImageName,
+		req.Dockerfile,
+		marshalFilesForLedger(req.Files, req.Context),
+		req.Platform,
+		req.NoCache,
+		time.Now().UTC().Format(time.RFC3339),
+		truncateString(strings.Join(buildLogLines, "\n"), 32000),
+	); ledgerErr != nil {
+		log.Printf("Warning: failed to record image %s in service ledger: %v", req.ImageName, ledgerErr)
+	}
+
+	donePayload, _ := json.Marshal(map[string]string{"status": "success", "imageName": req.ImageName})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", donePayload)
+	flusher.Flush()
 }
 
 // normalizeImageRef strips the "localhost/" prefix from an image reference so

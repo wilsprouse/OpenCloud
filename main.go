@@ -179,6 +179,7 @@ func main() {
 	mux.HandleFunc("/stop-pipeline/", api.StopPipeline)
 	mux.HandleFunc("/get-pipeline-logs/", api.GetPipelineLogs)
 	mux.HandleFunc("/build-image", storageapi.BuildImage)
+	mux.HandleFunc("/build-image-stream", storageapi.BuildImageStream)
 	mux.HandleFunc("/delete-image", storageapi.DeleteImage)
 	mux.HandleFunc("/pull-image", storageapi.PullImage)
 	mux.HandleFunc("/pull-image-stream", storageapi.PullImageStream)
