@@ -635,7 +635,8 @@ export default function ContainersPage() {
                 {filteredContainers.map((c) => (
                   <div
                     key={c.Id}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => router.push(`/compute/containers/${encodeURIComponent(c.Id)}`)}
                   >
                     <div className="flex items-center space-x-4 flex-1 min-w-0">
                       <div className={`shrink-0 p-2 rounded-lg ${c.State === "running" ? "bg-green-50" : "bg-gray-50"}`}>
@@ -678,7 +679,7 @@ export default function ContainersPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleAction(c.Id, "start")}
+                          onClick={(e) => { e.stopPropagation(); handleAction(c.Id, "start") }}
                           disabled={actionLoadingId === c.Id}
                         >
                           {actionLoadingId === c.Id ? (
@@ -693,7 +694,7 @@ export default function ContainersPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => openStopDialog(c)}
+                          onClick={(e) => { e.stopPropagation(); openStopDialog(c) }}
                           disabled={actionLoadingId === c.Id}
                         >
                           <Square className="h-4 w-4 mr-1" />
@@ -703,7 +704,7 @@ export default function ContainersPage() {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={() => openDeleteDialog(c)}
+                        onClick={(e) => { e.stopPropagation(); openDeleteDialog(c) }}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
