@@ -1,78 +1,49 @@
 package api
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
 	"strings"
+	"syscall"
+	"unsafe"
+
+	"github.com/creack/pty"
+	"github.com/gorilla/websocket"
 )
 
-// maxCommandLen is the maximum number of bytes accepted for a single shell
-// command.  Commands longer than this are rejected to prevent accidental or
-// deliberate denial-of-service through unbounded input.
-const maxCommandLen = 4096
-
-// cwdSentinel is a unique prefix injected at the end of every executed command
-// so that the final working directory can be captured and forwarded to the UI
-// as a special SSE event without appearing in normal command output.
-const cwdSentinel = "__OC_CWD__"
-
-// HostInfo contains basic host metadata used to render the terminal prompt.
+// HostInfo contains basic host metadata returned by GET /host/info.
 type HostInfo struct {
 	User     string `json:"user"`
 	Hostname string `json:"hostname"`
 	Cwd      string `json:"cwd"`
 }
 
-// ExecRequest is the JSON body accepted by the /host/exec endpoint.
-type ExecRequest struct {
-	// Command is the shell command to execute.
-	Command string `json:"command"`
-	// Cwd is the optional working directory in which to run the command.
-	// A leading "~" is expanded to the user's home directory.
-	Cwd string `json:"cwd"`
+// resizeMsg is the JSON message sent by the frontend to resize the PTY.
+type resizeMsg struct {
+	Type string `json:"type"` // "resize"
+	Cols uint16 `json:"cols"`
+	Rows uint16 `json:"rows"`
 }
 
-// shortenHome replaces the user's home-directory prefix in path with "~".
-func shortenHome(path, home string) string {
-	if home == "" {
-		return path
-	}
-	if path == home {
-		return "~"
-	}
-	if strings.HasPrefix(path, home+"/") {
-		return "~" + path[len(home):]
-	}
-	return path
-}
-
-// resolveCwd expands a leading "~" in path to the user's home directory.
-func resolveCwd(path string) string {
-	if path == "" {
-		return ""
-	}
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return path
-		}
-		if path == "~" {
-			return home
-		}
-		return home + path[1:] // "~/foo" → "/home/user/foo"
-	}
-	return path
+// wsUpgrader allows WebSocket connections from the same origin.
+// CheckOrigin always returns true because the backend already enforces
+// localhost-only listening and session auth at the Next.js proxy layer.
+var wsUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
 }
 
 // GetHostInfo handles GET /host/info.
-// It returns the current OS user, hostname, and working directory so the
-// UI can render an accurate shell prompt (e.g. user@hostname:~$).
+// Returns the current OS user, hostname, and working directory so the
+// UI can display contextual information if needed.
 func GetHostInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -92,7 +63,13 @@ func GetHostInfo(w http.ResponseWriter, r *http.Request) {
 	home, _ := os.UserHomeDir()
 	cwd := "~"
 	if wd, err := os.Getwd(); err == nil {
-		cwd = shortenHome(wd, home)
+		if home != "" && wd == home {
+			cwd = "~"
+		} else if home != "" && strings.HasPrefix(wd, home+"/") {
+			cwd = "~" + wd[len(home):]
+		} else {
+			cwd = wd
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -103,119 +80,106 @@ func GetHostInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ExecuteHostCommand handles POST /host/exec.
-// It runs the requested shell command on the host machine and streams the
-// combined stdout/stderr output back to the caller as an SSE
-// (text/event-stream) response so the UI can display output line-by-line.
+// HostTerminal handles GET /host/ws.
+// It upgrades the connection to WebSocket, spawns a real login shell inside a
+// PTY, and then bidirectionally proxies data between the WebSocket and the PTY.
 //
-// Security: OpenCloud is designed as a local infrastructure-management tool;
-// the backend listens only on localhost:3030 and is accessed exclusively
-// through the Next.js frontend proxy (which enforces session authentication).
-// Commands are validated for length before execution to prevent denial-of-
-// service through unbounded input.
+// The frontend sends two kinds of messages:
+//   - Binary / text frames containing raw terminal input bytes (keystrokes).
+//   - JSON text frames of the form {"type":"resize","cols":N,"rows":N} which
+//     resize the PTY window (SIGWINCH) so that programs like vim lay out
+//     correctly.
 //
-// The command is wrapped to always capture the final working directory so that
-// cd commands are reflected in the terminal prompt on the next keypress.
+// The backend sends binary frames containing raw PTY output (ANSI sequences,
+// colours, cursor movement, etc.) which xterm.js renders natively.
 //
-// Request body (JSON):
-//
-//	{"command": "<shell command>", "cwd": "<optional working directory>"}
-//
-// SSE events emitted:
-//
-//	data: <output line>
-//	event: cwd\ndata: <new working directory>  – after every command
-//	event: error\ndata: <error message>        – on non-zero exit
-//	event: done\ndata: exit code 0             – on successful completion
-func ExecuteHostCommand(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+// Security: the backend listens only on localhost:3030 and all routes are
+// protected by session authentication enforced at the Next.js proxy.
+func HostTerminal(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("host/ws: WebSocket upgrade failed: %v", err)
 		return
 	}
+	defer conn.Close()
 
-	var req ExecRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	// Determine the user's preferred shell, falling back to /bin/bash.
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
+	// Spawn the shell as a login shell (-l) so ~/.bashrc / ~/.profile are loaded.
+	cmd := exec.CommandContext(r.Context(), shell, "-l")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+
+	// Start the shell inside a PTY.
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		log.Printf("host/ws: pty.Start failed: %v", err)
+		conn.WriteMessage(websocket.TextMessage, []byte("\r\nFailed to start shell: "+err.Error()+"\r\n"))
 		return
 	}
-
-	if req.Command == "" {
-		http.Error(w, "command is required", http.StatusBadRequest)
-		return
-	}
-
-	if len(req.Command) > maxCommandLen {
-		http.Error(w, "command exceeds maximum allowed length", http.StatusBadRequest)
-		return
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	sendLine := func(line string) {
-		fmt.Fprintf(w, "data: %s\n\n", line)
-		flusher.Flush()
-	}
-
-	home, _ := os.UserHomeDir()
-
-	// Wrap the user command so the final working directory is always captured.
-	// A leading '\n' in the printf ensures the sentinel line starts on its own
-	// line even when the command does not end with a newline.
-	// __oc_exit saves the user command's exit status so the sentinel printf
-	// does not mask a failing command.
-	wrappedCmd := fmt.Sprintf(
-		`%s; __oc_exit=$?; printf '\n%s:%%s\n' "$(pwd)"; exit $__oc_exit`,
-		req.Command, cwdSentinel,
-	)
-
-	// Use an io.Pipe so that both stdout and stderr from the subprocess are
-	// merged into a single stream and forwarded to the SSE client line-by-line.
-	pr, pw := io.Pipe()
-
-	cmdErrCh := make(chan error, 1)
-	go func() {
-		cmd := exec.CommandContext(r.Context(), "sh", "-c", wrappedCmd)
-		// Run the command in the directory the UI reports as current so that
-		// relative paths and 'cd ..' work correctly across commands.
-		if dir := resolveCwd(req.Cwd); dir != "" {
-			cmd.Dir = dir
-		}
-		cmd.Stdout = pw
-		cmd.Stderr = pw
-		err := cmd.Run()
-		pw.CloseWithError(err)
-		cmdErrCh <- err
+	defer func() {
+		ptmx.Close()
+		cmd.Wait() //nolint:errcheck
 	}()
 
-	// Forward each output line to the SSE client as it arrives.
-	// Lines matching the sentinel are converted to a special "cwd" event so
-	// the UI can update the prompt without displaying the sentinel itself.
-	scanner := bufio.NewScanner(pr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, cwdSentinel+":") {
-			newCwd := shortenHome(strings.TrimPrefix(line, cwdSentinel+":"), home)
-			fmt.Fprintf(w, "event: cwd\ndata: %s\n\n", newCwd)
-			flusher.Flush()
-		} else {
-			sendLine(line)
+	// PTY → WebSocket: stream all shell output to the browser.
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				if err2 := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err2 != nil {
+					return
+				}
+			}
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("host/ws: pty read: %v", err)
+				}
+				conn.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				return
+			}
+		}
+	}()
+
+	// WebSocket → PTY: forward keystrokes and handle resize messages.
+	for {
+		msgType, msg, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+
+		// Try to decode resize messages (always sent as text JSON).
+		if msgType == websocket.TextMessage {
+			var rm resizeMsg
+			if json.Unmarshal(msg, &rm) == nil && rm.Type == "resize" && rm.Cols > 0 && rm.Rows > 0 {
+				setWinsize(ptmx, rm.Cols, rm.Rows)
+				continue
+			}
+		}
+
+		// Everything else is raw input for the shell.
+		if _, err := ptmx.Write(msg); err != nil {
+			log.Printf("host/ws: pty write: %v", err)
+			break
 		}
 	}
+}
 
-	if err := <-cmdErrCh; err != nil {
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
-		flusher.Flush()
-		return
+// setWinsize sends a SIGWINCH to the PTY to resize the terminal window.
+func setWinsize(f *os.File, cols, rows uint16) {
+	type winsize struct {
+		Rows uint16
+		Cols uint16
+		Xpix uint16
+		Ypix uint16
 	}
-
-	fmt.Fprintf(w, "event: done\ndata: exit code 0\n\n")
-	flusher.Flush()
+	ws := winsize{Rows: rows, Cols: cols}
+	syscall.Syscall(syscall.SYS_IOCTL, f.Fd(),
+		uintptr(syscall.TIOCSWINSZ),
+		uintptr(unsafe.Pointer(&ws)))
 }
