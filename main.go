@@ -191,6 +191,7 @@ func main() {
 	mux.HandleFunc("/containers/", computeapi.ContainerAction)
 	mux.HandleFunc("/pull-and-run", computeapi.PullAndRun)
 	mux.HandleFunc("/pull-and-run-stream", computeapi.PullAndRunStream)
+	mux.HandleFunc("/host/exec", api.ExecuteHostCommand)
 	mux.HandleFunc("/", computeapi.GetFunction)
 
 	// Wrap all routes with CORS middleware

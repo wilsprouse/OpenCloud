@@ -28,8 +28,8 @@ export function MainNav() {
           <span className="hidden font-bold sm:inline-block">OpenCloud</span>
         </Link>
         <nav className="hidden gap-6 md:flex">
-          <Link href="/" className="flex items-center text-sm font-medium text-foreground">
-            Dashboard
+          <Link href="/host" className="flex items-center text-sm font-medium text-foreground">
+            Host
           </Link>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
