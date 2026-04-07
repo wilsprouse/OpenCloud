@@ -23,6 +23,11 @@ import (
 	podmanEntities "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
+// maxBuildLogBytes is the maximum number of characters stored in the service
+// ledger for build and pull log output. Logs that exceed this limit are
+// truncated from the end so the beginning of the output is always preserved.
+const maxBuildLogBytes = 32000
+
 // newDeleteImageConnection establishes a Podman bindings connection for the
 // DeleteImage handler.  It is a package-level variable so tests can substitute
 // a no-op implementation that returns the context unchanged.
@@ -410,7 +415,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		log.Printf("BuildImage2 failed for %s: %v", req.ImageName, err)
 		http.Error(
 			w,
-			fmt.Sprintf("Build failed: %v\n\n%s", err, truncateString(buildLogs.String(), 32000)),
+			fmt.Sprintf("Build failed: %v\n\n%s", err, truncateString(buildLogs.String(), maxBuildLogBytes)),
 			http.StatusInternalServerError,
 		)
 		return
@@ -426,7 +431,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		// Truncate build logs to 32,000 characters (roughly 32 KB) to prevent
 		// unbounded growth of the service ledger JSON file. Logs are truncated
 		// from the end so the beginning of the output is preserved.
-		truncateString(buildLogs.String(), 32000),
+		truncateString(buildLogs.String(), maxBuildLogBytes),
 	); ledgerErr != nil {
 		log.Printf("Warning: failed to record image %s in service ledger: %v", req.ImageName, ledgerErr)
 	}
@@ -436,7 +441,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		"message":   fmt.Sprintf("Image %s built successfully", req.ImageName),
 		"imageName": req.ImageName,
 		"socket":    socket,
-		"logs":      truncateString(buildLogs.String(), 32000),
+		"logs":      truncateString(buildLogs.String(), maxBuildLogBytes),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -628,7 +633,7 @@ func BuildImageStream(w http.ResponseWriter, r *http.Request) {
 		req.Platform,
 		req.NoCache,
 		time.Now().UTC().Format(time.RFC3339),
-		truncateString(strings.Join(buildLogLines, "\n"), 32000),
+		truncateString(strings.Join(buildLogLines, "\n"), maxBuildLogBytes),
 	); ledgerErr != nil {
 		log.Printf("Warning: failed to record image %s in service ledger: %v", req.ImageName, ledgerErr)
 	}
@@ -975,7 +980,7 @@ func PullImageStream(w http.ResponseWriter, r *http.Request) {
 		req.ImageName,
 		req.Registry,
 		time.Now().UTC().Format(time.RFC3339),
-		truncateString(strings.Join(pullLogLines, "\n"), 32000),
+		truncateString(strings.Join(pullLogLines, "\n"), maxBuildLogBytes),
 	); ledgerErr != nil {
 		log.Printf("Warning: failed to record pulled image %s in service ledger: %v", req.ImageName, ledgerErr)
 	}

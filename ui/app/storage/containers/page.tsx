@@ -59,6 +59,10 @@ type Image = {
 
 // Constants
 const REGISTRY_URL = "registry.opencloud.local"
+// BUILD_SUCCESS_DIALOG_DELAY_MS controls how long the build dialog stays open
+// after a successful build so the user can read the final output before it
+// closes automatically.
+const BUILD_SUCCESS_DIALOG_DELAY_MS = 1500
 
 function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
   const searchParams = useSearchParams()
@@ -371,7 +375,7 @@ export default function ContainerRegistry() {
         setTimeout(() => {
           setIsDialogOpen(false)
           setBuildOutput([])
-        }, 1500)
+        }, BUILD_SUCCESS_DIALOG_DELAY_MS)
       } else {
         setBuildError("Build failed. Check the output above for details.")
       }
