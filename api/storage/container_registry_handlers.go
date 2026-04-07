@@ -419,6 +419,9 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		req.Platform,
 		req.NoCache,
 		time.Now().UTC().Format(time.RFC3339),
+		// Truncate build logs to 32,000 characters (roughly 32 KB) to prevent
+		// unbounded growth of the service ledger JSON file. Logs are truncated
+		// from the end so the beginning of the output is preserved.
 		truncateString(buildLogs.String(), 32000),
 	); ledgerErr != nil {
 		log.Printf("Warning: failed to record image %s in service ledger: %v", req.ImageName, ledgerErr)
@@ -766,6 +769,9 @@ func PullImageStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record the pulled image in the service ledger, including the collected log output.
+	// Truncate pull logs to 32,000 characters (roughly 32 KB) to prevent unbounded
+	// growth of the service ledger JSON file. Logs are truncated from the end so
+	// the beginning of the pull progress is preserved.
 	if ledgerErr := service_ledger.RecordPulledImageEntry(
 		req.ImageName,
 		req.Registry,

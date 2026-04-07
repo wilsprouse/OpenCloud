@@ -259,7 +259,10 @@ export default function ImageDetailPage({ params }: { params: Promise<{ id: stri
                 Loading logs…
               </div>
             ) : imageLogs ? (
-              <pre className="whitespace-pre-wrap break-all font-mono text-xs leading-relaxed max-h-96 overflow-y-auto">
+              <pre
+                tabIndex={0}
+                className="whitespace-pre-wrap break-all font-mono text-xs leading-relaxed max-h-96 overflow-y-auto"
+              >
                 {imageLogs}
               </pre>
             ) : (
