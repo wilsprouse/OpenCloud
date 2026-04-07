@@ -419,6 +419,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		req.Platform,
 		req.NoCache,
 		time.Now().UTC().Format(time.RFC3339),
+		truncateString(buildLogs.String(), 32000),
 	); ledgerErr != nil {
 		log.Printf("Warning: failed to record image %s in service ledger: %v", req.ImageName, ledgerErr)
 	}
@@ -596,6 +597,7 @@ func PullImage(w http.ResponseWriter, r *http.Request) {
 		req.ImageName,
 		req.Registry,
 		time.Now().UTC().Format(time.RFC3339),
+		"",
 	); ledgerErr != nil {
 		log.Printf("Warning: failed to record pulled image %s in service ledger: %v", req.ImageName, ledgerErr)
 	}
@@ -717,6 +719,8 @@ func PullImageStream(w http.ResponseWriter, r *http.Request) {
 
 	// Stream each progress line to the SSE client, parsing Podman's JSON
 	// progress-event format when possible to produce a readable message.
+	// Collect all human-readable log lines so they can be stored in the ledger.
+	var pullLogLines []string
 	scanner := bufio.NewScanner(pr)
 	for scanner.Scan() {
 		raw := scanner.Text()
@@ -746,10 +750,12 @@ func PullImageStream(w http.ResponseWriter, r *http.Request) {
 			}
 			if msg != "" {
 				sendLine(msg)
+				pullLogLines = append(pullLogLines, msg)
 			}
 		} else {
 			// Not JSON – send the raw line as-is.
 			sendLine(raw)
+			pullLogLines = append(pullLogLines, raw)
 		}
 	}
 
@@ -759,11 +765,12 @@ func PullImageStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Record the pulled image in the service ledger.
+	// Record the pulled image in the service ledger, including the collected log output.
 	if ledgerErr := service_ledger.RecordPulledImageEntry(
 		req.ImageName,
 		req.Registry,
 		time.Now().UTC().Format(time.RFC3339),
+		truncateString(strings.Join(pullLogLines, "\n"), 32000),
 	); ledgerErr != nil {
 		log.Printf("Warning: failed to record pulled image %s in service ledger: %v", req.ImageName, ledgerErr)
 	}
@@ -842,4 +849,39 @@ func GetImage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(out)
+}
+
+// GetImageLogs returns the saved build or pull log output for a container image
+// from the service ledger.
+//
+// Route: GET /get-image-logs?name=<imageNameOrID>
+//
+// The "name" query parameter must match the image name used when the image was
+// built or pulled (e.g. "myapp:latest" or "nginx:latest"). If the image has no
+// recorded logs an empty string is returned. The response body is plain text.
+func GetImageLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	nameOrID := strings.TrimSpace(r.URL.Query().Get("name"))
+	if nameOrID == "" {
+		http.Error(w, "name query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	entry, err := service_ledger.GetContainerImageEntry(nameOrID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read service ledger: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	logs := ""
+	if entry != nil {
+		logs = entry.Logs
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(logs))
 }

@@ -61,6 +61,8 @@ type ContainerImageEntry struct {
 	PulledAt string `json:"pulledAt,omitempty"`
 	// Registry is the source registry used when pulling the image (e.g. "docker.io", "quay.io").
 	Registry string `json:"registry,omitempty"`
+	// Logs contains the build or pull log output captured during the image creation.
+	Logs string `json:"logs,omitempty"`
 }
 
 // BucketEntry stores metadata for a blob storage bucket in the service ledger
@@ -808,8 +810,8 @@ func SyncPipelinesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateContainerImageEntry stores or updates a container image entry in the container_registry service ledger.
-// All fields needed to rebuild the image are persisted.
-func UpdateContainerImageEntry(imageName, dockerfile, context, platform string, noCache bool, builtAt string) error {
+// All fields needed to rebuild the image are persisted, including the captured build log output.
+func UpdateContainerImageEntry(imageName, dockerfile, context, platform string, noCache bool, builtAt, logs string) error {
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
 
@@ -832,6 +834,7 @@ func UpdateContainerImageEntry(imageName, dockerfile, context, platform string, 
 		Platform:   platform,
 		NoCache:    noCache,
 		BuiltAt:    builtAt,
+		Logs:       logs,
 	}
 
 	ledger["container_registry"] = serviceStatus
@@ -840,9 +843,9 @@ func UpdateContainerImageEntry(imageName, dockerfile, context, platform string, 
 }
 
 // RecordPulledImageEntry stores a pulled container image entry in the container_registry service ledger.
-// Unlike UpdateContainerImageEntry, a pulled image has no Dockerfile — only the image reference and
-// the registry it was fetched from are recorded.
-func RecordPulledImageEntry(imageName, registry, pulledAt string) error {
+// Unlike UpdateContainerImageEntry, a pulled image has no Dockerfile — only the image reference,
+// the registry it was fetched from, and the captured pull log output are recorded.
+func RecordPulledImageEntry(imageName, registry, pulledAt, logs string) error {
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
 
@@ -862,6 +865,7 @@ func RecordPulledImageEntry(imageName, registry, pulledAt string) error {
 		ImageName: imageName,
 		Registry:  registry,
 		PulledAt:  pulledAt,
+		Logs:      logs,
 	}
 
 	ledger["container_registry"] = serviceStatus
