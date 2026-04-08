@@ -443,7 +443,8 @@ type PullAndRunRequest struct {
 	Ports []string `json:"ports,omitempty"`
 	// Env is a list of environment variables in "KEY=VALUE" or "KEY" format.
 	Env []string `json:"env,omitempty"`
-	// Volumes is a list of volume mounts in "hostPath:containerPath" format.
+	// Volumes is a list of volume mounts in "hostPath:containerPath[:options]" format.
+	// Options is an optional comma-separated list of mount flags (e.g. "Z", "U", "Z,U").
 	Volumes []string `json:"volumes,omitempty"`
 	// RestartPolicy is the container restart policy ("no", "always", "on-failure", "unless-stopped").
 	RestartPolicy string `json:"restartPolicy,omitempty"`
@@ -500,14 +501,82 @@ func validatePortMapping(mapping string) string {
 	return ""
 }
 
-// validateVolumeMount checks a volume mount string for path traversal or missing separators.
-// Volume mounts must be in "hostPath:containerPath" format.
+// expandTildePath replaces a leading "~" in p with the current user's home directory.
+// If the home directory cannot be determined or p does not start with "~", p is returned unchanged.
+func expandTildePath(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	return home + p[1:]
+}
+
+// validMountOptions is the set of option tokens accepted in the third segment of a volume mount string.
+var validMountOptions = map[string]bool{
+	"Z": true, "z": true,
+	"U":       true,
+	"rw":      true,
+	"ro":      true,
+	"rbind":   true,
+	"bind":    true,
+	"shared":  true, "rshared": true,
+	"slave":   true, "rslave": true,
+	"private": true, "rprivate": true,
+	"exec":   true, "noexec": true,
+	"suid":   true, "nosuid": true,
+	"dev":    true, "nodev": true,
+}
+
+// parseMountOptions validates the comma-separated options string from a volume mount specification.
+// An empty string is treated as "no extra options" and is always valid.
+// It returns an error message if any option is unknown, or an empty string when all options are valid.
+func parseMountOptions(optStr string) string {
+	for _, opt := range strings.Split(optStr, ",") {
+		if opt == "" {
+			continue
+		}
+		if !validMountOptions[opt] {
+			return fmt.Sprintf("unknown mount option %q", opt)
+		}
+	}
+	return ""
+}
+
+// buildBindMountOptions constructs the OCI mount options slice for a bind mount from the
+// optional third segment of a "hostPath:containerPath[:options]" volume string.
+// It always includes "rbind" and "rw" as base options, appending any known option tokens
+// parsed from optStr.
+func buildBindMountOptions(optStr string) []string {
+	opts := []string{"rbind", "rw"}
+	for _, o := range strings.Split(optStr, ",") {
+		if o != "" && validMountOptions[o] {
+			opts = append(opts, o)
+		}
+	}
+	return opts
+}
+
+// validateVolumeMount checks a volume mount string for path traversal, missing separators,
+// and invalid option flags. Volume mounts must be in "hostPath:containerPath[:options]" format
+// where options is an optional comma-separated list of valid mount option flags (e.g. "Z,U").
 func validateVolumeMount(mount string) string {
-	if !strings.Contains(mount, ":") {
+	parts := strings.SplitN(mount, ":", 3)
+	if len(parts) < 2 {
 		return fmt.Sprintf("invalid volume mount %q: must be in hostPath:containerPath format", mount)
 	}
-	if strings.Contains(mount, "..") {
+	if strings.Contains(parts[0], "..") || strings.Contains(parts[1], "..") {
 		return fmt.Sprintf("invalid volume mount %q: path must not contain path traversal sequences", mount)
+	}
+	if len(parts) == 3 {
+		if errMsg := parseMountOptions(parts[2]); errMsg != "" {
+			return fmt.Sprintf("invalid volume mount %q: %s", mount, errMsg)
+		}
 	}
 	return ""
 }
@@ -707,16 +776,20 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	var mounts []specs.Mount
 	for _, vol := range req.Volumes {
-		parts := strings.SplitN(vol, ":", 2)
-		if len(parts) != 2 {
+		parts := strings.SplitN(vol, ":", 3)
+		if len(parts) < 2 {
 			fmt.Printf("Skipping malformed volume mount: %q\n", vol)
 			continue
 		}
+		optStr := ""
+		if len(parts) == 3 {
+			optStr = parts[2]
+		}
 		mount := specs.Mount{
 			Type:        "bind",
-			Source:      parts[0],
+			Source:      expandTildePath(parts[0]),
 			Destination: parts[1],
-			Options:     []string{"rbind", "rw"},
+			Options:     buildBindMountOptions(optStr),
 		}
 		fmt.Printf("Parsed volume mount: %+v\n", mount)
 		mounts = append(mounts, mount)
@@ -987,15 +1060,19 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 
 	var mounts []specs.Mount
 	for _, vol := range req.Volumes {
-		parts := strings.SplitN(vol, ":", 2)
-		if len(parts) != 2 {
+		parts := strings.SplitN(vol, ":", 3)
+		if len(parts) < 2 {
 			continue
+		}
+		optStr := ""
+		if len(parts) == 3 {
+			optStr = parts[2]
 		}
 		mounts = append(mounts, specs.Mount{
 			Type:        "bind",
-			Source:      parts[0],
+			Source:      expandTildePath(parts[0]),
 			Destination: parts[1],
-			Options:     []string{"rbind", "rw"},
+			Options:     buildBindMountOptions(optStr),
 		})
 	}
 

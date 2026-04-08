@@ -1545,6 +1545,11 @@ func TestValidateVolumeMount(t *testing.T) {
 		{"../../etc:/container/data", true}, // path traversal in host
 		{"/host/data:../../etc", true},      // path traversal in container
 		{"/host/data", true},                // no colon
+		{"/host/data:/container/data:Z", false},     // Z option
+		{"/host/data:/container/data:U", false},     // U option
+		{"/host/data:/container/data:Z,U", false},   // Z and U combined
+		{"/host/data:/container/data:ro", false},    // read-only option
+		{"/host/data:/container/data:badopt", true}, // unknown option
 	}
 	for _, tt := range tests {
 		result := validateVolumeMount(tt.input)
@@ -1552,6 +1557,62 @@ func TestValidateVolumeMount(t *testing.T) {
 			t.Errorf("validateVolumeMount(%q): expected error, got none", tt.input)
 		} else if !tt.wantErr && result != "" {
 			t.Errorf("validateVolumeMount(%q): expected no error, got %q", tt.input, result)
+		}
+	}
+}
+
+// TestParseMountOptions verifies that parseMountOptions accepts known flags and rejects unknown ones.
+func TestParseMountOptions(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"Z", false},
+		{"z", false},
+		{"U", false},
+		{"Z,U", false},
+		{"ro", false},
+		{"rw", false},
+		{"rbind", false},
+		{"Z,U,ro", false},
+		{"badopt", true},
+		{"Z,badopt", true},
+		{"", false}, // empty string is a no-op
+	}
+	for _, tt := range tests {
+		result := parseMountOptions(tt.input)
+		if tt.wantErr && result == "" {
+			t.Errorf("parseMountOptions(%q): expected error, got none", tt.input)
+		} else if !tt.wantErr && result != "" {
+			t.Errorf("parseMountOptions(%q): expected no error, got %q", tt.input, result)
+		}
+	}
+}
+
+// TestExpandTildePath verifies that leading "~" is expanded to the user home directory.
+func TestExpandTildePath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir:", err)
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"~", home},
+		{"~/logs", home + "/logs"},
+		{"~/a/b/c", home + "/a/b/c"},
+		{"/absolute/path", "/absolute/path"},
+		{"relative/path", "relative/path"},
+		{"~hidden", "~hidden"},  // tilde not followed by "/" – leave unchanged
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		got := expandTildePath(tt.input)
+		if got != tt.want {
+			t.Errorf("expandTildePath(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

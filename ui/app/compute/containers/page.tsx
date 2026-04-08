@@ -72,6 +72,10 @@ type EnvVar = {
 type VolumeMount = {
   hostPath: string
   containerPath: string
+  // Z enables SELinux private unshared label on the mount (:Z)
+  Z: boolean
+  // U maps the host user/group IDs into the container (:U)
+  U: boolean
 }
 
 // Sentinel values used in the image Select dropdown
@@ -141,7 +145,7 @@ export default function ContainersPage() {
   } = useFunctionNameWarning(setRunContainerName)
   const [runPorts, setRunPorts] = useState<PortMapping[]>([{ hostPort: "", containerPort: "" }])
   const [runEnvVars, setRunEnvVars] = useState<EnvVar[]>([{ key: "", value: "" }])
-  const [runVolumes, setRunVolumes] = useState<VolumeMount[]>([{ hostPath: "", containerPath: "" }])
+  const [runVolumes, setRunVolumes] = useState<VolumeMount[]>([{ hostPath: "", containerPath: "", Z: false, U: false }])
   const [runRestartPolicy, setRunRestartPolicy] = useState("no")
   const [runAutoRemove, setRunAutoRemove] = useState(false)
   const [runCommand, setRunCommand] = useState("")
@@ -342,7 +346,7 @@ export default function ContainersPage() {
     resetContainerNameWarning()
     setRunPorts([{ hostPort: "", containerPort: "" }])
     setRunEnvVars([{ key: "", value: "" }])
-    setRunVolumes([{ hostPath: "", containerPath: "" }])
+    setRunVolumes([{ hostPath: "", containerPath: "", Z: false, U: false }])
     setRunRestartPolicy("no")
     setRunAutoRemove(false)
     setRunCommand("")
@@ -379,7 +383,12 @@ export default function ContainersPage() {
 
       const volumes = runVolumes
         .filter(v => v.hostPath && v.containerPath)
-        .map(v => `${v.hostPath}:${v.containerPath}`)
+        .map(v => {
+          const opts = ([v.Z && "Z", v.U && "U"] as (string | false)[]).filter(Boolean) as string[]
+          return opts.length > 0
+            ? `${v.hostPath}:${v.containerPath}:${opts.join(",")}`
+            : `${v.hostPath}:${v.containerPath}`
+        })
 
       const response = await fetch("/api/pull-and-run-stream", {
         method: "POST",
@@ -466,10 +475,10 @@ export default function ContainersPage() {
     setRunEnvVars(prev => prev.map((e, i) => (i === index ? { ...e, [field]: value } : e)))
 
   // Helpers for dynamic volume mount rows
-  const addVolumeMount = () => setRunVolumes(prev => [...prev, { hostPath: "", containerPath: "" }])
+  const addVolumeMount = () => setRunVolumes(prev => [...prev, { hostPath: "", containerPath: "", Z: false, U: false }])
   const removeVolumeMount = (index: number) =>
     setRunVolumes(prev => prev.filter((_, i) => i !== index))
-  const updateVolumeMount = (index: number, field: keyof VolumeMount, value: string) =>
+  const updateVolumeMount = (index: number, field: keyof VolumeMount, value: string | boolean) =>
     setRunVolumes(prev => prev.map((v, i) => (i === index ? { ...v, [field]: value } : v)))
 
   // Filter containers based on search
@@ -942,6 +951,26 @@ export default function ContainersPage() {
                             value={vol.containerPath}
                             onChange={(e) => updateVolumeMount(index, "containerPath", e.target.value)}
                           />
+                          <div className="flex items-center space-x-1 shrink-0">
+                            <input
+                              type="checkbox"
+                              id={`vol-Z-${index}`}
+                              checked={vol.Z}
+                              onChange={(e) => updateVolumeMount(index, "Z", e.target.checked)}
+                              className="h-4 w-4 rounded border-gray-300"
+                            />
+                            <label htmlFor={`vol-Z-${index}`} className="text-xs cursor-pointer select-none" title="Apply SELinux private unshared label (:Z)">Z</label>
+                          </div>
+                          <div className="flex items-center space-x-1 shrink-0">
+                            <input
+                              type="checkbox"
+                              id={`vol-U-${index}`}
+                              checked={vol.U}
+                              onChange={(e) => updateVolumeMount(index, "U", e.target.checked)}
+                              className="h-4 w-4 rounded border-gray-300"
+                            />
+                            <label htmlFor={`vol-U-${index}`} className="text-xs cursor-pointer select-none" title="Map host UID/GID into the container (:U)">U</label>
+                          </div>
                           {runVolumes.length > 1 && (
                             <Button
                               type="button"
@@ -956,7 +985,7 @@ export default function ContainersPage() {
                         </div>
                       ))}
                       <p className="text-xs text-muted-foreground">
-                        Mount host directories into the container (-v hostPath:containerPath)
+                        Mount host directories into the container (-v hostPath:containerPath[:Z,U]). Z: SELinux private label; U: user-namespace UID/GID mapping.
                       </p>
                     </div>
 
