@@ -7,6 +7,8 @@ toolchain go1.24.13
 require (
 	github.com/containers/buildah v1.43.0
 	github.com/containers/podman/v5 v5.8.1
+	github.com/creack/pty v1.1.18
+	github.com/gorilla/websocket v1.5.3
 	github.com/opencontainers/runtime-spec v1.2.1
 	github.com/pkg/errors v0.9.1
 	github.com/urfave/cli v1.22.17
