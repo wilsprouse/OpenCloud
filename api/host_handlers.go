@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -109,9 +110,42 @@ func HostTerminal(w http.ResponseWriter, r *http.Request) {
 		shell = "/bin/bash"
 	}
 
+	// Build the shell environment.
+	//
+	// Start from the current process environment so that all variables set
+	// before the backend started (PATH, HOME, USER, GOPATH, …) are inherited.
+	// Then inject or override the session-level variables that PAM / systemd-
+	// logind normally add during an interactive login but that are absent when
+	// OpenCloud is started as a system service (e.g. via systemd).  Without
+	// these, rootless tools such as Podman, DBus clients, and snap cannot
+	// locate their runtime sockets.
+	envMap := make(map[string]string, len(os.Environ())+2)
+	for _, e := range os.Environ() {
+		if idx := strings.IndexByte(e, '='); idx >= 0 {
+			envMap[e[:idx]] = e[idx+1:]
+		}
+	}
+
+	// XDG_RUNTIME_DIR  — rootless Podman, DBus, pipewire, etc. use
+	// /run/user/<UID>/… for their sockets.  PAM sets this automatically for
+	// interactive sessions; derive it from the current UID when it is absent
+	// (service start) or incorrect.
+	if _, ok := envMap["XDG_RUNTIME_DIR"]; !ok {
+		envMap["XDG_RUNTIME_DIR"] = fmt.Sprintf("/run/user/%d", os.Getuid())
+	}
+
+	// TERM must be xterm-256color so that ANSI sequences, 256-colour palettes,
+	// and cursor-movement codes work correctly in xterm.js.
+	envMap["TERM"] = "xterm-256color"
+
+	shellEnv := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		shellEnv = append(shellEnv, k+"="+v)
+	}
+
 	// Spawn the shell as a login shell (-l) so ~/.bashrc / ~/.profile are loaded.
 	cmd := exec.CommandContext(r.Context(), shell, "-l")
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = shellEnv
 
 	// Start the shell inside a PTY.
 	ptmx, err := pty.Start(cmd)
