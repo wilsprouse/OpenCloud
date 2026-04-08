@@ -69,12 +69,20 @@ export default function HostPage() {
       fitAddon.fit()
 
       // Build the WebSocket URL.
-      // NEXT_PUBLIC_WS_BACKEND_URL is set for local dev (ws://localhost:3030).
-      // In production via nginx the /api/ location block proxies WebSocket so
-      // we use the same origin.
+      // In development (next dev), Next.js rewrites cannot proxy WebSocket
+      // connections, so we connect directly to the Go backend.
+      // NEXT_PUBLIC_WS_BACKEND_URL is only honoured in development; in a
+      // production build (NODE_ENV==="production") it is ignored so that
+      // the baked-in localhost URL is never sent to browsers on remote
+      // machines.  Production traffic goes through the /api/ path which
+      // nginx (or any other reverse proxy) forwards to the backend with
+      // the correct Upgrade headers.
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
       const wsBase =
-        process.env.NEXT_PUBLIC_WS_BACKEND_URL ||
-        `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api`
+        process.env.NODE_ENV === "development" &&
+        process.env.NEXT_PUBLIC_WS_BACKEND_URL
+          ? process.env.NEXT_PUBLIC_WS_BACKEND_URL
+          : `${proto}//${window.location.host}/api`
       ws = new WebSocket(`${wsBase}/host/ws`)
       ws.binaryType = "arraybuffer"
 
