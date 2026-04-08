@@ -501,6 +501,22 @@ func validatePortMapping(mapping string) string {
 	return ""
 }
 
+// expandTildePath replaces a leading "~" in p with the current user's home directory.
+// If the home directory cannot be determined or p does not start with "~", p is returned unchanged.
+func expandTildePath(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	return home + p[1:]
+}
+
 // validMountOptions is the set of option tokens accepted in the third segment of a volume mount string.
 var validMountOptions = map[string]bool{
 	"Z": true, "z": true,
@@ -771,7 +787,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 		}
 		mount := specs.Mount{
 			Type:        "bind",
-			Source:      parts[0],
+			Source:      expandTildePath(parts[0]),
 			Destination: parts[1],
 			Options:     buildBindMountOptions(optStr),
 		}
@@ -1054,7 +1070,7 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 		}
 		mounts = append(mounts, specs.Mount{
 			Type:        "bind",
-			Source:      parts[0],
+			Source:      expandTildePath(parts[0]),
 			Destination: parts[1],
 			Options:     buildBindMountOptions(optStr),
 		})

@@ -1589,6 +1589,34 @@ func TestParseMountOptions(t *testing.T) {
 	}
 }
 
+// TestExpandTildePath verifies that leading "~" is expanded to the user home directory.
+func TestExpandTildePath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir:", err)
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"~", home},
+		{"~/logs", home + "/logs"},
+		{"~/a/b/c", home + "/a/b/c"},
+		{"/absolute/path", "/absolute/path"},
+		{"relative/path", "relative/path"},
+		{"~hidden", "~hidden"},  // tilde not followed by "/" – leave unchanged
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		got := expandTildePath(tt.input)
+		if got != tt.want {
+			t.Errorf("expandTildePath(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 // TestGetContainerInvalidMethod verifies that non-GET requests are rejected with 405.
 func TestGetContainerInvalidMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/get-container?id=abc123", nil)
