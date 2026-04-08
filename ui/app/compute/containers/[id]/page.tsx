@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { DashboardHeader } from "@/components/dashboard-header"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -33,6 +37,9 @@ import {
   Layers,
   RotateCcw,
   FileText,
+  Plus,
+  X,
+  Pencil,
 } from "lucide-react"
 
 // ContainerDetail mirrors the ContainerDetail struct returned by GET /get-container.
@@ -49,6 +56,27 @@ type ContainerDetail = {
   restartPolicy: string
   autoRemove: boolean
   memoryUsageBytes: number
+  command: string
+}
+
+// A single port mapping entry used in the edit form
+type PortMapping = {
+  hostPort: string
+  containerPort: string
+}
+
+// A single environment variable entry used in the edit form
+type EnvVar = {
+  key: string
+  value: string
+}
+
+// A single volume mount entry used in the edit form
+type VolumeMount = {
+  hostPath: string
+  containerPath: string
+  Z: boolean
+  U: boolean
 }
 
 // Formats a byte count into a human-readable string (e.g. 1048576 → "1.0 MB").
@@ -63,6 +91,43 @@ function formatBytes(bytes: number): string {
 function formatDate(ts: number): string {
   if (!ts) return "—"
   return new Date(ts * 1000).toLocaleString()
+}
+
+// Parses a port string like "8080:80/tcp" or "0.0.0.0:8080:80/tcp" into a PortMapping.
+function parsePortString(port: string): PortMapping | null {
+  // Strip optional protocol suffix (e.g. "/tcp")
+  const withoutProto = port.split("/")[0]
+  const parts = withoutProto.split(":")
+  if (parts.length === 2) {
+    return { hostPort: parts[0], containerPort: parts[1] }
+  }
+  if (parts.length === 3) {
+    // "hostIP:hostPort:containerPort"
+    return { hostPort: parts[1], containerPort: parts[2] }
+  }
+  return null
+}
+
+// Parses an env string like "KEY=VALUE" into an EnvVar.
+function parseEnvString(env: string): EnvVar {
+  const idx = env.indexOf("=")
+  if (idx === -1) return { key: env, value: "" }
+  return { key: env.slice(0, idx), value: env.slice(idx + 1) }
+}
+
+// Parses a bind string like "hostPath:containerPath[:options]" into a VolumeMount.
+function parseBindString(bind: string): VolumeMount {
+  const parts = bind.split(":")
+  const hostPath = parts[0] ?? ""
+  const containerPath = parts[1] ?? ""
+  const opts = parts[2] ?? ""
+  const optList = opts.split(",")
+  return {
+    hostPath,
+    containerPath,
+    Z: optList.includes("Z") || optList.includes("z"),
+    U: optList.includes("U"),
+  }
 }
 
 export default function ContainerDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -84,6 +149,17 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isStopDialogOpen, setIsStopDialogOpen] = useState(false)
   const [stopError, setStopError] = useState("")
+
+  // Edit form state
+  const [editImage, setEditImage] = useState("")
+  const [editName, setEditName] = useState("")
+  const [editPorts, setEditPorts] = useState<PortMapping[]>([{ hostPort: "", containerPort: "" }])
+  const [editEnvVars, setEditEnvVars] = useState<EnvVar[]>([{ key: "", value: "" }])
+  const [editVolumes, setEditVolumes] = useState<VolumeMount[]>([{ hostPath: "", containerPath: "", Z: false, U: false }])
+  const [editRestartPolicy, setEditRestartPolicy] = useState("no")
+  const [editAutoRemove, setEditAutoRemove] = useState(false)
+  const [editCommand, setEditCommand] = useState("")
+  const [isUpdating, setIsUpdating] = useState(false)
 
   const fetchContainer = useCallback(async () => {
     setLoading(true)
@@ -121,6 +197,28 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
       logsEndRef.current.scrollIntoView({ behavior: "smooth" })
     }
   }, [logs, activeTab])
+
+  // Pre-populate the edit form whenever the container data is loaded or the edit tab is selected.
+  useEffect(() => {
+    if (container && activeTab === "edit") {
+      setEditImage(container.image)
+      setEditName(container.name)
+      setEditRestartPolicy(container.restartPolicy || "no")
+      setEditAutoRemove(container.autoRemove)
+      setEditCommand(container.command || "")
+
+      const parsedPorts = (container.ports ?? [])
+        .map(parsePortString)
+        .filter((p): p is PortMapping => p !== null)
+      setEditPorts(parsedPorts.length > 0 ? parsedPorts : [{ hostPort: "", containerPort: "" }])
+
+      const parsedEnv = (container.env ?? []).map(parseEnvString)
+      setEditEnvVars(parsedEnv.length > 0 ? parsedEnv : [{ key: "", value: "" }])
+
+      const parsedVolumes = (container.binds ?? []).map(parseBindString)
+      setEditVolumes(parsedVolumes.length > 0 ? parsedVolumes : [{ hostPath: "", containerPath: "", Z: false, U: false }])
+    }
+  }, [container, activeTab])
 
   // Fetch logs when the logs tab is first selected.
   const handleTabChange = (tab: string) => {
@@ -170,6 +268,81 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
       setIsDeleteDialogOpen(false)
     }
   }
+
+  // Submits the edit form by stopping the old container, removing it, and
+  // recreating it with the updated configuration via POST /update-container.
+  const handleUpdateContainer = async () => {
+    if (!editImage.trim()) {
+      toast.error("Image is required")
+      return
+    }
+
+    setIsUpdating(true)
+    try {
+      const ports = editPorts
+        .filter(p => p.hostPort && p.containerPort)
+        .map(p => `${p.hostPort}:${p.containerPort}`)
+
+      const env = editEnvVars
+        .filter(e => e.key)
+        .map(e => (e.value ? `${e.key}=${e.value}` : e.key))
+
+      const volumes = editVolumes
+        .filter(v => v.hostPath && v.containerPath)
+        .map(v => {
+          const opts = ([v.Z && "Z", v.U && "U"] as (string | false)[]).filter(Boolean) as string[]
+          return opts.length > 0
+            ? `${v.hostPath}:${v.containerPath}:${opts.join(",")}`
+            : `${v.hostPath}:${v.containerPath}`
+        })
+
+      const res = await client.post<{ status: string; containerId: string }>("/update-container", {
+        containerId,
+        image: editImage.trim(),
+        name: editName.trim() || undefined,
+        ports,
+        env,
+        volumes,
+        restartPolicy: editRestartPolicy,
+        autoRemove: editAutoRemove,
+        command: editCommand.trim() || undefined,
+      })
+
+      toast.success("Container updated and restarted successfully")
+      // The container has been recreated with a new ID; navigate to the new container.
+      const newId = res.data?.containerId
+      if (newId && newId !== containerId) {
+        router.push(`/compute/containers/${encodeURIComponent(newId)}`)
+      } else {
+        await fetchContainer()
+        setActiveTab("overview")
+      }
+    } catch (err) {
+      console.error("Failed to update container:", err)
+      const msg = err instanceof Error ? err.message : "Failed to update container"
+      toast.error(msg)
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  // Edit form helpers for port mappings
+  const addEditPort = () => setEditPorts(prev => [...prev, { hostPort: "", containerPort: "" }])
+  const removeEditPort = (i: number) => setEditPorts(prev => prev.filter((_, idx) => idx !== i))
+  const updateEditPort = (i: number, field: keyof PortMapping, value: string) =>
+    setEditPorts(prev => prev.map((p, idx) => (idx === i ? { ...p, [field]: value } : p)))
+
+  // Edit form helpers for environment variables
+  const addEditEnvVar = () => setEditEnvVars(prev => [...prev, { key: "", value: "" }])
+  const removeEditEnvVar = (i: number) => setEditEnvVars(prev => prev.filter((_, idx) => idx !== i))
+  const updateEditEnvVar = (i: number, field: keyof EnvVar, value: string) =>
+    setEditEnvVars(prev => prev.map((e, idx) => (idx === i ? { ...e, [field]: value } : e)))
+
+  // Edit form helpers for volume mounts
+  const addEditVolume = () => setEditVolumes(prev => [...prev, { hostPath: "", containerPath: "", Z: false, U: false }])
+  const removeEditVolume = (i: number) => setEditVolumes(prev => prev.filter((_, idx) => idx !== i))
+  const updateEditVolume = (i: number, field: keyof VolumeMount, value: string | boolean) =>
+    setEditVolumes(prev => prev.map((v, idx) => (idx === i ? { ...v, [field]: value } : v)))
 
   if (loading) {
     return (
@@ -282,6 +455,10 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="mb-4">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="edit">
+            <Pencil className="h-3 w-3 mr-1" />
+            Edit
+          </TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
         </TabsList>
 
@@ -431,6 +608,257 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                 )}
               </CardContent>
             </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── Edit Tab ── */}
+        <TabsContent value="edit">
+          <div className="space-y-6 max-w-2xl">
+            <p className="text-sm text-muted-foreground">
+              Update the container configuration below. Saving will stop the current container,
+              remove it, and recreate it with the new settings.
+            </p>
+
+            {/* Image & Name */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Image &amp; Name</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-image">Image</Label>
+                  <Input
+                    id="edit-image"
+                    placeholder="e.g. nginx:latest"
+                    value={editImage}
+                    onChange={e => setEditImage(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-name">Container Name <span className="text-muted-foreground">(optional)</span></Label>
+                  <Input
+                    id="edit-name"
+                    placeholder="my-container"
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-command">Command Override <span className="text-muted-foreground">(optional)</span></Label>
+                  <Input
+                    id="edit-command"
+                    placeholder="e.g. /bin/sh -c 'echo hello'"
+                    value={editCommand}
+                    onChange={e => setEditCommand(e.target.value)}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Port Mappings */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium flex items-center justify-between">
+                  <span className="flex items-center">
+                    <Network className="h-4 w-4 mr-2 text-muted-foreground" />
+                    Port Mappings
+                  </span>
+                  <Button variant="outline" size="sm" onClick={addEditPort} type="button">
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add Port
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {editPorts.map((port, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      placeholder="Host port"
+                      value={port.hostPort}
+                      onChange={e => updateEditPort(i, "hostPort", e.target.value)}
+                      className="w-32"
+                    />
+                    <span className="text-muted-foreground">:</span>
+                    <Input
+                      placeholder="Container port"
+                      value={port.containerPort}
+                      onChange={e => updateEditPort(i, "containerPort", e.target.value)}
+                      className="w-36"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeEditPort(i)}
+                      type="button"
+                      disabled={editPorts.length === 1}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            {/* Environment Variables */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium flex items-center justify-between">
+                  <span className="flex items-center">
+                    <FileText className="h-4 w-4 mr-2 text-muted-foreground" />
+                    Environment Variables
+                  </span>
+                  <Button variant="outline" size="sm" onClick={addEditEnvVar} type="button">
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add Variable
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {editEnvVars.map((env, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      placeholder="KEY"
+                      value={env.key}
+                      onChange={e => updateEditEnvVar(i, "key", e.target.value)}
+                      className="w-40 font-mono text-sm"
+                    />
+                    <span className="text-muted-foreground">=</span>
+                    <Input
+                      placeholder="value"
+                      value={env.value}
+                      onChange={e => updateEditEnvVar(i, "value", e.target.value)}
+                      className="flex-1 font-mono text-sm"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeEditEnvVar(i)}
+                      type="button"
+                      disabled={editEnvVars.length === 1}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            {/* Volume Mounts */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium flex items-center justify-between">
+                  <span className="flex items-center">
+                    <HardDrive className="h-4 w-4 mr-2 text-muted-foreground" />
+                    Volume Mounts
+                  </span>
+                  <Button variant="outline" size="sm" onClick={addEditVolume} type="button">
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add Volume
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {editVolumes.map((vol, i) => (
+                  <div key={i} className="flex items-center gap-2 flex-wrap">
+                    <Input
+                      placeholder="Host path"
+                      value={vol.hostPath}
+                      onChange={e => updateEditVolume(i, "hostPath", e.target.value)}
+                      className="flex-1 min-w-[120px] font-mono text-sm"
+                    />
+                    <span className="text-muted-foreground">:</span>
+                    <Input
+                      placeholder="Container path"
+                      value={vol.containerPath}
+                      onChange={e => updateEditVolume(i, "containerPath", e.target.value)}
+                      className="flex-1 min-w-[120px] font-mono text-sm"
+                    />
+                    <div className="flex items-center gap-1">
+                      <Switch
+                        id={`edit-vol-z-${i}`}
+                        checked={vol.Z}
+                        onCheckedChange={v => updateEditVolume(i, "Z", v)}
+                      />
+                      <Label htmlFor={`edit-vol-z-${i}`} className="text-xs">Z</Label>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Switch
+                        id={`edit-vol-u-${i}`}
+                        checked={vol.U}
+                        onCheckedChange={v => updateEditVolume(i, "U", v)}
+                      />
+                      <Label htmlFor={`edit-vol-u-${i}`} className="text-xs">U</Label>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeEditVolume(i)}
+                      type="button"
+                      disabled={editVolumes.length === 1}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            {/* Options */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Options</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Restart Policy</Label>
+                  <Select value={editRestartPolicy} onValueChange={setEditRestartPolicy}>
+                    <SelectTrigger className="w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="no">No</SelectItem>
+                      <SelectItem value="always">Always</SelectItem>
+                      <SelectItem value="on-failure">On Failure</SelectItem>
+                      <SelectItem value="unless-stopped">Unless Stopped</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id="edit-auto-remove"
+                    checked={editAutoRemove}
+                    onCheckedChange={setEditAutoRemove}
+                    disabled={editRestartPolicy !== "no" && editRestartPolicy !== ""}
+                  />
+                  <Label htmlFor="edit-auto-remove">
+                    Auto Remove
+                    <span className="text-xs text-muted-foreground ml-2">
+                      (remove container on exit)
+                    </span>
+                  </Label>
+                </div>
+                {editAutoRemove && editRestartPolicy !== "no" && editRestartPolicy !== "" && (
+                  <p className="text-xs text-destructive">
+                    Auto Remove cannot be used with a restart policy other than &quot;no&quot;.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Save Button */}
+            <div className="flex justify-end">
+              <Button
+                onClick={handleUpdateContainer}
+                disabled={isUpdating || !editImage.trim()}
+              >
+                {isUpdating ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Pencil className="h-4 w-4 mr-2" />
+                )}
+                {isUpdating ? "Updating..." : "Save & Restart"}
+              </Button>
+            </div>
           </div>
         </TabsContent>
 
