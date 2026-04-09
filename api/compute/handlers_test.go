@@ -1856,6 +1856,201 @@ func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
 	}
 }
 
+// TestGetContainerUsesVolumeLabelForZAndUFlags verifies that when the
+// opencloud/volumes label is present, GetContainer uses it as the primary source
+// for volume bind strings so that Z and U flags are preserved even when they are
+// absent from HostConfig.Binds and Mount.Mode.
+func TestGetContainerUsesVolumeLabelForZAndUFlags(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{
+					// opencloud/volumes stores the original user-specified bind strings,
+					// including Z and U flags that Podman strips from HostConfig.Binds.
+					"opencloud/volumes": "/home/user/data:/usr/share/nginx/html:Z,U",
+				},
+			},
+			// Mounts drives the allowlist (Type == "bind" only).
+			Mounts: []define.InspectMount{
+				// Mode does NOT include Z or U — Podman applies them at mount-setup time.
+				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw"},
+			},
+			// HostConfig.Binds also lacks Z and U (Podman stripped them during creation).
+			HostConfig: &define.InspectContainerHostConfig{
+				Binds:         []string{"/home/user/data:/usr/share/nginx/html:rw"},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 1 {
+		t.Fatalf("expected 1 bind, got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	// The label takes priority: Z and U must appear even though HostConfig.Binds lost them.
+	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:Z,U" {
+		t.Errorf("Z and U flags not recovered from label; got %q", detail.Binds[0])
+	}
+}
+
+// TestGetContainerVolumeLabelTakesPriorityOverHostConfigBinds verifies that when
+// the opencloud/volumes label and HostConfig.Binds disagree on options for the same
+// destination, the label wins (because it stores the original user intent).
+func TestGetContainerVolumeLabelTakesPriorityOverHostConfigBinds(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{
+					// Label has Z and U; HostConfig.Binds has only rw (Z/U were stripped).
+					"opencloud/volumes": "/data:/app:Z,U,ro",
+				},
+			},
+			Mounts: []define.InspectMount{
+				{Type: "bind", Source: "/data", Destination: "/app", Mode: "ro"},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				Binds:         []string{"/data:/app:ro"},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 1 {
+		t.Fatalf("expected 1 bind, got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	if detail.Binds[0] != "/data:/app:Z,U,ro" {
+		t.Errorf("label did not take priority over HostConfig.Binds; got %q", detail.Binds[0])
+	}
+}
+
+// TestUpdateContainerStoresVolumesLabel verifies that UpdateContainer writes the
+// opencloud/volumes label so that GetContainer can later recover Z/U flags.
+func TestUpdateContainerStoresVolumesLabel(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "old-id",
+			ImageName: "nginx:latest",
+			State:     &define.InspectContainerState{Status: "exited"},
+		}, nil
+	}
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error { return nil }
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		return nil, nil
+	}
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) { return ref, nil }
+
+	var capturedLabels map[string]string
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		capturedLabels = s.Labels
+		return podmanTypes.ContainerCreateResponse{ID: "new-id"}, nil
+	}
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error { return nil }
+
+	body, _ := json.Marshal(UpdateContainerRequest{
+		ContainerID: "old-id",
+		Image:       "nginx:latest",
+		Name:        "test-container",
+		Volumes:     []string{"/host/data:/container/data:Z,U"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	if capturedLabels == nil {
+		t.Fatal("expected spec labels to be set")
+	}
+	got, ok := capturedLabels["opencloud/volumes"]
+	if !ok {
+		t.Fatal("expected opencloud/volumes label to be set")
+	}
+	if got != "/host/data:/container/data:Z,U" {
+		t.Errorf("unexpected opencloud/volumes label value: %q", got)
+	}
+}
+
 // TestGetContainerInspectFailure verifies that Podman Inspect errors result in 500.
 func TestGetContainerInspectFailure(t *testing.T) {
 	origConnection := getContainerConnection
