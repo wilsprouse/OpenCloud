@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -1269,10 +1270,14 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Remove the old container.
-	if _, err := updateContainerRemove(conn, req.ContainerID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true)); err != nil {
+	// Remove the old container. WithIgnore(true) suppresses "not found" errors;
+	// if the container disappeared between inspect and remove we still proceed.
+	if reports, err := updateContainerRemove(conn, req.ContainerID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true)); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to remove container: %v", err), http.StatusInternalServerError)
 		return
+	} else if len(reports) > 0 && reports[0].Err != nil {
+		// A non-fatal per-container error (e.g. already removed) – log and continue.
+		log.Printf("UpdateContainer: non-fatal remove error for %s: %v", req.ContainerID, reports[0].Err)
 	}
 
 	// Resolve the image reference, pulling if necessary.
