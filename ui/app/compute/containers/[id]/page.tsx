@@ -116,7 +116,7 @@ function parseEnvString(env: string): EnvVar {
 }
 
 // Parses a bind string like "hostPath:containerPath[:options]" into a VolumeMount.
-// The Z switch covers both "Z" (private relabelling) and "z" (shared relabelling).
+// The Z switch covers both "Z" (private relabeling) and "z" (shared relabeling).
 // Podman does not define a lowercase "u" option, so only uppercase "U" is checked.
 function parseBindString(bind: string): VolumeMount {
   const parts = bind.split(":")
@@ -287,10 +287,8 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
         .map(p => `${p.hostPort}:${p.containerPort}`)
 
       const env = editEnvVars
+        // Entries with an empty key are excluded. Empty values are preserved as KEY=.
         .filter(e => e.key)
-        // Always use KEY=value format. A bare "KEY" (no equals sign) would mean
-        // "inherit from parent", but since we round-trip from container inspect
-        // we always produce KEY= for an intentionally empty value.
         .map(e => `${e.key}=${e.value}`)
 
       const volumes = editVolumes
@@ -660,8 +658,8 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                     onChange={e => setEditCommand(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Arguments are split on whitespace. Commands with spaces inside quoted arguments
-                    are not supported; use the image entrypoint instead.
+                    Arguments are split on whitespace. For commands with spaces inside arguments,
+                    configure the container image&apos;s ENTRYPOINT instead.
                   </p>
                 </div>
               </CardContent>

@@ -1347,7 +1347,7 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	spec.Remove = &req.AutoRemove
 
 	if req.Command != "" {
-		// NOTE: strings.Fields splits on whitespace without honouring shell quoting.
+		// NOTE: strings.Fields splits on whitespace without honoring shell quoting.
 		// Commands with quoted arguments containing spaces (e.g. `sh -c "echo hello world"`)
 		// should be passed as the entrypoint override on the image itself rather than via
 		// this field, or the individual tokens should be provided directly (see ContainerDetail.Command).
