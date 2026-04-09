@@ -1283,9 +1283,9 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine the container name for the recreated container.
-	containerID := req.Name
-	if containerID == "" {
-		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
+	containerName := req.Name
+	if containerName == "" {
+		containerName = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
 	}
 
 	var mounts []specs.Mount
@@ -1319,7 +1319,7 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	envMap := envListToMap(req.Env)
 
 	labels := map[string]string{
-		"opencloud/name": containerID,
+		"opencloud/name": containerName,
 	}
 	if req.RestartPolicy != "" {
 		labels["opencloud/restart-policy"] = req.RestartPolicy
@@ -1332,7 +1332,7 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	spec := specgen.NewSpecGenerator(imageRef, false)
-	spec.Name = containerID
+	spec.Name = containerName
 	spec.Labels = labels
 	spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
 	spec.Env = envMap
@@ -1342,6 +1342,10 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	spec.Remove = &req.AutoRemove
 
 	if req.Command != "" {
+		// NOTE: strings.Fields splits on whitespace without honouring shell quoting.
+		// Commands with quoted arguments containing spaces (e.g. `sh -c "echo hello world"`)
+		// should be passed as the entrypoint override on the image itself rather than via
+		// this field, or the individual tokens should be provided directly (see ContainerDetail.Command).
 		spec.Entrypoint = []string{}
 		spec.Command = strings.Fields(req.Command)
 	}

@@ -285,12 +285,15 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
 
       const env = editEnvVars
         .filter(e => e.key)
-        .map(e => (e.value ? `${e.key}=${e.value}` : e.key))
+        // Env vars without a value are serialized as "KEY" (bare key); KEY= would be an explicit empty string.
+        .map(e => (e.value !== "" ? `${e.key}=${e.value}` : e.key))
 
       const volumes = editVolumes
         .filter(v => v.hostPath && v.containerPath)
         .map(v => {
-          const opts = ([v.Z && "Z", v.U && "U"] as (string | false)[]).filter(Boolean) as string[]
+          const opts: string[] = []
+          if (v.Z) opts.push("Z")
+          if (v.U) opts.push("U")
           return opts.length > 0
             ? `${v.hostPath}:${v.containerPath}:${opts.join(",")}`
             : `${v.hostPath}:${v.containerPath}`
@@ -828,7 +831,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                     id="edit-auto-remove"
                     checked={editAutoRemove}
                     onCheckedChange={setEditAutoRemove}
-                    disabled={editRestartPolicy !== "no" && editRestartPolicy !== ""}
+                    disabled={editRestartPolicy !== "no"}
                   />
                   <Label htmlFor="edit-auto-remove">
                     Auto Remove
@@ -837,9 +840,9 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                     </span>
                   </Label>
                 </div>
-                {editAutoRemove && editRestartPolicy !== "no" && editRestartPolicy !== "" && (
-                  <p className="text-xs text-destructive">
-                    Auto Remove cannot be used with a restart policy other than &quot;no&quot;.
+                {editRestartPolicy !== "no" && (
+                  <p className="text-xs text-muted-foreground">
+                    Auto Remove is unavailable when a restart policy other than &quot;no&quot; is selected.
                   </p>
                 )}
               </CardContent>
