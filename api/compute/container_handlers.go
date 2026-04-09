@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,17 +23,24 @@ import (
 )
 
 var (
-	getContainersConnection   = opencloudapi.RootlessPodmanConnection
-	listPodmanContainers      = containers.List
-	deleteContainerConnection = opencloudapi.RootlessPodmanConnection
-	removePodmanContainer     = containers.Remove
-	containerActionConnection = opencloudapi.RootlessPodmanConnection
-	startPodmanContainer      = containers.Start
-	stopPodmanContainer       = containers.Stop
-	getContainerConnection    = opencloudapi.RootlessPodmanConnection
-	inspectPodmanContainer    = containers.Inspect
-	containerLogsConnection   = opencloudapi.RootlessPodmanConnection
-	podmanContainerLogs       = containers.Logs
+	getContainersConnection      = opencloudapi.RootlessPodmanConnection
+	listPodmanContainers         = containers.List
+	deleteContainerConnection    = opencloudapi.RootlessPodmanConnection
+	removePodmanContainer        = containers.Remove
+	containerActionConnection    = opencloudapi.RootlessPodmanConnection
+	startPodmanContainer         = containers.Start
+	stopPodmanContainer          = containers.Stop
+	getContainerConnection       = opencloudapi.RootlessPodmanConnection
+	inspectPodmanContainer       = containers.Inspect
+	containerLogsConnection      = opencloudapi.RootlessPodmanConnection
+	podmanContainerLogs          = containers.Logs
+	updateContainerConnection    = opencloudapi.RootlessPodmanConnection
+	updateContainerInspect       = containers.Inspect
+	updateContainerStop          = containers.Stop
+	updateContainerRemove        = containers.Remove
+	updateContainerEnsureImage   = ensurePodmanImage
+	updateContainerCreateWithSpec = containers.CreateWithSpec
+	updateContainerStart         = containers.Start
 )
 
 type ContainerInfo = opencloudapi.ContainerInfo
@@ -231,6 +239,8 @@ type ContainerDetail struct {
 	AutoRemove bool `json:"autoRemove"`
 	// MemoryUsageBytes is the RSS memory usage of the container in bytes.
 	MemoryUsageBytes int64 `json:"memoryUsageBytes"`
+	// Command is the custom command used to start the container, overriding the image entrypoint.
+	Command string `json:"command"`
 }
 
 // GetContainer inspects a single Podman container by ID or name and returns
@@ -285,10 +295,12 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 
 	if data.Config != nil {
 		detail.Env = data.Config.Env
+		if len(data.Config.Cmd) > 0 {
+			detail.Command = strings.Join(data.Config.Cmd, " ")
+		}
 	}
 
 	if data.HostConfig != nil {
-		detail.Binds = data.HostConfig.Binds
 		detail.AutoRemove = data.HostConfig.AutoRemove
 
 		if data.HostConfig.RestartPolicy != nil {
@@ -307,6 +319,91 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 				detail.Ports = append(detail.Ports, mapping)
 			}
 		}
+	}
+
+	// Build the Binds list for the edit form.
+	//
+	// Why two data sources are needed:
+	//   • data.Mounts  — the only reliable way to distinguish genuine host bind
+	//     mounts (Type == "bind") from anonymous/named Podman volumes
+	//     (Type == "volume"). Anonymous volumes have internal source paths such as
+	//     /home/ubuntu/<64-hex-hash> that are deleted when the container is removed;
+	//     passing them back to UpdateContainer causes "statfs … no such file or
+	//     directory" errors at recreate time.
+	//   • data.HostConfig.Binds — stores the original user-specified bind spec
+	//     verbatim (e.g. "/host:/ctr:Z,U,rw"). SELinux relabeling (Z/z) and user-
+	//     namespace UID/GID remapping (U) are applied at mount-setup time and do NOT
+	//     survive into data.Mounts[i].Mode; they would be silently dropped if we
+	//     relied on Mode alone.
+	//
+	// Strategy:
+	//   1. Build an allowlist of container-side paths that are genuine bind mounts
+	//      from data.Mounts (Type == "bind").
+	//   2. Iterate data.HostConfig.Binds; include only those entries whose
+	//      destination is in the allowlist (excludes anonymous-volume entries).
+	//   3. Filter each entry's options through validMountOptions to strip unknown
+	//      kernel flags (e.g. "relatime") that our validator would reject.
+	//   4. For any bind mount that appears in data.Mounts but has no matching
+	//      HostConfig.Binds entry (e.g. added via --mount instead of -v), fall
+	//      back to data.Mounts[i].Mode.
+
+	// Step 1 — allowlist of genuine bind destinations.
+	bindDests := make(map[string]bool)
+	for _, m := range data.Mounts {
+		if m.Type == "bind" {
+			bindDests[m.Destination] = true
+		}
+	}
+
+	// Step 2/3 — include HostConfig.Binds entries that are genuine bind mounts,
+	// filtering options through validMountOptions.
+	coveredByHostConfig := make(map[string]bool)
+	if data.HostConfig != nil {
+		for _, b := range data.HostConfig.Binds {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) < 2 {
+				continue
+			}
+			dest := parts[1]
+			if !bindDests[dest] {
+				// Not a genuine bind mount (e.g. anonymous volume path).
+				continue
+			}
+			coveredByHostConfig[dest] = true
+			if len(parts) == 3 {
+				var kept []string
+				for _, opt := range strings.Split(parts[2], ",") {
+					if validMountOptions[opt] {
+						kept = append(kept, opt)
+					}
+				}
+				if len(kept) > 0 {
+					detail.Binds = append(detail.Binds, parts[0]+":"+parts[1]+":"+strings.Join(kept, ","))
+				} else {
+					detail.Binds = append(detail.Binds, parts[0]+":"+parts[1])
+				}
+			} else {
+				detail.Binds = append(detail.Binds, b)
+			}
+		}
+	}
+
+	// Step 4 — fallback for bind mounts not listed in HostConfig.Binds.
+	for _, m := range data.Mounts {
+		if m.Type != "bind" || coveredByHostConfig[m.Destination] {
+			continue
+		}
+		bind := m.Source + ":" + m.Destination
+		var kept []string
+		for _, opt := range strings.Split(m.Mode, ",") {
+			if validMountOptions[opt] {
+				kept = append(kept, opt)
+			}
+		}
+		if len(kept) > 0 {
+			bind += ":" + strings.Join(kept, ",")
+		}
+		detail.Binds = append(detail.Binds, bind)
 	}
 
 	// Populate status from the list endpoint's human-readable string when
@@ -1139,4 +1236,232 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 	})
 	fmt.Fprintf(w, "event: done\ndata: %s\n\n", donePayload)
 	flusher.Flush()
+}
+
+// UpdateContainerRequest represents the JSON payload for updating a running or stopped container.
+// The container with ContainerID is stopped (if running), removed, and recreated with the new spec.
+type UpdateContainerRequest struct {
+	// ContainerID is the ID or name of the container to update.
+	ContainerID string `json:"containerId"`
+	// Image is the container image to use for the recreated container.
+	Image string `json:"image"`
+	// Name is the human-readable name for the recreated container.
+	Name string `json:"name,omitempty"`
+	// Ports is a list of port mappings in "hostPort:containerPort" format.
+	Ports []string `json:"ports,omitempty"`
+	// Env is a list of environment variables in "KEY=VALUE" or "KEY" format.
+	Env []string `json:"env,omitempty"`
+	// Volumes is a list of volume mounts in "hostPath:containerPath[:options]" format.
+	Volumes []string `json:"volumes,omitempty"`
+	// RestartPolicy is the container restart policy ("no", "always", "on-failure", "unless-stopped").
+	RestartPolicy string `json:"restartPolicy,omitempty"`
+	// AutoRemove removes the container automatically when it exits.
+	AutoRemove bool `json:"autoRemove,omitempty"`
+	// Command overrides the default container entrypoint command.
+	Command string `json:"command,omitempty"`
+}
+
+// UpdateContainer stops the existing container identified by ContainerID, removes it, and
+// recreates it with the new configuration provided in the request body. The new container is
+// started immediately after creation.
+//
+// Route: POST /update-container
+func UpdateContainer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	defer r.Body.Close()
+
+	var req UpdateContainerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	req.ContainerID = strings.TrimSpace(req.ContainerID)
+	req.Image = strings.TrimSpace(req.Image)
+	req.Name = strings.TrimSpace(req.Name)
+
+	if req.ContainerID == "" {
+		http.Error(w, "containerId is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Image == "" {
+		http.Error(w, "image is required", http.StatusBadRequest)
+		return
+	}
+
+	if errMsg := opencloudapi.ValidateImageName(req.Image); errMsg != "" {
+		http.Error(w, errMsg, http.StatusBadRequest)
+		return
+	}
+
+	if req.Name != "" {
+		if errMsg := validateContainerName(req.Name); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	for _, port := range req.Ports {
+		if errMsg := validatePortMapping(port); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	for _, vol := range req.Volumes {
+		if errMsg := validateVolumeMount(vol); errMsg != "" {
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	if req.RestartPolicy != "" && !validRestartPolicies[req.RestartPolicy] {
+		http.Error(w, "invalid restart policy: must be one of no, always, on-failure, unless-stopped", http.StatusBadRequest)
+		return
+	}
+
+	if req.AutoRemove && req.RestartPolicy != "" && req.RestartPolicy != "no" {
+		http.Error(w, "autoRemove cannot be used with a restart policy other than 'no'", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), opencloudapi.BuildTimeout)
+	defer cancel()
+
+	conn, err := updateContainerConnection(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to connect to Podman: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Inspect the existing container to check its current state.
+	data, err := updateContainerInspect(conn, req.ContainerID, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to inspect container %q: %v", req.ContainerID, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Use the canonical full container ID returned by inspect to avoid any
+	// ambiguity when the caller supplied a short ID or name.
+	canonicalID := data.ID
+
+	// Attempt a graceful stop when the container is running. If the stop fails
+	// (e.g. the process ignores SIGTERM, Podman times out, or the container has
+	// already exited) we log the error and continue: the subsequent force-remove
+	// call uses --force which kills and removes in one shot regardless of state.
+	if data.State != nil && data.State.Status == "running" {
+		if err := updateContainerStop(conn, canonicalID, nil); err != nil {
+			log.Printf("UpdateContainer: non-fatal stop error for %s (proceeding to force remove): %v", canonicalID, err)
+		}
+	}
+
+	// Force-remove the old container. WithForce(true) kills it if still running;
+	// WithIgnore(true) suppresses "not found" errors so we tolerate a container
+	// that disappeared between inspect and remove.
+	if reports, err := updateContainerRemove(conn, canonicalID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true)); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to remove container %q: %v", canonicalID, err), http.StatusInternalServerError)
+		return
+	} else if len(reports) > 0 && reports[0].Err != nil {
+		// A non-fatal per-container error (e.g. already removed) – log and continue.
+		log.Printf("UpdateContainer: non-fatal remove error for %s: %v", canonicalID, reports[0].Err)
+	}
+
+	// Resolve the image reference, pulling if necessary.
+	imageRef, err := updateContainerEnsureImage(conn, req.Image)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to resolve image %q: %v", req.Image, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Determine the container name for the recreated container.
+	containerName := req.Name
+	if containerName == "" {
+		containerName = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
+	}
+
+	var mounts []specs.Mount
+	for _, vol := range req.Volumes {
+		parts := strings.SplitN(vol, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		optStr := ""
+		if len(parts) == 3 {
+			optStr = parts[2]
+		}
+		mounts = append(mounts, specs.Mount{
+			Type:        "bind",
+			Source:      expandTildePath(parts[0]),
+			Destination: parts[1],
+			Options:     buildBindMountOptions(optStr),
+		})
+	}
+
+	var portMappings []nettypes.PortMapping
+	for _, mapping := range req.Ports {
+		pm, err := parsePortMapping(mapping)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		portMappings = append(portMappings, pm)
+	}
+
+	envMap := envListToMap(req.Env)
+
+	labels := map[string]string{
+		"opencloud/name": containerName,
+	}
+	if req.RestartPolicy != "" {
+		labels["opencloud/restart-policy"] = req.RestartPolicy
+	}
+	if req.AutoRemove {
+		labels["opencloud/auto-remove"] = "true"
+	}
+	if len(req.Ports) > 0 {
+		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
+	}
+
+	spec := specgen.NewSpecGenerator(imageRef, false)
+	spec.Name = containerName
+	spec.Labels = labels
+	spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
+	spec.Env = envMap
+	spec.Mounts = mounts
+	spec.PortMappings = portMappings
+	spec.RestartPolicy = req.RestartPolicy
+	spec.Remove = &req.AutoRemove
+
+	if req.Command != "" {
+		// NOTE: strings.Fields splits on whitespace without honoring shell quoting.
+		// Commands with quoted arguments containing spaces (e.g. `sh -c "echo hello world"`)
+		// should be passed as the entrypoint override on the image itself rather than via
+		// this field, or the individual tokens should be provided directly (see ContainerDetail.Command).
+		spec.Entrypoint = []string{}
+		spec.Command = strings.Fields(req.Command)
+	}
+
+	createResponse, err := updateContainerCreateWithSpec(conn, spec, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := updateContainerStart(conn, createResponse.ID, nil); err != nil {
+		_, _ = updateContainerRemove(conn, createResponse.ID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true))
+		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":      "success",
+		"message":     fmt.Sprintf("Container updated and restarted from image %s", imageRef),
+		"containerId": createResponse.ID,
+	})
 }

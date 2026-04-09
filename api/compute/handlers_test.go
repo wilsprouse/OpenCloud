@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/containers/podman/v5/pkg/bindings/containers"
 	"github.com/containers/podman/v5/pkg/domain/entities/reports"
 	podmanTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v5/pkg/specgen"
 )
 
 // Helper function to save and restore crontab state for tests
@@ -1672,8 +1674,13 @@ func TestGetContainerReturnsDetail(t *testing.T) {
 			Config: &define.InspectContainerConfig{
 				Env: []string{"FOO=bar", "BAZ=qux"},
 			},
+			// Mounts drives the allowlist (Type=="bind" only).
+			Mounts: []define.InspectMount{
+				{Type: "bind", Source: "/host/data", Destination: "/container/data", Mode: "rw"},
+			},
+			// HostConfig.Binds is the primary source for flags (Z, U, etc.).
 			HostConfig: &define.InspectContainerHostConfig{
-				Binds:      []string{"/host/data:/container/data"},
+				Binds:      []string{"/host/data:/container/data:rw,Z"},
 				AutoRemove: false,
 				RestartPolicy: &define.InspectRestartPolicy{
 					Name: "always",
@@ -1717,11 +1724,135 @@ func TestGetContainerReturnsDetail(t *testing.T) {
 	if len(detail.Env) != 2 {
 		t.Errorf("expected 2 env vars, got %d", len(detail.Env))
 	}
-	if len(detail.Binds) != 1 || detail.Binds[0] != "/host/data:/container/data" {
+	if len(detail.Binds) != 1 || detail.Binds[0] != "/host/data:/container/data:rw,Z" {
 		t.Errorf("unexpected Binds: %v", detail.Binds)
 	}
 	if len(detail.Ports) != 1 {
 		t.Errorf("expected 1 port mapping, got %d", len(detail.Ports))
+	}
+}
+
+// TestGetContainerPreservesZAndUFlags verifies that the Z (SELinux relabeling)
+// and U (user-namespace chown) flags are preserved from HostConfig.Binds even
+// when they are absent from the corresponding InspectMount.Mode.  These flags
+// are applied by Podman at mount-setup time and are not guaranteed to round-trip
+// through the kernel-level mount options stored in Mode.
+func TestGetContainerPreservesZAndUFlags(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			// Mode does NOT include Z or U — simulates Podman's behavior where
+			// create-time flags are applied but not stored in Mount.Mode.
+			Mounts: []define.InspectMount{
+				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw"},
+			},
+			// HostConfig.Binds retains the original user-specified spec.
+			HostConfig: &define.InspectContainerHostConfig{
+				Binds:         []string{"/home/user/data:/usr/share/nginx/html:Z,U,rw"},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 1 {
+		t.Fatalf("expected 1 bind, got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:Z,U,rw" {
+		t.Errorf("Z and U flags not preserved; got %q", detail.Binds[0])
+	}
+}
+
+// TestGetContainerExcludesAnonymousVolumes verifies that anonymous and named
+// volumes (Podman internal storage paths) are excluded from the Binds field so
+// they are not passed back to UpdateContainer where they would cause a
+// "no such file or directory" error after the old container is removed.
+// This exercises both the Mounts path and the HostConfig.Binds path.
+func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Mounts: []define.InspectMount{
+				// User-specified bind mount — must be included.
+				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw,Z"},
+				// Anonymous volume created by Podman for an image VOLUME
+				// declaration — must be excluded (source is an internal path).
+				{Type: "volume", Source: "/home/ubuntu/a1b2c3d4e5f6", Destination: "/var/cache/nginx", Mode: "rw"},
+			},
+			// HostConfig.Binds may also contain the anonymous volume path
+			// as Podman used to include it in older behaviour — it must still
+			// be excluded because the source directory is deleted on container
+			// removal and would cause a statfs error on recreate.
+			HostConfig: &define.InspectContainerHostConfig{
+				Binds: []string{
+					"/home/user/data:/usr/share/nginx/html:Z",
+					"/home/ubuntu/a1b2c3d4e5f6:/var/cache/nginx",
+				},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 1 {
+		t.Fatalf("expected exactly 1 bind (anonymous volume excluded), got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:Z" {
+		t.Errorf("unexpected bind value: %q", detail.Binds[0])
 	}
 }
 
@@ -1883,5 +2014,401 @@ func TestGetContainerLogsFailure(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+// TestUpdateContainerInvalidMethod verifies that non-POST requests are rejected with 405.
+func TestUpdateContainerInvalidMethod(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/update-container", nil)
+		w := httptest.NewRecorder()
+		UpdateContainer(w, req)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Method %s: expected 405, got %d", method, w.Code)
+		}
+	}
+}
+
+// TestUpdateContainerInvalidJSON verifies that malformed JSON returns 400.
+func TestUpdateContainerInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader("{invalid json}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	UpdateContainer(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestUpdateContainerMissingContainerID verifies that a missing containerId returns 400.
+func TestUpdateContainerMissingContainerID(t *testing.T) {
+	body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "", Image: "nginx:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	UpdateContainer(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestUpdateContainerMissingImage verifies that a missing image returns 400.
+func TestUpdateContainerMissingImage(t *testing.T) {
+	body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "abc123", Image: ""})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	UpdateContainer(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestUpdateContainerInvalidImageName verifies that a dangerous image name returns 400.
+func TestUpdateContainerInvalidImageName(t *testing.T) {
+	cases := []string{"../etc/passwd", "/etc/passwd", "my image", "image\\name"}
+	for _, img := range cases {
+		body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "abc123", Image: img})
+		req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		UpdateContainer(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Image %q: expected 400, got %d", img, w.Code)
+		}
+	}
+}
+
+// TestUpdateContainerInvalidContainerName verifies that an invalid container name returns 400.
+func TestUpdateContainerInvalidContainerName(t *testing.T) {
+	cases := []string{"-bad", ".bad", "bad name", "bad/name"}
+	for _, name := range cases {
+		body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "abc123", Image: "nginx:latest", Name: name})
+		req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		UpdateContainer(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Container name %q: expected 400, got %d", name, w.Code)
+		}
+	}
+}
+
+// TestUpdateContainerInvalidPort verifies that an invalid port mapping returns 400.
+func TestUpdateContainerInvalidPort(t *testing.T) {
+	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	for _, port := range cases {
+		body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "abc123", Image: "nginx:latest", Ports: []string{port}})
+		req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		UpdateContainer(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Port %q: expected 400, got %d", port, w.Code)
+		}
+	}
+}
+
+// TestUpdateContainerInvalidVolume verifies that a volume with path traversal returns 400.
+func TestUpdateContainerInvalidVolume(t *testing.T) {
+	cases := []string{"../../etc:/data", "/data/../../etc:/data", "/host", "/host:../container"}
+	for _, vol := range cases {
+		body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "abc123", Image: "nginx:latest", Volumes: []string{vol}})
+		req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		UpdateContainer(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Volume %q: expected 400, got %d", vol, w.Code)
+		}
+	}
+}
+
+// TestUpdateContainerInvalidRestartPolicy verifies that an unknown restart policy returns 400.
+func TestUpdateContainerInvalidRestartPolicy(t *testing.T) {
+	body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "abc123", Image: "nginx:latest", RestartPolicy: "invalid-policy"})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	UpdateContainer(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestUpdateContainerAutoRemoveWithRestartPolicy verifies that combining autoRemove
+// with a non-"no" restart policy returns 400.
+func TestUpdateContainerAutoRemoveWithRestartPolicy(t *testing.T) {
+	for _, policy := range []string{"always", "on-failure", "unless-stopped"} {
+		body, _ := json.Marshal(UpdateContainerRequest{
+			ContainerID:   "abc123",
+			Image:         "nginx:latest",
+			AutoRemove:    true,
+			RestartPolicy: policy,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		UpdateContainer(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Policy %q with autoRemove: expected 400, got %d", policy, w.Code)
+		}
+	}
+}
+
+// TestUpdateContainerStopsRemovesAndRecreates verifies that UpdateContainer calls Podman to
+// stop, remove, recreate, and start the container with the new configuration.
+func TestUpdateContainerStopsRemovesAndRecreates(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectCalled := false
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		inspectCalled = true
+		return &define.InspectContainerData{
+			ID:        "old-container-id",
+			ImageName: "nginx:latest",
+			State: &define.InspectContainerState{
+				Status: "running",
+			},
+		}, nil
+	}
+
+	stopCalled := false
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error {
+		stopCalled = true
+		if nameOrID != "old-container-id" {
+			t.Errorf("expected stop called with old-container-id, got %q", nameOrID)
+		}
+		return nil
+	}
+
+	removeCalled := 0
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		removeCalled++
+		return nil, nil
+	}
+
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) {
+		return ref, nil
+	}
+
+	createCalled := false
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		createCalled = true
+		return podmanTypes.ContainerCreateResponse{ID: "new-container-id"}, nil
+	}
+
+	startCalled := false
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error {
+		startCalled = true
+		if nameOrID != "new-container-id" {
+			t.Errorf("expected start called with new-container-id, got %q", nameOrID)
+		}
+		return nil
+	}
+
+	body, _ := json.Marshal(UpdateContainerRequest{
+		ContainerID:   "old-container-id",
+		Image:         "nginx:latest",
+		Name:          "updated-container",
+		Ports:         []string{"8080:80"},
+		Env:           []string{"FOO=bar"},
+		RestartPolicy: "no",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	if !inspectCalled {
+		t.Error("expected Podman Inspect to be called")
+	}
+	if !stopCalled {
+		t.Error("expected Podman Stop to be called for running container")
+	}
+	if removeCalled == 0 {
+		t.Error("expected Podman Remove to be called")
+	}
+	if !createCalled {
+		t.Error("expected Podman CreateWithSpec to be called")
+	}
+	if !startCalled {
+		t.Error("expected Podman Start to be called")
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["status"] != "success" {
+		t.Errorf("expected status success, got %q", resp["status"])
+	}
+	if resp["containerId"] != "new-container-id" {
+		t.Errorf("expected containerId new-container-id, got %q", resp["containerId"])
+	}
+}
+
+// TestUpdateContainerStopFailureIsNonFatal verifies that a stop error does not abort the update.
+// The handler should log the failure and proceed to force-remove and recreate the container.
+func TestUpdateContainerStopFailureIsNonFatal(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "running-container-id",
+			ImageName: "nginx:latest",
+			State: &define.InspectContainerState{
+				Status: "running",
+			},
+		}, nil
+	}
+
+	// Stop returns an error – this must not abort the update.
+	stopCalled := false
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error {
+		stopCalled = true
+		return fmt.Errorf("stop timed out")
+	}
+
+	removeCalled := false
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		removeCalled = true
+		return nil, nil
+	}
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) {
+		return ref, nil
+	}
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		return podmanTypes.ContainerCreateResponse{ID: "new-container-id"}, nil
+	}
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error {
+		return nil
+	}
+
+	body, _ := json.Marshal(UpdateContainerRequest{
+		ContainerID: "running-container-id",
+		Image:       "nginx:latest",
+		Name:        "my-container",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 even when stop fails, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if !stopCalled {
+		t.Error("expected Stop to be attempted")
+	}
+	if !removeCalled {
+		t.Error("expected Remove to be called even after stop failure")
+	}
+}
+
+// TestUpdateContainerSkipsStopWhenNotRunning verifies that a stopped container is not stopped again.
+func TestUpdateContainerSkipsStopWhenNotRunning(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "stopped-container",
+			ImageName: "nginx:latest",
+			State: &define.InspectContainerState{
+				Status: "exited",
+			},
+		}, nil
+	}
+	stopCalled := false
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error {
+		stopCalled = true
+		return nil
+	}
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		return nil, nil
+	}
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) {
+		return ref, nil
+	}
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		return podmanTypes.ContainerCreateResponse{ID: "new-id"}, nil
+	}
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error {
+		return nil
+	}
+
+	body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "stopped-container", Image: "nginx:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if stopCalled {
+		t.Error("expected Podman Stop NOT to be called for a stopped container")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
