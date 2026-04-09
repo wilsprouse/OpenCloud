@@ -1674,8 +1674,11 @@ func TestGetContainerReturnsDetail(t *testing.T) {
 			Config: &define.InspectContainerConfig{
 				Env: []string{"FOO=bar", "BAZ=qux"},
 			},
+			// Binds are now sourced from Mounts, not HostConfig.Binds.
+			Mounts: []define.InspectMount{
+				{Type: "bind", Source: "/host/data", Destination: "/container/data", Mode: "rw,Z"},
+			},
 			HostConfig: &define.InspectContainerHostConfig{
-				Binds:      []string{"/host/data:/container/data"},
 				AutoRemove: false,
 				RestartPolicy: &define.InspectRestartPolicy{
 					Name: "always",
@@ -1719,11 +1722,68 @@ func TestGetContainerReturnsDetail(t *testing.T) {
 	if len(detail.Env) != 2 {
 		t.Errorf("expected 2 env vars, got %d", len(detail.Env))
 	}
-	if len(detail.Binds) != 1 || detail.Binds[0] != "/host/data:/container/data" {
+	if len(detail.Binds) != 1 || detail.Binds[0] != "/host/data:/container/data:rw,Z" {
 		t.Errorf("unexpected Binds: %v", detail.Binds)
 	}
 	if len(detail.Ports) != 1 {
 		t.Errorf("expected 1 port mapping, got %d", len(detail.Ports))
+	}
+}
+
+// TestGetContainerExcludesAnonymousVolumes verifies that anonymous and named
+// volumes (Podman internal storage paths) are excluded from the Binds field so
+// they are not passed back to UpdateContainer where they would cause a
+// "no such file or directory" error after the old container is removed.
+func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Mounts: []define.InspectMount{
+				// User-specified bind mount — must be included.
+				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw,Z"},
+				// Anonymous volume created by Podman for an image VOLUME
+				// declaration — must be excluded (source is an internal path).
+				{Type: "volume", Source: "/home/ubuntu/a1b2c3d4e5f6", Destination: "/var/cache/nginx", Mode: "rw"},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 1 {
+		t.Fatalf("expected exactly 1 bind (anonymous volume excluded), got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:rw,Z" {
+		t.Errorf("unexpected bind value: %q", detail.Binds[0])
 	}
 }
 

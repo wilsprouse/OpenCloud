@@ -301,7 +301,6 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if data.HostConfig != nil {
-		detail.Binds = data.HostConfig.Binds
 		detail.AutoRemove = data.HostConfig.AutoRemove
 
 		if data.HostConfig.RestartPolicy != nil {
@@ -320,6 +319,31 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 				detail.Ports = append(detail.Ports, mapping)
 			}
 		}
+	}
+
+	// Build the Binds list from the Mounts slice, restricting to genuine host
+	// bind mounts (Type == "bind"). Anonymous and named volumes (Type == "volume")
+	// are intentionally excluded: their source paths are internal Podman storage
+	// directories that are deleted when the container is removed. Including them
+	// would cause "no such file or directory" errors when the container is
+	// recreated via POST /update-container.
+	for _, m := range data.Mounts {
+		if m.Type != "bind" {
+			continue
+		}
+		bind := m.Source + ":" + m.Destination
+		// Re-attach only options our validator recognises so that unknown OCI
+		// kernel mount flags (e.g. "relatime") never reach the edit form.
+		var kept []string
+		for _, opt := range strings.Split(m.Mode, ",") {
+			if validMountOptions[opt] {
+				kept = append(kept, opt)
+			}
+		}
+		if len(kept) > 0 {
+			bind += ":" + strings.Join(kept, ",")
+		}
+		detail.Binds = append(detail.Binds, bind)
 	}
 
 	// Populate status from the list endpoint's human-readable string when
