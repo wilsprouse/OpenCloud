@@ -1258,26 +1258,33 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	// Inspect the existing container to check its current state.
 	data, err := updateContainerInspect(conn, req.ContainerID, nil)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to inspect container: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to inspect container %q: %v", req.ContainerID, err), http.StatusInternalServerError)
 		return
 	}
 
-	// Stop the container if it is currently running.
+	// Use the canonical full container ID returned by inspect to avoid any
+	// ambiguity when the caller supplied a short ID or name.
+	canonicalID := data.ID
+
+	// Attempt a graceful stop when the container is running. If the stop fails
+	// (e.g. the process ignores SIGTERM, Podman times out, or the container has
+	// already exited) we log the error and continue: the subsequent force-remove
+	// call uses --force which kills and removes in one shot regardless of state.
 	if data.State != nil && data.State.Status == "running" {
-		if err := updateContainerStop(conn, req.ContainerID, nil); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to stop container: %v", err), http.StatusInternalServerError)
-			return
+		if err := updateContainerStop(conn, canonicalID, nil); err != nil {
+			log.Printf("UpdateContainer: non-fatal stop error for %s (proceeding to force remove): %v", canonicalID, err)
 		}
 	}
 
-	// Remove the old container. WithIgnore(true) suppresses "not found" errors;
-	// if the container disappeared between inspect and remove we still proceed.
-	if reports, err := updateContainerRemove(conn, req.ContainerID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true)); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to remove container: %v", err), http.StatusInternalServerError)
+	// Force-remove the old container. WithForce(true) kills it if still running;
+	// WithIgnore(true) suppresses "not found" errors so we tolerate a container
+	// that disappeared between inspect and remove.
+	if reports, err := updateContainerRemove(conn, canonicalID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true)); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to remove container %q: %v", canonicalID, err), http.StatusInternalServerError)
 		return
 	} else if len(reports) > 0 && reports[0].Err != nil {
 		// A non-fatal per-container error (e.g. already removed) – log and continue.
-		log.Printf("UpdateContainer: non-fatal remove error for %s: %v", req.ContainerID, reports[0].Err)
+		log.Printf("UpdateContainer: non-fatal remove error for %s: %v", canonicalID, reports[0].Err)
 	}
 
 	// Resolve the image reference, pulling if necessary.

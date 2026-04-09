@@ -93,6 +93,16 @@ function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
 }
 
+// Extracts the plain-text body from an Axios error response so the user sees
+// the specific backend error message rather than the generic HTTP status line.
+function getBackendErrorMessage(err: unknown): string {
+  if (err != null && typeof err === "object" && "response" in err) {
+    const data = (err as { response?: { data?: unknown } }).response?.data
+    if (typeof data === "string" && data.trim()) return data.trim()
+  }
+  return err instanceof Error ? err.message : "Failed to update container"
+}
+
 // Parses a port string like "8080:80/tcp" or "0.0.0.0:8080:80/tcp" into a PortMapping.
 function parsePortString(port: string): PortMapping | null {
   // Strip optional protocol suffix (e.g. "/tcp")
@@ -323,10 +333,9 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
         await fetchContainer()
         setActiveTab("overview")
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Failed to update container:", err)
-      const msg = err instanceof Error ? err.message : "Failed to update container"
-      toast.error(msg)
+      toast.error(getBackendErrorMessage(err))
     } finally {
       setIsUpdating(false)
     }

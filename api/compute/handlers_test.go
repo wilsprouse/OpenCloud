@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -2139,6 +2140,83 @@ func TestUpdateContainerStopsRemovesAndRecreates(t *testing.T) {
 	}
 	if resp["containerId"] != "new-container-id" {
 		t.Errorf("expected containerId new-container-id, got %q", resp["containerId"])
+	}
+}
+
+// TestUpdateContainerStopFailureIsNonFatal verifies that a stop error does not abort the update.
+// The handler should log the failure and proceed to force-remove and recreate the container.
+func TestUpdateContainerStopFailureIsNonFatal(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "running-container-id",
+			ImageName: "nginx:latest",
+			State: &define.InspectContainerState{
+				Status: "running",
+			},
+		}, nil
+	}
+
+	// Stop returns an error – this must not abort the update.
+	stopCalled := false
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error {
+		stopCalled = true
+		return fmt.Errorf("stop timed out")
+	}
+
+	removeCalled := false
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		removeCalled = true
+		return nil, nil
+	}
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) {
+		return ref, nil
+	}
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		return podmanTypes.ContainerCreateResponse{ID: "new-container-id"}, nil
+	}
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error {
+		return nil
+	}
+
+	body, _ := json.Marshal(UpdateContainerRequest{
+		ContainerID: "running-container-id",
+		Image:       "nginx:latest",
+		Name:        "my-container",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 even when stop fails, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if !stopCalled {
+		t.Error("expected Stop to be attempted")
+	}
+	if !removeCalled {
+		t.Error("expected Remove to be called even after stop failure")
 	}
 }
 
