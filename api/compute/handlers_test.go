@@ -1674,11 +1674,13 @@ func TestGetContainerReturnsDetail(t *testing.T) {
 			Config: &define.InspectContainerConfig{
 				Env: []string{"FOO=bar", "BAZ=qux"},
 			},
-			// Binds are now sourced from Mounts, not HostConfig.Binds.
+			// Mounts drives the allowlist (Type=="bind" only).
 			Mounts: []define.InspectMount{
-				{Type: "bind", Source: "/host/data", Destination: "/container/data", Mode: "rw,Z"},
+				{Type: "bind", Source: "/host/data", Destination: "/container/data", Mode: "rw"},
 			},
+			// HostConfig.Binds is the primary source for flags (Z, U, etc.).
 			HostConfig: &define.InspectContainerHostConfig{
+				Binds:      []string{"/host/data:/container/data:rw,Z"},
 				AutoRemove: false,
 				RestartPolicy: &define.InspectRestartPolicy{
 					Name: "always",
@@ -1730,10 +1732,69 @@ func TestGetContainerReturnsDetail(t *testing.T) {
 	}
 }
 
+// TestGetContainerPreservesZAndUFlags verifies that the Z (SELinux relabeling)
+// and U (user-namespace chown) flags are preserved from HostConfig.Binds even
+// when they are absent from the corresponding InspectMount.Mode.  These flags
+// are applied by Podman at mount-setup time and are not guaranteed to round-trip
+// through the kernel-level mount options stored in Mode.
+func TestGetContainerPreservesZAndUFlags(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			// Mode does NOT include Z or U — simulates Podman's behavior where
+			// create-time flags are applied but not stored in Mount.Mode.
+			Mounts: []define.InspectMount{
+				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw"},
+			},
+			// HostConfig.Binds retains the original user-specified spec.
+			HostConfig: &define.InspectContainerHostConfig{
+				Binds:         []string{"/home/user/data:/usr/share/nginx/html:Z,U,rw"},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 1 {
+		t.Fatalf("expected 1 bind, got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:Z,U,rw" {
+		t.Errorf("Z and U flags not preserved; got %q", detail.Binds[0])
+	}
+}
+
 // TestGetContainerExcludesAnonymousVolumes verifies that anonymous and named
 // volumes (Podman internal storage paths) are excluded from the Binds field so
 // they are not passed back to UpdateContainer where they would cause a
 // "no such file or directory" error after the old container is removed.
+// This exercises both the Mounts path and the HostConfig.Binds path.
 func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
 	origConnection := getContainerConnection
 	origInspect := inspectPodmanContainer
@@ -1759,7 +1820,15 @@ func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
 				// declaration — must be excluded (source is an internal path).
 				{Type: "volume", Source: "/home/ubuntu/a1b2c3d4e5f6", Destination: "/var/cache/nginx", Mode: "rw"},
 			},
+			// HostConfig.Binds may also contain the anonymous volume path
+			// as Podman used to include it in older behaviour — it must still
+			// be excluded because the source directory is deleted on container
+			// removal and would cause a statfs error on recreate.
 			HostConfig: &define.InspectContainerHostConfig{
+				Binds: []string{
+					"/home/user/data:/usr/share/nginx/html:Z",
+					"/home/ubuntu/a1b2c3d4e5f6:/var/cache/nginx",
+				},
 				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
 			},
 		}, nil
@@ -1782,7 +1851,7 @@ func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
 	if len(detail.Binds) != 1 {
 		t.Fatalf("expected exactly 1 bind (anonymous volume excluded), got %d: %v", len(detail.Binds), detail.Binds)
 	}
-	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:rw,Z" {
+	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:Z" {
 		t.Errorf("unexpected bind value: %q", detail.Binds[0])
 	}
 }

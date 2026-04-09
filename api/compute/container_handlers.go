@@ -321,19 +321,79 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build the Binds list from the Mounts slice, restricting to genuine host
-	// bind mounts (Type == "bind"). Anonymous and named volumes (Type == "volume")
-	// are intentionally excluded: their source paths are internal Podman storage
-	// directories that are deleted when the container is removed. Including them
-	// would cause "no such file or directory" errors when the container is
-	// recreated via POST /update-container.
+	// Build the Binds list for the edit form.
+	//
+	// Why two data sources are needed:
+	//   • data.Mounts  — the only reliable way to distinguish genuine host bind
+	//     mounts (Type == "bind") from anonymous/named Podman volumes
+	//     (Type == "volume"). Anonymous volumes have internal source paths such as
+	//     /home/ubuntu/<64-hex-hash> that are deleted when the container is removed;
+	//     passing them back to UpdateContainer causes "statfs … no such file or
+	//     directory" errors at recreate time.
+	//   • data.HostConfig.Binds — stores the original user-specified bind spec
+	//     verbatim (e.g. "/host:/ctr:Z,U,rw"). SELinux relabeling (Z/z) and user-
+	//     namespace UID/GID remapping (U) are applied at mount-setup time and do NOT
+	//     survive into data.Mounts[i].Mode; they would be silently dropped if we
+	//     relied on Mode alone.
+	//
+	// Strategy:
+	//   1. Build an allowlist of container-side paths that are genuine bind mounts
+	//      from data.Mounts (Type == "bind").
+	//   2. Iterate data.HostConfig.Binds; include only those entries whose
+	//      destination is in the allowlist (excludes anonymous-volume entries).
+	//   3. Filter each entry's options through validMountOptions to strip unknown
+	//      kernel flags (e.g. "relatime") that our validator would reject.
+	//   4. For any bind mount that appears in data.Mounts but has no matching
+	//      HostConfig.Binds entry (e.g. added via --mount instead of -v), fall
+	//      back to data.Mounts[i].Mode.
+
+	// Step 1 — allowlist of genuine bind destinations.
+	bindDests := make(map[string]bool)
 	for _, m := range data.Mounts {
-		if m.Type != "bind" {
+		if m.Type == "bind" {
+			bindDests[m.Destination] = true
+		}
+	}
+
+	// Step 2/3 — include HostConfig.Binds entries that are genuine bind mounts,
+	// filtering options through validMountOptions.
+	coveredByHostConfig := make(map[string]bool)
+	if data.HostConfig != nil {
+		for _, b := range data.HostConfig.Binds {
+			parts := strings.SplitN(b, ":", 3)
+			if len(parts) < 2 {
+				continue
+			}
+			dest := parts[1]
+			if !bindDests[dest] {
+				// Not a genuine bind mount (e.g. anonymous volume path).
+				continue
+			}
+			coveredByHostConfig[dest] = true
+			if len(parts) == 3 {
+				var kept []string
+				for _, opt := range strings.Split(parts[2], ",") {
+					if validMountOptions[opt] {
+						kept = append(kept, opt)
+					}
+				}
+				if len(kept) > 0 {
+					detail.Binds = append(detail.Binds, parts[0]+":"+parts[1]+":"+strings.Join(kept, ","))
+				} else {
+					detail.Binds = append(detail.Binds, parts[0]+":"+parts[1])
+				}
+			} else {
+				detail.Binds = append(detail.Binds, b)
+			}
+		}
+	}
+
+	// Step 4 — fallback for bind mounts not listed in HostConfig.Binds.
+	for _, m := range data.Mounts {
+		if m.Type != "bind" || coveredByHostConfig[m.Destination] {
 			continue
 		}
 		bind := m.Source + ":" + m.Destination
-		// Re-attach only options our validator recognises so that unknown OCI
-		// kernel mount flags (e.g. "relatime") never reach the edit form.
 		var kept []string
 		for _, opt := range strings.Split(m.Mode, ",") {
 			if validMountOptions[opt] {
