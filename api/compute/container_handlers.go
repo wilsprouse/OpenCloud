@@ -370,7 +370,7 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 	// Step 2 — prefer the opencloud/volumes label (preserves Z/U verbatim).
 	if data.Config != nil {
 		if volsLabel := data.Config.Labels["opencloud/volumes"]; volsLabel != "" {
-			for _, vol := range strings.Fields(volsLabel) {
+			for _, vol := range strings.Split(volsLabel, "\n") {
 				parts := strings.SplitN(vol, ":", 3)
 				if len(parts) < 2 {
 					continue
@@ -935,8 +935,9 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	// Store the original volume strings verbatim so GetContainer can recover Z/U flags.
 	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
 	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
+	// Newline is used as the separator because it cannot appear in a valid bind specification.
 	if len(req.Volumes) > 0 {
-		labels["opencloud/volumes"] = strings.Join(req.Volumes, " ")
+		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
 	}
 	fmt.Printf("Container labels: %+v\n", labels)
 
@@ -1221,7 +1222,7 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
 	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
 	if len(req.Volumes) > 0 {
-		labels["opencloud/volumes"] = strings.Join(req.Volumes, " ")
+		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
 	}
 
 	spec := specgen.NewSpecGenerator(imageRef, false)
@@ -1456,7 +1457,7 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
 	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
 	if len(req.Volumes) > 0 {
-		labels["opencloud/volumes"] = strings.Join(req.Volumes, " ")
+		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
 	}
 
 	spec := specgen.NewSpecGenerator(imageRef, false)

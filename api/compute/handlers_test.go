@@ -2051,6 +2051,74 @@ func TestUpdateContainerStoresVolumesLabel(t *testing.T) {
 	}
 }
 
+// TestGetContainerMultipleVolumesFromLabel verifies that when the opencloud/volumes
+// label contains multiple volume entries (newline-separated), all are parsed correctly
+// and Z/U flags on each entry are preserved.
+func TestGetContainerMultipleVolumesFromLabel(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{
+					// Two volumes, newline-separated, each with Z/U flags.
+					"opencloud/volumes": "/data/a:/app/a:Z,U\n/data/b:/app/b:U",
+				},
+			},
+			Mounts: []define.InspectMount{
+				{Type: "bind", Source: "/data/a", Destination: "/app/a", Mode: "rw"},
+				{Type: "bind", Source: "/data/b", Destination: "/app/b", Mode: "rw"},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				// HostConfig.Binds lacks Z and U (stripped by Podman).
+				Binds:         []string{"/data/a:/app/a:rw", "/data/b:/app/b:rw"},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 2 {
+		t.Fatalf("expected 2 binds, got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	bindsMap := make(map[string]bool)
+	for _, b := range detail.Binds {
+		bindsMap[b] = true
+	}
+	if !bindsMap["/data/a:/app/a:Z,U"] {
+		t.Errorf("expected /data/a:/app/a:Z,U in binds, got %v", detail.Binds)
+	}
+	if !bindsMap["/data/b:/app/b:U"] {
+		t.Errorf("expected /data/b:/app/b:U in binds, got %v", detail.Binds)
+	}
+}
+
 // TestGetContainerInspectFailure verifies that Podman Inspect errors result in 500.
 func TestGetContainerInspectFailure(t *testing.T) {
 	origConnection := getContainerConnection
