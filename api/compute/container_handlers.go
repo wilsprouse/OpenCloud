@@ -323,29 +323,23 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 
 	// Build the Binds list for the edit form.
 	//
-	// Why two data sources are needed:
-	//   • data.Mounts  — the only reliable way to distinguish genuine host bind
-	//     mounts (Type == "bind") from anonymous/named Podman volumes
-	//     (Type == "volume"). Anonymous volumes have internal source paths such as
-	//     /home/ubuntu/<64-hex-hash> that are deleted when the container is removed;
-	//     passing them back to UpdateContainer causes "statfs … no such file or
-	//     directory" errors at recreate time.
-	//   • data.HostConfig.Binds — stores the original user-specified bind spec
-	//     verbatim (e.g. "/host:/ctr:Z,U,rw"). SELinux relabeling (Z/z) and user-
-	//     namespace UID/GID remapping (U) are applied at mount-setup time and do NOT
-	//     survive into data.Mounts[i].Mode; they would be silently dropped if we
-	//     relied on Mode alone.
+	// Why three data sources are needed, in priority order:
+	//   1. opencloud/volumes label — set by OpenCloud at container creation/update time
+	//      and stores the original user-specified volume strings verbatim (e.g.
+	//      "/host:/ctr:Z,U"). This is the most reliable source because Z (SELinux
+	//      relabeling) and U (user-namespace UID/GID remapping) are applied by Podman
+	//      at mount-setup time and are NOT guaranteed to survive into either
+	//      HostConfig.Binds or data.Mounts[i].Mode; the label preserves them exactly.
+	//   2. data.HostConfig.Binds — used when the label is absent (e.g. containers
+	//      created before the label was introduced, or created by another tool).
+	//   3. data.Mounts fallback — used when neither the label nor HostConfig.Binds
+	//      covers a particular mount (e.g. added via --mount instead of -v). Note
+	//      that Z/U flags will be absent from this path.
 	//
-	// Strategy:
-	//   1. Build an allowlist of container-side paths that are genuine bind mounts
-	//      from data.Mounts (Type == "bind").
-	//   2. Iterate data.HostConfig.Binds; include only those entries whose
-	//      destination is in the allowlist (excludes anonymous-volume entries).
-	//   3. Filter each entry's options through validMountOptions to strip unknown
-	//      kernel flags (e.g. "relatime") that our validator would reject.
-	//   4. For any bind mount that appears in data.Mounts but has no matching
-	//      HostConfig.Binds entry (e.g. added via --mount instead of -v), fall
-	//      back to data.Mounts[i].Mode.
+	// data.Mounts (Type == "bind") is always used to build an allowlist of genuine
+	// bind destinations so anonymous/named Podman volumes are excluded from Binds.
+	// Anonymous volumes have internal source paths that are deleted when the container
+	// is removed; passing them back to UpdateContainer causes statfs errors at recreate.
 
 	// Step 1 — allowlist of genuine bind destinations.
 	bindDests := make(map[string]bool)
@@ -355,9 +349,48 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Step 2/3 — include HostConfig.Binds entries that are genuine bind mounts,
-	// filtering options through validMountOptions.
-	coveredByHostConfig := make(map[string]bool)
+	// appendBind is a helper that filters the options segment through validMountOptions
+	// and appends the resulting "src:dest[:opts]" string to detail.Binds.
+	appendBind := func(src, dest, optsStr string) {
+		var kept []string
+		for _, opt := range strings.Split(optsStr, ",") {
+			if validMountOptions[opt] {
+				kept = append(kept, opt)
+			}
+		}
+		if len(kept) > 0 {
+			detail.Binds = append(detail.Binds, src+":"+dest+":"+strings.Join(kept, ","))
+		} else {
+			detail.Binds = append(detail.Binds, src+":"+dest)
+		}
+	}
+
+	coveredDests := make(map[string]bool)
+
+	// Step 2 — prefer the opencloud/volumes label (preserves Z/U verbatim).
+	if data.Config != nil {
+		if volsLabel := data.Config.Labels["opencloud/volumes"]; volsLabel != "" {
+			for _, vol := range strings.Split(volsLabel, "\n") {
+				parts := strings.SplitN(vol, ":", 3)
+				if len(parts) < 2 {
+					continue
+				}
+				dest := parts[1]
+				if !bindDests[dest] {
+					// Not a genuine bind mount (e.g. label entry for an anonymous volume).
+					continue
+				}
+				coveredDests[dest] = true
+				optsStr := ""
+				if len(parts) == 3 {
+					optsStr = parts[2]
+				}
+				appendBind(parts[0], dest, optsStr)
+			}
+		}
+	}
+
+	// Step 3 — fall back to HostConfig.Binds for destinations not yet covered by the label.
 	if data.HostConfig != nil {
 		for _, b := range data.HostConfig.Binds {
 			parts := strings.SplitN(b, ":", 3)
@@ -365,45 +398,26 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			dest := parts[1]
-			if !bindDests[dest] {
-				// Not a genuine bind mount (e.g. anonymous volume path).
+			if !bindDests[dest] || coveredDests[dest] {
+				// Not a genuine bind mount, or already handled via the label.
 				continue
 			}
-			coveredByHostConfig[dest] = true
+			coveredDests[dest] = true
+			optsStr := ""
 			if len(parts) == 3 {
-				var kept []string
-				for _, opt := range strings.Split(parts[2], ",") {
-					if validMountOptions[opt] {
-						kept = append(kept, opt)
-					}
-				}
-				if len(kept) > 0 {
-					detail.Binds = append(detail.Binds, parts[0]+":"+parts[1]+":"+strings.Join(kept, ","))
-				} else {
-					detail.Binds = append(detail.Binds, parts[0]+":"+parts[1])
-				}
-			} else {
-				detail.Binds = append(detail.Binds, b)
+				optsStr = parts[2]
 			}
+			appendBind(parts[0], dest, optsStr)
 		}
 	}
 
-	// Step 4 — fallback for bind mounts not listed in HostConfig.Binds.
+	// Step 4 — fallback for bind mounts not listed in either the label or HostConfig.Binds.
+	// Note: Z/U will be absent from m.Mode; this path is a last resort for --mount entries.
 	for _, m := range data.Mounts {
-		if m.Type != "bind" || coveredByHostConfig[m.Destination] {
+		if m.Type != "bind" || coveredDests[m.Destination] {
 			continue
 		}
-		bind := m.Source + ":" + m.Destination
-		var kept []string
-		for _, opt := range strings.Split(m.Mode, ",") {
-			if validMountOptions[opt] {
-				kept = append(kept, opt)
-			}
-		}
-		if len(kept) > 0 {
-			bind += ":" + strings.Join(kept, ",")
-		}
-		detail.Binds = append(detail.Binds, bind)
+		appendBind(m.Source, m.Destination, m.Mode)
 	}
 
 	// Populate status from the list endpoint's human-readable string when
@@ -918,6 +932,13 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if len(req.Ports) > 0 {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
+	// Store the original volume strings verbatim so GetContainer can recover Z/U flags.
+	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
+	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
+	// Newline is used as the separator because it cannot appear in a valid bind specification.
+	if len(req.Volumes) > 0 {
+		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
+	}
 	fmt.Printf("Container labels: %+v\n", labels)
 
 	spec := specgen.NewSpecGenerator(imageRef, false)
@@ -1197,6 +1218,12 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 	if len(req.Ports) > 0 {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
+	// Store the original volume strings verbatim so GetContainer can recover Z/U flags.
+	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
+	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
+	if len(req.Volumes) > 0 {
+		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
+	}
 
 	spec := specgen.NewSpecGenerator(imageRef, false)
 	spec.Name = containerID
@@ -1425,6 +1452,12 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Ports) > 0 {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
+	}
+	// Store the original volume strings verbatim so GetContainer can recover Z/U flags.
+	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
+	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
+	if len(req.Volumes) > 0 {
+		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
 	}
 
 	spec := specgen.NewSpecGenerator(imageRef, false)
