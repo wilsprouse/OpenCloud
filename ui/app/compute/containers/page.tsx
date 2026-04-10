@@ -49,6 +49,9 @@ type ContainerItem = {
   MemoryUsageBytes: number
 }
 
+/** Base path prefix for blob storage buckets used as container volume mounts. */
+const BLOB_STORAGE_MOUNT_PREFIX = "~/.opencloud/blob_storage"
+
 // Represents an image returned by /get-images (Container Registry)
 type AvailableImage = {
   Id: string
@@ -971,7 +974,7 @@ export default function ContainersPage() {
                                 </SelectItem>
                               ) : (
                                 mountBuckets.map((bucket) => (
-                                  <SelectItem key={bucket.name} value={`~/.opencloud/blob_storage/${bucket.name}`}>
+                                  <SelectItem key={bucket.name} value={`${BLOB_STORAGE_MOUNT_PREFIX}/${bucket.name}`}>
                                     {bucket.name}
                                   </SelectItem>
                                 ))
