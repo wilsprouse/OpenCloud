@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	service_ledger "github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
 // TestListBlobBuckets tests the blob bucket listing
@@ -642,5 +644,153 @@ func TestDeleteBucketSuccess(t *testing.T) {
 	if _, err := os.Stat(bucketPath); !os.IsNotExist(err) {
 		t.Errorf("Expected bucket directory to be removed after deletion")
 		os.RemoveAll(bucketPath)
+	}
+}
+
+// TestCreateBucketWithContainerMount tests that creating a bucket with containerMount=true
+// succeeds and the bucket directory is created on disk.
+func TestCreateBucketWithContainerMount(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
+		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	bucketName := "mount-test-bucket"
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":           bucketName,
+		"containerMount": true,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/create-bucket", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	CreateBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected status %d, got %d", http.StatusCreated, resp.StatusCode)
+	}
+
+	// Verify the bucket directory was created
+	bucketPath := filepath.Join(blobStoragePath, bucketName)
+	if _, err := os.Stat(bucketPath); os.IsNotExist(err) {
+		t.Errorf("Expected bucket directory to exist at %s", bucketPath)
+	}
+
+	// Verify response body
+	var result map[string]string
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result["bucket"] != bucketName {
+		t.Errorf("Expected bucket name %q in response, got %q", bucketName, result["bucket"])
+	}
+}
+
+// TestListContainerMountBucketsEmpty tests that listing container mount buckets returns
+// an empty result when no buckets are marked as container mounts.
+func TestListContainerMountBucketsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
+		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/list-container-mount-buckets", nil)
+	w := httptest.NewRecorder()
+
+	ListContainerMountBuckets(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	var buckets []Bucket
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(bodyBytes, &buckets); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if len(buckets) != 0 {
+		t.Errorf("Expected 0 container mount buckets, got %d", len(buckets))
+	}
+}
+
+// TestListContainerMountBuckets tests that only buckets marked as container mounts
+// are returned by the ListContainerMountBuckets handler.
+func TestListContainerMountBuckets(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
+		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	// Create two buckets on disk: one mount, one non-mount
+	mountBucket := "mount-bucket"
+	normalBucket := "normal-bucket"
+	for _, name := range []string{mountBucket, normalBucket} {
+		if err := os.Mkdir(filepath.Join(blobStoragePath, name), 0755); err != nil {
+			t.Fatalf("Failed to create bucket dir %q: %v", name, err)
+		}
+	}
+
+	// Add a file to the mount bucket so we can verify objectCount/totalSize
+	testContent := []byte("hello mount")
+	if err := os.WriteFile(filepath.Join(blobStoragePath, mountBucket, "test.txt"), testContent, 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	// Register buckets in the service ledger via the CreateBucket handler
+	// Mount bucket
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":           mountBucket,
+		"containerMount": true,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/create-bucket", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+	// We already created the dir, so CreateBucket's Mkdir will fail; instead use the ledger directly
+	// We need to call the ledger update function directly since the bucket dir already exists
+	service_ledger.UpdateBucketEntry(mountBucket, "2024-01-01T00:00:00Z", true)
+	service_ledger.UpdateBucketEntry(normalBucket, "2024-01-01T00:00:00Z", false)
+
+	// Now call ListContainerMountBuckets
+	req = httptest.NewRequest(http.MethodGet, "/list-container-mount-buckets", nil)
+	w = httptest.NewRecorder()
+
+	ListContainerMountBuckets(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	var buckets []Bucket
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(bodyBytes, &buckets); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Only the mount bucket should be returned
+	if len(buckets) != 1 {
+		t.Fatalf("Expected 1 container mount bucket, got %d", len(buckets))
+	}
+
+	if buckets[0].Name != mountBucket {
+		t.Errorf("Expected bucket name %q, got %q", mountBucket, buckets[0].Name)
+	}
+	if !buckets[0].ContainerMount {
+		t.Error("Expected ContainerMount to be true")
+	}
+	if buckets[0].ObjectCount != 1 {
+		t.Errorf("Expected objectCount 1, got %d", buckets[0].ObjectCount)
+	}
+	if buckets[0].TotalSize != int64(len(testContent)) {
+		t.Errorf("Expected totalSize %d, got %d", len(testContent), buckets[0].TotalSize)
 	}
 }

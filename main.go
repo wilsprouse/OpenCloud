@@ -159,6 +159,7 @@ func main() {
 	mux.HandleFunc("/delete-bucket", storageapi.DeleteBucket)
 	mux.HandleFunc("/download-object", storageapi.DownloadObject)
 	mux.HandleFunc("/rename-bucket", storageapi.RenameBucket)
+	mux.HandleFunc("/list-container-mount-buckets", storageapi.ListContainerMountBuckets)
 	mux.HandleFunc("/list-functions", computeapi.ListFunctions)
 	mux.HandleFunc("/invoke-function", computeapi.InvokeFunction)
 	mux.HandleFunc("/create-function", computeapi.CreateFunction)

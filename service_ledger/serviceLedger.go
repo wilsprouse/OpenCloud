@@ -67,8 +67,9 @@ type ContainerImageEntry struct {
 
 // BucketEntry stores metadata for a blob storage bucket in the service ledger
 type BucketEntry struct {
-	Name      string `json:"name"`
-	CreatedAt string `json:"createdAt"`
+	Name           string `json:"name"`
+	CreatedAt      string `json:"createdAt"`
+	ContainerMount bool   `json:"containerMount"`
 }
 
 // ServiceStatus represents the status of a single service
@@ -1051,7 +1052,7 @@ func SyncFunctionsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateBucketEntry stores or updates a blob storage bucket entry in the blob_storage service ledger.
-func UpdateBucketEntry(bucketName, createdAt string) error {
+func UpdateBucketEntry(bucketName, createdAt string, containerMount bool) error {
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
 
@@ -1068,8 +1069,9 @@ func UpdateBucketEntry(bucketName, createdAt string) error {
 	}
 
 	serviceStatus.Buckets[bucketName] = BucketEntry{
-		Name:      bucketName,
-		CreatedAt: createdAt,
+		Name:           bucketName,
+		CreatedAt:      createdAt,
+		ContainerMount: containerMount,
 	}
 
 	ledger["blob_storage"] = serviceStatus
@@ -1159,8 +1161,9 @@ func RenameBucketEntry(currentName, newName string) error {
 
 	// Copy the entry under the new name and remove the old entry
 	serviceStatus.Buckets[newName] = BucketEntry{
-		Name:      newName,
-		CreatedAt: existing.CreatedAt,
+		Name:           newName,
+		CreatedAt:      existing.CreatedAt,
+		ContainerMount: existing.ContainerMount,
 	}
 	delete(serviceStatus.Buckets, currentName)
 

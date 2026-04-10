@@ -28,10 +28,11 @@ type Blob struct {
 
 // Bucket represents a blob storage bucket with aggregate metadata.
 type Bucket struct {
-	Name         string `json:"name"`
-	ObjectCount  int    `json:"objectCount"`
-	TotalSize    int64  `json:"totalSize"`
-	LastModified string `json:"lastModified"`
+	Name           string `json:"name"`
+	ObjectCount    int    `json:"objectCount"`
+	TotalSize      int64  `json:"totalSize"`
+	LastModified   string `json:"lastModified"`
+	ContainerMount bool   `json:"containerMount"`
 }
 
 // ListBlobBuckets returns a list of blob storage buckets with metadata.
@@ -84,6 +85,72 @@ func ListBlobBuckets(w http.ResponseWriter, r *http.Request) {
 			ObjectCount:  objectCount,
 			TotalSize:    totalSize,
 			LastModified: lastModified.UTC().Format(time.RFC3339),
+		})
+	}
+
+	// Enrich buckets with container mount status from the service ledger
+	allEntries, _ := service_ledger.GetAllBucketEntries()
+	for i := range buckets {
+		if entry, ok := allEntries[buckets[i].Name]; ok {
+			buckets[i].ContainerMount = entry.ContainerMount
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(buckets)
+}
+
+// ListContainerMountBuckets returns blob storage buckets that are marked as container volume mounts.
+func ListContainerMountBuckets(w http.ResponseWriter, r *http.Request) {
+	allEntries, err := service_ledger.GetAllBucketEntries()
+	if err != nil {
+		http.Error(w, "Failed to read bucket entries", http.StatusInternalServerError)
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
+		return
+	}
+
+	root := filepath.Join(home, ".opencloud", "blob_storage")
+
+	var buckets []Bucket
+	for name, entry := range allEntries {
+		if !entry.ContainerMount {
+			continue
+		}
+
+		bucketPath := filepath.Join(root, name)
+		bucketInfo, err := os.Stat(bucketPath)
+		if err != nil {
+			continue // bucket directory doesn't exist on disk, skip
+		}
+
+		files, _ := os.ReadDir(bucketPath)
+		objectCount := 0
+		var totalSize int64
+		var lastModified time.Time = bucketInfo.ModTime()
+
+		for _, file := range files {
+			if file.IsDir() {
+				continue
+			}
+			objectCount++
+			info, _ := os.Stat(filepath.Join(bucketPath, file.Name()))
+			totalSize += info.Size()
+			if info.ModTime().After(lastModified) {
+				lastModified = info.ModTime()
+			}
+		}
+
+		buckets = append(buckets, Bucket{
+			Name:           name,
+			ObjectCount:    objectCount,
+			TotalSize:      totalSize,
+			LastModified:   lastModified.UTC().Format(time.RFC3339),
+			ContainerMount: true,
 		})
 	}
 
@@ -147,7 +214,8 @@ func GetBlobBuckets(w http.ResponseWriter, r *http.Request) {
 // CreateBucket creates a new blob storage bucket
 func CreateBucket(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name           string `json:"name"`
+		ContainerMount bool   `json:"containerMount"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -180,7 +248,7 @@ func CreateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ledgerErr := service_ledger.UpdateBucketEntry(body.Name, time.Now().UTC().Format(time.RFC3339)); ledgerErr != nil {
+	if ledgerErr := service_ledger.UpdateBucketEntry(body.Name, time.Now().UTC().Format(time.RFC3339), body.ContainerMount); ledgerErr != nil {
 		log.Printf("Warning: failed to record bucket %s in service ledger: %v", body.Name, ledgerErr)
 	}
 
