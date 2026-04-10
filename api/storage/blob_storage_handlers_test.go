@@ -746,22 +746,17 @@ func TestListContainerMountBuckets(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	// Register buckets in the service ledger via the CreateBucket handler
-	// Mount bucket
-	body, _ := json.Marshal(map[string]interface{}{
-		"name":           mountBucket,
-		"containerMount": true,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/create-bucket", bytes.NewBuffer(body))
-	w := httptest.NewRecorder()
-	// We already created the dir, so CreateBucket's Mkdir will fail; instead use the ledger directly
-	// We need to call the ledger update function directly since the bucket dir already exists
-	service_ledger.UpdateBucketEntry(mountBucket, "2024-01-01T00:00:00Z", true)
-	service_ledger.UpdateBucketEntry(normalBucket, "2024-01-01T00:00:00Z", false)
+	// Register buckets in the service ledger directly since the bucket dirs already exist
+	if err := service_ledger.UpdateBucketEntry(mountBucket, "2024-01-01T00:00:00Z", true); err != nil {
+		t.Fatalf("Failed to update mount bucket ledger entry: %v", err)
+	}
+	if err := service_ledger.UpdateBucketEntry(normalBucket, "2024-01-01T00:00:00Z", false); err != nil {
+		t.Fatalf("Failed to update normal bucket ledger entry: %v", err)
+	}
 
 	// Now call ListContainerMountBuckets
-	req = httptest.NewRequest(http.MethodGet, "/list-container-mount-buckets", nil)
-	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/list-container-mount-buckets", nil)
+	w := httptest.NewRecorder()
 
 	ListContainerMountBuckets(w, req)
 
