@@ -89,7 +89,10 @@ func ListBlobBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich buckets with container mount status from the service ledger
-	allEntries, _ := service_ledger.GetAllBucketEntries()
+	allEntries, ledgerErr := service_ledger.GetAllBucketEntries()
+	if ledgerErr != nil {
+		log.Printf("Warning: failed to read bucket entries from service ledger: %v", ledgerErr)
+	}
 	for i := range buckets {
 		if entry, ok := allEntries[buckets[i].Name]; ok {
 			buckets[i].ContainerMount = entry.ContainerMount
@@ -138,7 +141,10 @@ func ListContainerMountBuckets(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			objectCount++
-			info, _ := os.Stat(filepath.Join(bucketPath, file.Name()))
+			info, err := os.Stat(filepath.Join(bucketPath, file.Name()))
+			if err != nil {
+				continue
+			}
 			totalSize += info.Size()
 			if info.ModTime().After(lastModified) {
 				lastModified = info.ModTime()
