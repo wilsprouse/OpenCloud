@@ -146,6 +146,9 @@ export default function ContainersPage() {
   const [runPorts, setRunPorts] = useState<PortMapping[]>([{ hostPort: "", containerPort: "" }])
   const [runEnvVars, setRunEnvVars] = useState<EnvVar[]>([{ key: "", value: "" }])
   const [runVolumes, setRunVolumes] = useState<VolumeMount[]>([{ hostPath: "", containerPath: "", Z: false, U: false }])
+  // Blob storage buckets available as container volume mounts
+  const [mountBuckets, setMountBuckets] = useState<{ name: string }[]>([])
+  const [loadingMountBuckets, setLoadingMountBuckets] = useState(false)
   const [runRestartPolicy, setRunRestartPolicy] = useState("no")
   const [runAutoRemove, setRunAutoRemove] = useState(false)
   const [runCommand, setRunCommand] = useState("")
@@ -266,6 +269,19 @@ export default function ContainersPage() {
       console.error("Failed to fetch available images:", err)
     } finally {
       setLoadingImages(false)
+    }
+  }
+
+  // Fetch blob storage buckets marked as container volume mounts
+  const fetchMountBuckets = async () => {
+    setLoadingMountBuckets(true)
+    try {
+      const res = await client.get<{ name: string }[]>("/list-container-mount-buckets")
+      setMountBuckets(res.data || [])
+    } catch (err) {
+      console.error("Failed to fetch mount buckets:", err)
+    } finally {
+      setLoadingMountBuckets(false)
     }
   }
 
@@ -749,6 +765,7 @@ export default function ContainersPage() {
                   setIsPullRunDialogOpen(open)
                   if (open) {
                     fetchAvailableImages()
+                    fetchMountBuckets()
                   } else {
                     resetPullRunForm()
                     router.replace("/compute/containers")
@@ -940,11 +957,27 @@ export default function ContainersPage() {
                       </div>
                       {runVolumes.map((vol, index) => (
                         <div key={index} className="flex items-center space-x-2">
-                          <Input
-                            placeholder="Host path (e.g. /data)"
+                          <Select
                             value={vol.hostPath}
-                            onChange={(e) => updateVolumeMount(index, "hostPath", e.target.value)}
-                          />
+                            onValueChange={(value) => updateVolumeMount(index, "hostPath", value)}
+                          >
+                            <SelectTrigger className="w-[200px]">
+                              <SelectValue placeholder="Select bucket" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {mountBuckets.length === 0 ? (
+                                <SelectItem value="__no_buckets__" disabled>
+                                  No mount buckets available
+                                </SelectItem>
+                              ) : (
+                                mountBuckets.map((bucket) => (
+                                  <SelectItem key={bucket.name} value={`~/.opencloud/blob_storage/${bucket.name}`}>
+                                    {bucket.name}
+                                  </SelectItem>
+                                ))
+                              )}
+                            </SelectContent>
+                          </Select>
                           <span className="text-muted-foreground">:</span>
                           <Input
                             placeholder="Container path (e.g. /app/data)"
@@ -985,7 +1018,7 @@ export default function ContainersPage() {
                         </div>
                       ))}
                       <p className="text-xs text-muted-foreground">
-                        Mount host directories into the container (-v hostPath:containerPath[:Z,U]). Z: SELinux private label; U: user-namespace UID/GID mapping.
+                        Select a Blob Storage bucket marked as a container mount to use as a volume. Create mount-enabled buckets in Blob Storage.
                       </p>
                     </div>
 
