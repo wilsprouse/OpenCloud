@@ -61,8 +61,11 @@ type Bucket struct {
 // createContainerMountVolume creates a Podman named volume backed by the given directory path.
 // The volume uses the local driver with bind semantics so files written into the container at
 // the mount point are immediately visible in the blob storage directory (and vice-versa).
+// A 15-second timeout is applied so CreateBucket never hangs if Podman is slow.
 func createContainerMountVolume(volumeName, bucketPath string) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	conn, err := blobStoragePodmanConnection(ctx)
 	if err != nil {
 		return fmt.Errorf("connect to Podman: %w", err)
@@ -83,14 +86,19 @@ func createContainerMountVolume(volumeName, bucketPath string) error {
 
 // removeContainerMountVolume removes a Podman named volume created for a container mount bucket.
 // Errors are logged but do not cause a hard failure so bucket deletion can proceed regardless.
+// A 15-second timeout is applied so the bucket DELETE request never hangs if Podman is slow.
 func removeContainerMountVolume(volumeName string) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	conn, err := blobStoragePodmanConnection(ctx)
 	if err != nil {
 		log.Printf("Warning: failed to connect to Podman to remove volume %q: %v", volumeName, err)
 		return
 	}
-	if err := removePodmanVolume(conn, volumeName, nil); err != nil {
+	// Force=true ensures the volume is removed even if a container is still referencing it.
+	opts := new(volumes.RemoveOptions).WithForce(true)
+	if err := removePodmanVolume(conn, volumeName, opts); err != nil {
 		log.Printf("Warning: failed to remove Podman volume %q: %v", volumeName, err)
 	}
 }

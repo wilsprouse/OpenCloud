@@ -716,6 +716,76 @@ func TestCreateBucketWithContainerMount(t *testing.T) {
 	}
 }
 
+// TestDeleteBucketWithContainerMount tests that deleting a container-mount bucket removes
+// the bucket directory, calls Podman volume removal (with Force=true), and returns 200 OK.
+func TestDeleteBucketWithContainerMount(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
+		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	bucketName := "mount-delete-bucket"
+	bucketPath := filepath.Join(blobStoragePath, bucketName)
+	if err := os.Mkdir(bucketPath, 0755); err != nil {
+		t.Fatalf("Failed to create bucket dir: %v", err)
+	}
+	// Place a file inside the bucket to verify non-empty buckets can be deleted.
+	if err := os.WriteFile(filepath.Join(bucketPath, "item.txt"), []byte("data"), 0644); err != nil {
+		t.Fatalf("Failed to write item: %v", err)
+	}
+
+	volumeName := podmanVolumePrefix + bucketName
+	if err := service_ledger.UpdateBucketEntry(bucketName, "2024-01-01T00:00:00Z", true, volumeName); err != nil {
+		t.Fatalf("Failed to seed ledger: %v", err)
+	}
+
+	var removedVolume string
+	var removeForced bool
+	origRemove := removePodmanVolume
+	origConn := blobStoragePodmanConnection
+	t.Cleanup(func() {
+		removePodmanVolume = origRemove
+		blobStoragePodmanConnection = origConn
+	})
+	blobStoragePodmanConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	removePodmanVolume = func(ctx context.Context, name string, opts *volumes.RemoveOptions) error {
+		removedVolume = name
+		if opts != nil {
+			removeForced = opts.GetForce()
+		}
+		return nil
+	}
+
+	body, _ := json.Marshal(map[string]string{"name": bucketName})
+	req := httptest.NewRequest(http.MethodDelete, "/delete-bucket", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	DeleteBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	// Verify bucket directory was removed
+	if _, err := os.Stat(bucketPath); !os.IsNotExist(err) {
+		t.Error("Expected bucket directory to be removed")
+	}
+
+	// Verify Podman volume removal was called with the correct name and Force=true
+	if removedVolume != volumeName {
+		t.Errorf("Expected Podman volume %q to be removed, got %q", volumeName, removedVolume)
+	}
+	if !removeForced {
+		t.Error("Expected Podman volume removal to use Force=true")
+	}
+}
+
 // TestListContainerMountBucketsEmpty tests that listing container mount buckets returns
 // an empty result when no buckets are marked as container mounts.
 func TestListContainerMountBucketsEmpty(t *testing.T) {
