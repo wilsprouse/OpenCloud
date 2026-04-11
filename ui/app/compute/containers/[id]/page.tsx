@@ -177,7 +177,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
   const [editCommand, setEditCommand] = useState("")
   const [isUpdating, setIsUpdating] = useState(false)
   // Blob storage buckets available as container volume mounts
-  const [mountBuckets, setMountBuckets] = useState<{ name: string }[]>([])
+  const [mountBuckets, setMountBuckets] = useState<{ name: string; volumeName?: string }[]>([])
 
   const fetchContainer = useCallback(async () => {
     setLoading(true)
@@ -809,7 +809,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                           </SelectItem>
                         ) : (
                           mountBuckets.map((bucket) => (
-                            <SelectItem key={bucket.name} value={`${BLOB_STORAGE_MOUNT_PREFIX}/${bucket.name}`}>
+                            <SelectItem key={bucket.name} value={bucket.volumeName || `${BLOB_STORAGE_MOUNT_PREFIX}/${bucket.name}`}>
                               {bucket.name}
                             </SelectItem>
                           ))

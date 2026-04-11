@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -12,6 +13,8 @@ import (
 	"testing"
 
 	service_ledger "github.com/WavexSoftware/OpenCloud/service_ledger"
+	"github.com/containers/podman/v5/pkg/bindings/volumes"
+	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
 // TestListBlobBuckets tests the blob bucket listing
@@ -648,7 +651,7 @@ func TestDeleteBucketSuccess(t *testing.T) {
 }
 
 // TestCreateBucketWithContainerMount tests that creating a bucket with containerMount=true
-// succeeds and the bucket directory is created on disk.
+// succeeds, the bucket directory is created on disk, and a Podman named volume is requested.
 func TestCreateBucketWithContainerMount(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
@@ -656,6 +659,22 @@ func TestCreateBucketWithContainerMount(t *testing.T) {
 	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
 	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
 		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	// Track what volume name was requested
+	var capturedVolumeName string
+	origCreate := createPodmanVolume
+	origConn := blobStoragePodmanConnection
+	t.Cleanup(func() {
+		createPodmanVolume = origCreate
+		blobStoragePodmanConnection = origConn
+	})
+	blobStoragePodmanConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	createPodmanVolume = func(ctx context.Context, opts entitiesTypes.VolumeCreateOptions, _ *volumes.CreateOptions) (*entitiesTypes.VolumeConfigResponse, error) {
+		capturedVolumeName = opts.Name
+		return nil, nil
 	}
 
 	bucketName := "mount-test-bucket"
@@ -680,11 +699,20 @@ func TestCreateBucketWithContainerMount(t *testing.T) {
 		t.Errorf("Expected bucket directory to exist at %s", bucketPath)
 	}
 
+	// Verify a Podman volume was requested with the expected name
+	expectedVolumeName := podmanVolumePrefix + bucketName
+	if capturedVolumeName != expectedVolumeName {
+		t.Errorf("Expected Podman volume name %q, got %q", expectedVolumeName, capturedVolumeName)
+	}
+
 	// Verify response body
 	var result map[string]string
 	json.NewDecoder(resp.Body).Decode(&result)
 	if result["bucket"] != bucketName {
 		t.Errorf("Expected bucket name %q in response, got %q", bucketName, result["bucket"])
+	}
+	if result["volumeName"] != expectedVolumeName {
+		t.Errorf("Expected volumeName %q in response, got %q", expectedVolumeName, result["volumeName"])
 	}
 }
 
@@ -747,10 +775,10 @@ func TestListContainerMountBuckets(t *testing.T) {
 	}
 
 	// Register buckets in the service ledger directly since the bucket dirs already exist
-	if err := service_ledger.UpdateBucketEntry(mountBucket, "2024-01-01T00:00:00Z", true); err != nil {
+	if err := service_ledger.UpdateBucketEntry(mountBucket, "2024-01-01T00:00:00Z", true, "opencloud-"+mountBucket); err != nil {
 		t.Fatalf("Failed to update mount bucket ledger entry: %v", err)
 	}
-	if err := service_ledger.UpdateBucketEntry(normalBucket, "2024-01-01T00:00:00Z", false); err != nil {
+	if err := service_ledger.UpdateBucketEntry(normalBucket, "2024-01-01T00:00:00Z", false, ""); err != nil {
 		t.Fatalf("Failed to update normal bucket ledger entry: %v", err)
 	}
 

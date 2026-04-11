@@ -150,7 +150,7 @@ export default function ContainersPage() {
   const [runEnvVars, setRunEnvVars] = useState<EnvVar[]>([{ key: "", value: "" }])
   const [runVolumes, setRunVolumes] = useState<VolumeMount[]>([{ hostPath: "", containerPath: "", Z: false, U: false }])
   // Blob storage buckets available as container volume mounts
-  const [mountBuckets, setMountBuckets] = useState<{ name: string }[]>([])
+  const [mountBuckets, setMountBuckets] = useState<{ name: string; volumeName?: string }[]>([])
   const [loadingMountBuckets, setLoadingMountBuckets] = useState(false)
   const [runRestartPolicy, setRunRestartPolicy] = useState("no")
   const [runAutoRemove, setRunAutoRemove] = useState(false)
@@ -974,7 +974,7 @@ export default function ContainersPage() {
                                 </SelectItem>
                               ) : (
                                 mountBuckets.map((bucket) => (
-                                  <SelectItem key={bucket.name} value={`${BLOB_STORAGE_MOUNT_PREFIX}/${bucket.name}`}>
+                                  <SelectItem key={bucket.name} value={bucket.volumeName || `${BLOB_STORAGE_MOUNT_PREFIX}/${bucket.name}`}>
                                     {bucket.name}
                                   </SelectItem>
                                 ))

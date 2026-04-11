@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,8 +14,28 @@ import (
 	"strings"
 	"time"
 
+	opencloudapi "github.com/WavexSoftware/OpenCloud/api"
 	service_ledger "github.com/WavexSoftware/OpenCloud/service_ledger"
+	"github.com/containers/podman/v5/pkg/bindings/volumes"
+	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
+
+// podmanVolumePrefix is the prefix applied to Podman named volumes created for
+// blob storage container mounts (e.g. "opencloud-my-bucket").
+const podmanVolumePrefix = "opencloud-"
+
+// Mockable Podman volume operations used by CreateBucket and DeleteBucket.
+// These vars are replaced in tests to avoid requiring a live Podman daemon.
+var (
+	blobStoragePodmanConnection = opencloudapi.RootlessPodmanConnection
+	createPodmanVolume          = volumes.Create
+	removePodmanVolume          = volumes.Remove
+)
+
+// podmanVolumeNameForBucket returns the Podman named volume name for a bucket.
+func podmanVolumeNameForBucket(bucketName string) string {
+	return podmanVolumePrefix + bucketName
+}
 
 // Blob represents a single object stored in blob storage.
 type Blob struct {
@@ -33,6 +54,45 @@ type Bucket struct {
 	TotalSize      int64  `json:"totalSize"`
 	LastModified   string `json:"lastModified"`
 	ContainerMount bool   `json:"containerMount"`
+	// VolumeName is the Podman named volume backing this bucket when ContainerMount is true.
+	VolumeName string `json:"volumeName,omitempty"`
+}
+
+// createContainerMountVolume creates a Podman named volume backed by the given directory path.
+// The volume uses the local driver with bind semantics so files written into the container at
+// the mount point are immediately visible in the blob storage directory (and vice-versa).
+func createContainerMountVolume(volumeName, bucketPath string) error {
+	ctx := context.Background()
+	conn, err := blobStoragePodmanConnection(ctx)
+	if err != nil {
+		return fmt.Errorf("connect to Podman: %w", err)
+	}
+
+	opts := entitiesTypes.VolumeCreateOptions{
+		Name:   volumeName,
+		Driver: "local",
+		Options: map[string]string{
+			"type":   "none",
+			"o":      "bind",
+			"device": bucketPath,
+		},
+	}
+	_, err = createPodmanVolume(conn, opts, nil)
+	return err
+}
+
+// removeContainerMountVolume removes a Podman named volume created for a container mount bucket.
+// Errors are logged but do not cause a hard failure so bucket deletion can proceed regardless.
+func removeContainerMountVolume(volumeName string) {
+	ctx := context.Background()
+	conn, err := blobStoragePodmanConnection(ctx)
+	if err != nil {
+		log.Printf("Warning: failed to connect to Podman to remove volume %q: %v", volumeName, err)
+		return
+	}
+	if err := removePodmanVolume(conn, volumeName, nil); err != nil {
+		log.Printf("Warning: failed to remove Podman volume %q: %v", volumeName, err)
+	}
 }
 
 // ListBlobBuckets returns a list of blob storage buckets with metadata.
@@ -88,7 +148,7 @@ func ListBlobBuckets(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Enrich buckets with container mount status from the service ledger
+	// Enrich buckets with container mount status and volume name from the service ledger
 	allEntries, ledgerErr := service_ledger.GetAllBucketEntries()
 	if ledgerErr != nil {
 		log.Printf("Warning: failed to read bucket entries from service ledger: %v", ledgerErr)
@@ -96,6 +156,7 @@ func ListBlobBuckets(w http.ResponseWriter, r *http.Request) {
 	for i := range buckets {
 		if entry, ok := allEntries[buckets[i].Name]; ok {
 			buckets[i].ContainerMount = entry.ContainerMount
+			buckets[i].VolumeName = entry.VolumeName
 		}
 	}
 
@@ -157,6 +218,7 @@ func ListContainerMountBuckets(w http.ResponseWriter, r *http.Request) {
 			TotalSize:      totalSize,
 			LastModified:   lastModified.UTC().Format(time.RFC3339),
 			ContainerMount: true,
+			VolumeName:     entry.VolumeName,
 		})
 	}
 
@@ -254,12 +316,28 @@ func CreateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ledgerErr := service_ledger.UpdateBucketEntry(body.Name, time.Now().UTC().Format(time.RFC3339), body.ContainerMount); ledgerErr != nil {
+	// If the bucket is designated as a container volume mount, create a Podman named
+	// volume backed by the blob storage directory so containers can mount it by name.
+	volumeName := ""
+	if body.ContainerMount {
+		volumeName = podmanVolumeNameForBucket(body.Name)
+		if volErr := createContainerMountVolume(volumeName, bucketPath); volErr != nil {
+			// Volume creation failure is non-fatal: log the error but continue.
+			log.Printf("Warning: failed to create Podman volume %q for bucket %s: %v", volumeName, body.Name, volErr)
+			volumeName = ""
+		}
+	}
+
+	if ledgerErr := service_ledger.UpdateBucketEntry(body.Name, time.Now().UTC().Format(time.RFC3339), body.ContainerMount, volumeName); ledgerErr != nil {
 		log.Printf("Warning: failed to record bucket %s in service ledger: %v", body.Name, ledgerErr)
 	}
 
+	resp := map[string]string{"status": "ok", "bucket": body.Name}
+	if volumeName != "" {
+		resp["volumeName"] = volumeName
+	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "bucket": body.Name})
+	json.NewEncoder(w).Encode(resp)
 }
 
 // RenameBucket renames an existing blob storage bucket
@@ -448,6 +526,11 @@ func DeleteBucket(w http.ResponseWriter, r *http.Request) {
 	if err := os.RemoveAll(bucketPath); err != nil {
 		http.Error(w, "Failed to delete bucket", http.StatusInternalServerError)
 		return
+	}
+
+	// Remove the associated Podman named volume if this was a container mount bucket.
+	if entry, entryErr := service_ledger.GetBucketEntry(body.Name); entryErr == nil && entry != nil && entry.VolumeName != "" {
+		removeContainerMountVolume(entry.VolumeName)
 	}
 
 	if ledgerErr := service_ledger.DeleteBucketEntry(body.Name); ledgerErr != nil {

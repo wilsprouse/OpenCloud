@@ -895,7 +895,7 @@ func TestUpdateBucketEntry(t *testing.T) {
 	bucketName := "my-test-bucket"
 	createdAt := "2024-01-01T00:00:00Z"
 
-	if err := UpdateBucketEntry(bucketName, createdAt, false); err != nil {
+	if err := UpdateBucketEntry(bucketName, createdAt, false, ""); err != nil {
 		t.Fatalf("UpdateBucketEntry failed: %v", err)
 	}
 
@@ -929,10 +929,10 @@ func TestUpdateBucketEntryOverwrite(t *testing.T) {
 	firstCreatedAt := "2024-01-01T00:00:00Z"
 	secondCreatedAt := "2024-06-01T00:00:00Z"
 
-	if err := UpdateBucketEntry(bucketName, firstCreatedAt, false); err != nil {
+	if err := UpdateBucketEntry(bucketName, firstCreatedAt, false, ""); err != nil {
 		t.Fatalf("First UpdateBucketEntry failed: %v", err)
 	}
-	if err := UpdateBucketEntry(bucketName, secondCreatedAt, false); err != nil {
+	if err := UpdateBucketEntry(bucketName, secondCreatedAt, false, ""); err != nil {
 		t.Fatalf("Second UpdateBucketEntry failed: %v", err)
 	}
 
@@ -960,7 +960,7 @@ func TestDeleteBucketEntry(t *testing.T) {
 	t.Cleanup(func() { resetBuckets(t) })
 
 	bucketName := "to-delete-bucket"
-	if err := UpdateBucketEntry(bucketName, "2024-01-01T00:00:00Z", false); err != nil {
+	if err := UpdateBucketEntry(bucketName, "2024-01-01T00:00:00Z", false, ""); err != nil {
 		t.Fatalf("UpdateBucketEntry failed: %v", err)
 	}
 
@@ -1020,7 +1020,7 @@ func TestGetAllBucketEntries(t *testing.T) {
 		"bucket-beta":  "2024-03-15T12:00:00Z",
 	}
 	for name, createdAt := range buckets {
-		if err := UpdateBucketEntry(name, createdAt, false); err != nil {
+		if err := UpdateBucketEntry(name, createdAt, false, ""); err != nil {
 			t.Fatalf("UpdateBucketEntry(%s) failed: %v", name, err)
 		}
 	}
@@ -1078,7 +1078,7 @@ func TestRenameBucketEntry(t *testing.T) {
 	newName := "renamed-bucket"
 	createdAt := "2024-01-01T00:00:00Z"
 
-	if err := UpdateBucketEntry(originalName, createdAt, false); err != nil {
+	if err := UpdateBucketEntry(originalName, createdAt, false, ""); err != nil {
 		t.Fatalf("UpdateBucketEntry failed: %v", err)
 	}
 
@@ -1137,7 +1137,7 @@ func TestUpdateBucketEntryContainerMount(t *testing.T) {
 	bucketName := "mount-bucket"
 	createdAt := "2024-06-15T10:00:00Z"
 
-	if err := UpdateBucketEntry(bucketName, createdAt, true); err != nil {
+	if err := UpdateBucketEntry(bucketName, createdAt, true, "opencloud-mount-bucket"); err != nil {
 		t.Fatalf("UpdateBucketEntry with containerMount=true failed: %v", err)
 	}
 
@@ -1157,6 +1157,9 @@ func TestUpdateBucketEntryContainerMount(t *testing.T) {
 	}
 	if !entry.ContainerMount {
 		t.Error("Expected ContainerMount to be true, got false")
+	}
+	if entry.VolumeName != "opencloud-mount-bucket" {
+		t.Errorf("Expected VolumeName %q, got %q", "opencloud-mount-bucket", entry.VolumeName)
 	}
 
 	// Also verify via GetAllBucketEntries
@@ -1188,7 +1191,7 @@ func TestRenameBucketEntryPreservesContainerMount(t *testing.T) {
 	newName := "mount-renamed"
 	createdAt := "2024-06-15T10:00:00Z"
 
-	if err := UpdateBucketEntry(originalName, createdAt, true); err != nil {
+	if err := UpdateBucketEntry(originalName, createdAt, true, "opencloud-mount-original"); err != nil {
 		t.Fatalf("UpdateBucketEntry failed: %v", err)
 	}
 
@@ -1205,6 +1208,9 @@ func TestRenameBucketEntryPreservesContainerMount(t *testing.T) {
 	}
 	if !newEntry.ContainerMount {
 		t.Error("Expected ContainerMount to be preserved as true after rename, got false")
+	}
+	if newEntry.VolumeName != "opencloud-mount-original" {
+		t.Errorf("Expected VolumeName %q preserved after rename, got %q", "opencloud-mount-original", newEntry.VolumeName)
 	}
 	if newEntry.CreatedAt != createdAt {
 		t.Errorf("Expected preserved createdAt %q, got %q", createdAt, newEntry.CreatedAt)
