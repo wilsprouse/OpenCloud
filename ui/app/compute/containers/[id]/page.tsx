@@ -59,6 +59,9 @@ type ContainerDetail = {
   command: string
 }
 
+/** Base path prefix for blob storage buckets used as container volume mounts. */
+const BLOB_STORAGE_MOUNT_PREFIX = "~/.opencloud/blob_storage"
+
 // A single port mapping entry used in the edit form
 type PortMapping = {
   hostPort: string
@@ -173,6 +176,8 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
   const [editAutoRemove, setEditAutoRemove] = useState(false)
   const [editCommand, setEditCommand] = useState("")
   const [isUpdating, setIsUpdating] = useState(false)
+  // Blob storage buckets available as container volume mounts
+  const [mountBuckets, setMountBuckets] = useState<{ name: string; volumeName?: string }[]>([])
 
   const fetchContainer = useCallback(async () => {
     setLoading(true)
@@ -199,6 +204,15 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
       setLoadingLogs(false)
     }
   }, [containerId])
+
+  const fetchMountBuckets = useCallback(async () => {
+    try {
+      const res = await client.get<{ name: string }[]>("/list-container-mount-buckets")
+      setMountBuckets(res.data || [])
+    } catch (err) {
+      console.error("Failed to fetch mount buckets:", err)
+    }
+  }, [])
 
   useEffect(() => {
     fetchContainer()
@@ -230,8 +244,10 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
 
       const parsedVolumes = (container.binds ?? []).map(parseBindString)
       setEditVolumes(parsedVolumes.length > 0 ? parsedVolumes : [{ hostPath: "", containerPath: "", Z: false, U: false }])
+
+      fetchMountBuckets()
     }
-  }, [container, activeTab])
+  }, [container, activeTab, fetchMountBuckets])
 
   // Fetch logs when the logs tab is first selected.
   const handleTabChange = (tab: string) => {
@@ -779,12 +795,27 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
               <CardContent className="space-y-2">
                 {editVolumes.map((vol, i) => (
                   <div key={i} className="flex items-center gap-2 flex-wrap">
-                    <Input
-                      placeholder="Host path"
+                    <Select
                       value={vol.hostPath}
-                      onChange={e => updateEditVolume(i, "hostPath", e.target.value)}
-                      className="flex-1 min-w-[120px] font-mono text-sm"
-                    />
+                      onValueChange={(value) => updateEditVolume(i, "hostPath", value)}
+                    >
+                      <SelectTrigger className="flex-1 min-w-[120px] font-mono text-sm">
+                        <SelectValue placeholder="Select bucket" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {mountBuckets.length === 0 ? (
+                          <SelectItem value="__no_buckets__" disabled>
+                            No mount buckets available
+                          </SelectItem>
+                        ) : (
+                          mountBuckets.map((bucket) => (
+                            <SelectItem key={bucket.name} value={bucket.volumeName || `${BLOB_STORAGE_MOUNT_PREFIX}/${bucket.name}`}>
+                              {bucket.name}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
                     <span className="text-muted-foreground">:</span>
                     <Input
                       placeholder="Container path"

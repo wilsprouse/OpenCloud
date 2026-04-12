@@ -1619,6 +1619,59 @@ func TestExpandTildePath(t *testing.T) {
 	}
 }
 
+// TestIsNamedVolumeMount verifies the named volume detection helper.
+func TestIsNamedVolumeMount(t *testing.T) {
+	tests := []struct {
+		source string
+		named  bool
+	}{
+		{"opencloud-my-bucket", true},
+		{"myvolume", true},
+		{"/host/path", false},
+		{"~/some/path", false},
+		{"~/.opencloud/blob_storage/bucket", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := isNamedVolumeMount(tt.source)
+		if got != tt.named {
+			t.Errorf("isNamedVolumeMount(%q) = %v, want %v", tt.source, got, tt.named)
+		}
+	}
+}
+
+// TestParseVolumeStrings verifies that parseVolumeStrings correctly separates named volumes
+// from bind mounts based on whether the source starts with "/" or "~".
+func TestParseVolumeStrings(t *testing.T) {
+	vols := []string{
+		"opencloud-my-bucket:/app/data",
+		"/host/path:/container/path",
+		"opencloud-second:/mnt:Z",
+		"~/logs:/logs",
+	}
+	namedVolumes, bindMounts := parseVolumeStrings(vols)
+
+	if len(namedVolumes) != 2 {
+		t.Fatalf("expected 2 named volumes, got %d", len(namedVolumes))
+	}
+	if namedVolumes[0].Name != "opencloud-my-bucket" {
+		t.Errorf("expected first named vol %q, got %q", "opencloud-my-bucket", namedVolumes[0].Name)
+	}
+	if namedVolumes[0].Dest != "/app/data" {
+		t.Errorf("expected first named vol dest %q, got %q", "/app/data", namedVolumes[0].Dest)
+	}
+	if namedVolumes[1].Name != "opencloud-second" {
+		t.Errorf("expected second named vol %q, got %q", "opencloud-second", namedVolumes[1].Name)
+	}
+
+	if len(bindMounts) != 2 {
+		t.Fatalf("expected 2 bind mounts, got %d", len(bindMounts))
+	}
+	if bindMounts[0].Source != "/host/path" {
+		t.Errorf("expected first bind src %q, got %q", "/host/path", bindMounts[0].Source)
+	}
+}
+
 // TestGetContainerInvalidMethod verifies that non-GET requests are rejected with 405.
 func TestGetContainerInvalidMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/get-container?id=abc123", nil)

@@ -21,6 +21,7 @@ import client from "@/app/utility/post"
 import { toast } from "sonner"
 import { BUCKET_NAME_MAX_LENGTH, isValidBucketName } from "@/lib/bucket-name"
 import { useBucketNameWarning } from "@/lib/use-bucket-name-warning"
+import { Badge } from "@/components/ui/badge"
 import { 
   RefreshCw, 
   Search,
@@ -32,7 +33,8 @@ import {
   ChevronRight,
   Database,
   Power,
-  Trash2
+  Trash2,
+  Container,
 } from "lucide-react"
 
 type Bucket = {
@@ -40,6 +42,7 @@ type Bucket = {
   objectCount: number
   totalSize: number
   lastModified: string
+  containerMount: boolean
 }
 
 function SearchParamsReader({ onCreateRequested }: { onCreateRequested: () => void }) {
@@ -69,6 +72,7 @@ export default function BlobStorage() {
   
   // Bucket form state
   const [bucketName, setBucketName] = useState<string>("")
+  const [containerMount, setContainerMount] = useState(false)
   const isBucketNameValid = isValidBucketName(bucketName)
   const {
     handleBeforeInput: handleBucketNameBeforeInput,
@@ -128,11 +132,12 @@ export default function BlobStorage() {
   const handleCreateBucket = async (name: string) => {
     try {
       console.log(`Creating bucket: ${name}`)
-      const res = await client.post("/create-bucket", { name })
+      const res = await client.post("/create-bucket", { name, containerMount })
 
       if (res.status === 200 || res.status === 201) {
         setIsBucketDialogOpen(false)
         setBucketName("")
+        setContainerMount(false)
         fetchBuckets()
       }
     } catch (err) {
@@ -253,7 +258,10 @@ export default function BlobStorage() {
           </Button>
           <Dialog open={isBucketDialogOpen} onOpenChange={(open) => {
               setIsBucketDialogOpen(open)
-              if (!open) resetBucketNameWarning()
+              if (!open) {
+                resetBucketNameWarning()
+                setContainerMount(false)
+              }
             }}>
             <DialogTrigger asChild>
               <Button>
@@ -284,9 +292,22 @@ export default function BlobStorage() {
                     Bucket names cannot contain spaces and must be 50 characters or fewer.
                   </p>
                 </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="container-mount"
+                    checked={containerMount}
+                    onChange={(e) => setContainerMount(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <Label htmlFor="container-mount">Use as Container Volume Mount</Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Enable this to make the bucket available as a volume mount for containers in Container Runtime.
+                </p>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => { setIsBucketDialogOpen(false); resetBucketNameWarning() }}>
+                <Button variant="outline" onClick={() => { setIsBucketDialogOpen(false); resetBucketNameWarning(); setContainerMount(false) }}>
                   Cancel
                 </Button>
                 <Button onClick={() => handleCreateBucket(bucketName)} disabled={!isBucketNameValid}>
@@ -369,6 +390,12 @@ export default function BlobStorage() {
                   <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
                       <h4 className="font-medium text-foreground truncate">{bucket.name}</h4>
+                      {bucket.containerMount && (
+                        <Badge variant="secondary" className="text-xs">
+                          <Container className="h-3 w-3 mr-1" />
+                          Container Mount
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center space-x-4 text-xs text-muted-foreground">
                       <span className="flex items-center">

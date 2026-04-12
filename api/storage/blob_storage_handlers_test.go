@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -10,6 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	service_ledger "github.com/WavexSoftware/OpenCloud/service_ledger"
+	"github.com/containers/podman/v5/pkg/bindings/volumes"
+	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
 // TestListBlobBuckets tests the blob bucket listing
@@ -642,5 +647,243 @@ func TestDeleteBucketSuccess(t *testing.T) {
 	if _, err := os.Stat(bucketPath); !os.IsNotExist(err) {
 		t.Errorf("Expected bucket directory to be removed after deletion")
 		os.RemoveAll(bucketPath)
+	}
+}
+
+// TestCreateBucketWithContainerMount tests that creating a bucket with containerMount=true
+// succeeds, the bucket directory is created on disk, and a Podman named volume is requested.
+func TestCreateBucketWithContainerMount(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
+		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	// Track what volume name was requested
+	var capturedVolumeName string
+	origCreate := createPodmanVolume
+	origConn := blobStoragePodmanConnection
+	t.Cleanup(func() {
+		createPodmanVolume = origCreate
+		blobStoragePodmanConnection = origConn
+	})
+	blobStoragePodmanConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	createPodmanVolume = func(ctx context.Context, opts entitiesTypes.VolumeCreateOptions, _ *volumes.CreateOptions) (*entitiesTypes.VolumeConfigResponse, error) {
+		capturedVolumeName = opts.Name
+		return nil, nil
+	}
+
+	bucketName := "mount-test-bucket"
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":           bucketName,
+		"containerMount": true,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/create-bucket", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	CreateBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected status %d, got %d", http.StatusCreated, resp.StatusCode)
+	}
+
+	// Verify the bucket directory was created
+	bucketPath := filepath.Join(blobStoragePath, bucketName)
+	if _, err := os.Stat(bucketPath); os.IsNotExist(err) {
+		t.Errorf("Expected bucket directory to exist at %s", bucketPath)
+	}
+
+	// Verify a Podman volume was requested with the expected name
+	expectedVolumeName := podmanVolumePrefix + bucketName
+	if capturedVolumeName != expectedVolumeName {
+		t.Errorf("Expected Podman volume name %q, got %q", expectedVolumeName, capturedVolumeName)
+	}
+
+	// Verify response body
+	var result map[string]string
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result["bucket"] != bucketName {
+		t.Errorf("Expected bucket name %q in response, got %q", bucketName, result["bucket"])
+	}
+	if result["volumeName"] != expectedVolumeName {
+		t.Errorf("Expected volumeName %q in response, got %q", expectedVolumeName, result["volumeName"])
+	}
+}
+
+// TestDeleteBucketWithContainerMount tests that deleting a container-mount bucket removes
+// the bucket directory, calls Podman volume removal (with Force=true), and returns 200 OK.
+func TestDeleteBucketWithContainerMount(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
+		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	bucketName := "mount-delete-bucket"
+	bucketPath := filepath.Join(blobStoragePath, bucketName)
+	if err := os.Mkdir(bucketPath, 0755); err != nil {
+		t.Fatalf("Failed to create bucket dir: %v", err)
+	}
+	// Place a file inside the bucket to verify non-empty buckets can be deleted.
+	if err := os.WriteFile(filepath.Join(bucketPath, "item.txt"), []byte("data"), 0644); err != nil {
+		t.Fatalf("Failed to write item: %v", err)
+	}
+
+	volumeName := podmanVolumePrefix + bucketName
+	if err := service_ledger.UpdateBucketEntry(bucketName, "2024-01-01T00:00:00Z", true, volumeName); err != nil {
+		t.Fatalf("Failed to seed ledger: %v", err)
+	}
+
+	var removedVolume string
+	var removeForced bool
+	origRemove := removePodmanVolume
+	origConn := blobStoragePodmanConnection
+	t.Cleanup(func() {
+		removePodmanVolume = origRemove
+		blobStoragePodmanConnection = origConn
+	})
+	blobStoragePodmanConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	removePodmanVolume = func(ctx context.Context, name string, opts *volumes.RemoveOptions) error {
+		removedVolume = name
+		if opts != nil {
+			removeForced = opts.GetForce()
+		}
+		return nil
+	}
+
+	body, _ := json.Marshal(map[string]string{"name": bucketName})
+	req := httptest.NewRequest(http.MethodDelete, "/delete-bucket", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	DeleteBucket(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	// Verify bucket directory was removed
+	if _, err := os.Stat(bucketPath); !os.IsNotExist(err) {
+		t.Error("Expected bucket directory to be removed")
+	}
+
+	// Verify Podman volume removal was called with the correct name and Force=true
+	if removedVolume != volumeName {
+		t.Errorf("Expected Podman volume %q to be removed, got %q", volumeName, removedVolume)
+	}
+	if !removeForced {
+		t.Error("Expected Podman volume removal to use Force=true")
+	}
+}
+
+// TestListContainerMountBucketsEmpty tests that listing container mount buckets returns
+// an empty result when no buckets are marked as container mounts.
+func TestListContainerMountBucketsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
+		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/list-container-mount-buckets", nil)
+	w := httptest.NewRecorder()
+
+	ListContainerMountBuckets(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	var buckets []Bucket
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(bodyBytes, &buckets); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if len(buckets) != 0 {
+		t.Errorf("Expected 0 container mount buckets, got %d", len(buckets))
+	}
+}
+
+// TestListContainerMountBuckets tests that only buckets marked as container mounts
+// are returned by the ListContainerMountBuckets handler.
+func TestListContainerMountBuckets(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	blobStoragePath := filepath.Join(tmpDir, ".opencloud", "blob_storage")
+	if err := os.MkdirAll(blobStoragePath, 0755); err != nil {
+		t.Fatalf("Failed to create blob_storage directory: %v", err)
+	}
+
+	// Create two buckets on disk: one mount, one non-mount
+	mountBucket := "mount-bucket"
+	normalBucket := "normal-bucket"
+	for _, name := range []string{mountBucket, normalBucket} {
+		if err := os.Mkdir(filepath.Join(blobStoragePath, name), 0755); err != nil {
+			t.Fatalf("Failed to create bucket dir %q: %v", name, err)
+		}
+	}
+
+	// Add a file to the mount bucket so we can verify objectCount/totalSize
+	testContent := []byte("hello mount")
+	if err := os.WriteFile(filepath.Join(blobStoragePath, mountBucket, "test.txt"), testContent, 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	// Register buckets in the service ledger directly since the bucket dirs already exist
+	if err := service_ledger.UpdateBucketEntry(mountBucket, "2024-01-01T00:00:00Z", true, "opencloud-"+mountBucket); err != nil {
+		t.Fatalf("Failed to update mount bucket ledger entry: %v", err)
+	}
+	if err := service_ledger.UpdateBucketEntry(normalBucket, "2024-01-01T00:00:00Z", false, ""); err != nil {
+		t.Fatalf("Failed to update normal bucket ledger entry: %v", err)
+	}
+
+	// Now call ListContainerMountBuckets
+	req := httptest.NewRequest(http.MethodGet, "/list-container-mount-buckets", nil)
+	w := httptest.NewRecorder()
+
+	ListContainerMountBuckets(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	var buckets []Bucket
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(bodyBytes, &buckets); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Only the mount bucket should be returned
+	if len(buckets) != 1 {
+		t.Fatalf("Expected 1 container mount bucket, got %d", len(buckets))
+	}
+
+	if buckets[0].Name != mountBucket {
+		t.Errorf("Expected bucket name %q, got %q", mountBucket, buckets[0].Name)
+	}
+	if !buckets[0].ContainerMount {
+		t.Error("Expected ContainerMount to be true")
+	}
+	if buckets[0].ObjectCount != 1 {
+		t.Errorf("Expected objectCount 1, got %d", buckets[0].ObjectCount)
+	}
+	if buckets[0].TotalSize != int64(len(testContent)) {
+		t.Errorf("Expected totalSize %d, got %d", len(testContent), buckets[0].TotalSize)
 	}
 }

@@ -673,13 +673,68 @@ func buildBindMountOptions(optStr string) []string {
 	return opts
 }
 
+// isNamedVolumeMount returns true when source is a Podman named volume identifier rather than
+// a filesystem path. Named volumes do not start with "/" or "~".
+func isNamedVolumeMount(source string) bool {
+	return source != "" && !strings.HasPrefix(source, "/") && !strings.HasPrefix(source, "~")
+}
+
+// parseVolumeStrings splits a list of "source:dest[:opts]" strings into two groups:
+//   - namedVolumes: entries where source is a Podman named volume (no leading "/" or "~")
+//   - bindMounts:   entries where source is a filesystem path
+//
+// Both groups are ready to be assigned to spec.Volumes and spec.Mounts respectively.
+func parseVolumeStrings(volStrings []string) ([]*specgen.NamedVolume, []specs.Mount) {
+	var namedVolumes []*specgen.NamedVolume
+	var bindMounts []specs.Mount
+
+	for _, vol := range volStrings {
+		parts := strings.SplitN(vol, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		source := parts[0]
+		dest := parts[1]
+		optStr := ""
+		if len(parts) == 3 {
+			optStr = parts[2]
+		}
+
+		if isNamedVolumeMount(source) {
+			// Named volume — pass through volume options as-is (e.g. "Z", "U").
+			var opts []string
+			for _, o := range strings.Split(optStr, ",") {
+				if o != "" && validMountOptions[o] {
+					opts = append(opts, o)
+				}
+			}
+			namedVolumes = append(namedVolumes, &specgen.NamedVolume{
+				Name:    source,
+				Dest:    dest,
+				Options: opts,
+			})
+		} else {
+			// Bind mount — expand ~ and build OCI mount options.
+			bindMounts = append(bindMounts, specs.Mount{
+				Type:        "bind",
+				Source:      expandTildePath(source),
+				Destination: dest,
+				Options:     buildBindMountOptions(optStr),
+			})
+		}
+	}
+
+	return namedVolumes, bindMounts
+}
+
 // validateVolumeMount checks a volume mount string for path traversal, missing separators,
-// and invalid option flags. Volume mounts must be in "hostPath:containerPath[:options]" format
-// where options is an optional comma-separated list of valid mount option flags (e.g. "Z,U").
+// and invalid option flags. Volume mounts must be in "source:containerPath[:options]" format
+// where source is either an absolute filesystem path or a Podman named volume name, and
+// options is an optional comma-separated list of valid mount option flags (e.g. "Z,U").
 func validateVolumeMount(mount string) string {
 	parts := strings.SplitN(mount, ":", 3)
 	if len(parts) < 2 {
-		return fmt.Sprintf("invalid volume mount %q: must be in hostPath:containerPath format", mount)
+		return fmt.Sprintf("invalid volume mount %q: must be in source:containerPath format", mount)
 	}
 	if strings.Contains(parts[0], "..") || strings.Contains(parts[1], "..") {
 		return fmt.Sprintf("invalid volume mount %q: path must not contain path traversal sequences", mount)
@@ -885,26 +940,9 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Printf("PullAndRun containerID: %q\n", containerID)
 
-	var mounts []specs.Mount
-	for _, vol := range req.Volumes {
-		parts := strings.SplitN(vol, ":", 3)
-		if len(parts) < 2 {
-			fmt.Printf("Skipping malformed volume mount: %q\n", vol)
-			continue
-		}
-		optStr := ""
-		if len(parts) == 3 {
-			optStr = parts[2]
-		}
-		mount := specs.Mount{
-			Type:        "bind",
-			Source:      expandTildePath(parts[0]),
-			Destination: parts[1],
-			Options:     buildBindMountOptions(optStr),
-		}
-		fmt.Printf("Parsed volume mount: %+v\n", mount)
-		mounts = append(mounts, mount)
-	}
+	namedVolumes, mounts := parseVolumeStrings(req.Volumes)
+	fmt.Printf("PullAndRun namedVolumes: %+v\n", namedVolumes)
+	fmt.Printf("PullAndRun bindMounts: %+v\n", mounts)
 
 	var portMappings []nettypes.PortMapping
 	for _, mapping := range req.Ports {
@@ -947,6 +985,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
 	spec.Env = envMap
 	spec.Mounts = mounts
+	spec.Volumes = namedVolumes
 	spec.PortMappings = portMappings
 	spec.RestartPolicy = req.RestartPolicy
 	spec.Remove = &req.AutoRemove
@@ -1176,23 +1215,7 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 		containerID = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
 	}
 
-	var mounts []specs.Mount
-	for _, vol := range req.Volumes {
-		parts := strings.SplitN(vol, ":", 3)
-		if len(parts) < 2 {
-			continue
-		}
-		optStr := ""
-		if len(parts) == 3 {
-			optStr = parts[2]
-		}
-		mounts = append(mounts, specs.Mount{
-			Type:        "bind",
-			Source:      expandTildePath(parts[0]),
-			Destination: parts[1],
-			Options:     buildBindMountOptions(optStr),
-		})
-	}
+	namedVolumes, mounts := parseVolumeStrings(req.Volumes)
 
 	var portMappings []nettypes.PortMapping
 	for _, mapping := range req.Ports {
@@ -1231,6 +1254,7 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 	spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
 	spec.Env = envMap
 	spec.Mounts = mounts
+	spec.Volumes = namedVolumes
 	spec.PortMappings = portMappings
 	spec.RestartPolicy = req.RestartPolicy
 	spec.Remove = &req.AutoRemove
@@ -1411,23 +1435,7 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 		containerName = fmt.Sprintf("opencloud-%d", time.Now().UnixNano())
 	}
 
-	var mounts []specs.Mount
-	for _, vol := range req.Volumes {
-		parts := strings.SplitN(vol, ":", 3)
-		if len(parts) < 2 {
-			continue
-		}
-		optStr := ""
-		if len(parts) == 3 {
-			optStr = parts[2]
-		}
-		mounts = append(mounts, specs.Mount{
-			Type:        "bind",
-			Source:      expandTildePath(parts[0]),
-			Destination: parts[1],
-			Options:     buildBindMountOptions(optStr),
-		})
-	}
+	namedVolumes, mounts := parseVolumeStrings(req.Volumes)
 
 	var portMappings []nettypes.PortMapping
 	for _, mapping := range req.Ports {
@@ -1466,6 +1474,7 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	spec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
 	spec.Env = envMap
 	spec.Mounts = mounts
+	spec.Volumes = namedVolumes
 	spec.PortMappings = portMappings
 	spec.RestartPolicy = req.RestartPolicy
 	spec.Remove = &req.AutoRemove
