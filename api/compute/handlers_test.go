@@ -1972,6 +1972,133 @@ func TestGetContainerVolumeLabelTakesPriorityOverHostConfigBinds(t *testing.T) {
 	}
 }
 
+// TestGetContainerIncludesNamedVolumesFromLabel verifies that named volumes (e.g.
+// Podman named volumes created for blob storage bucket mounts like
+// "opencloud-mybucket:/app/data") stored in the opencloud/volumes label are
+// included in detail.Binds. Named volumes appear in data.Mounts with
+// Type == "volume" (not "bind"), so they are absent from bindDests. The
+// bindDests guard must NOT be applied to label entries — all entries in
+// opencloud/volumes are user-specified and genuine.
+func TestGetContainerIncludesNamedVolumesFromLabel(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{
+					// opencloud/volumes stores the original user-specified volume string,
+					// including named volumes created for blob storage bucket mounts.
+					"opencloud/volumes": "opencloud-mybucket:/app/data",
+				},
+			},
+			// The named volume appears in Mounts with Type "volume", not "bind".
+			// This means its destination ("/app/data") is NOT in bindDests.
+			// GetContainer must still include it via the label path.
+			Mounts: []define.InspectMount{
+				{Type: "volume", Name: "opencloud-mybucket", Source: "/var/lib/containers/storage/volumes/opencloud-mybucket/_data", Destination: "/app/data", Mode: ""},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 1 {
+		t.Fatalf("expected 1 bind for named volume, got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	if detail.Binds[0] != "opencloud-mybucket:/app/data" {
+		t.Errorf("named volume from label not recovered; got %q, want %q", detail.Binds[0], "opencloud-mybucket:/app/data")
+	}
+}
+
+// TestGetContainerIncludesMixedVolumesFromLabel verifies that when the
+// opencloud/volumes label contains both a named volume and a bind mount entry,
+// both are returned in detail.Binds.
+func TestGetContainerIncludesMixedVolumesFromLabel(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{
+					"opencloud/volumes": "opencloud-mybucket:/app/data\n/host/logs:/container/logs",
+				},
+			},
+			Mounts: []define.InspectMount{
+				{Type: "volume", Name: "opencloud-mybucket", Source: "/var/lib/containers/storage/volumes/opencloud-mybucket/_data", Destination: "/app/data", Mode: ""},
+				{Type: "bind", Source: "/host/logs", Destination: "/container/logs", Mode: "rw"},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Binds) != 2 {
+		t.Fatalf("expected 2 binds (named + bind), got %d: %v", len(detail.Binds), detail.Binds)
+	}
+	if detail.Binds[0] != "opencloud-mybucket:/app/data" {
+		t.Errorf("first bind: got %q, want %q", detail.Binds[0], "opencloud-mybucket:/app/data")
+	}
+	if detail.Binds[1] != "/host/logs:/container/logs" {
+		t.Errorf("second bind: got %q, want %q", detail.Binds[1], "/host/logs:/container/logs")
+	}
+}
+
 // TestUpdateContainerStoresVolumesLabel verifies that UpdateContainer writes the
 // opencloud/volumes label so that GetContainer can later recover volume strings accurately.
 func TestUpdateContainerStoresVolumesLabel(t *testing.T) {
