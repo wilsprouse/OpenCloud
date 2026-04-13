@@ -1576,8 +1576,9 @@ func TestParseMountOptions(t *testing.T) {
 		{"ro", false},
 		{"rw", false},
 		{"rbind", false},
-		{"Z,U,ro", true},   // Z,U no longer valid
+		{"Z,U,ro", true},    // Z,U no longer valid
 		{"badopt", true},
+		{"ro,badopt", true}, // valid option combined with unknown option
 		{"", false}, // empty string is a no-op
 	}
 	for _, tt := range tests {
