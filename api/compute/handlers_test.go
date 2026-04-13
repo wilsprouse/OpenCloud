@@ -2792,3 +2792,373 @@ func TestUpdateContainerSkipsStopWhenNotRunning(t *testing.T) {
 		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestUpdateContainerRollsBackWhenImageResolveFails verifies that if pulling/resolving
+// the new image fails after the old container has been removed, the original container
+// is recreated (best-effort rollback) from the captured configuration.
+func TestUpdateContainerRollsBackWhenImageResolveFails(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "old-container-id",
+			Name:      "/my-container",
+			ImageName: "nginx:1.25",
+			State:     &define.InspectContainerState{Status: "running"},
+			Config: &define.InspectContainerConfig{
+				Env:    []string{"FOO=bar"},
+				Labels: map[string]string{"opencloud/name": "my-container"},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				RestartPolicy: &define.InspectRestartPolicy{Name: "always"},
+			},
+		}, nil
+	}
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error { return nil }
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		return nil, nil
+	}
+	// New image resolution fails; old image (rollback) succeeds.
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) {
+		if ref == "nginx:bad-tag" {
+			return "", fmt.Errorf("image not found: %s", ref)
+		}
+		return ref, nil
+	}
+
+	var rollbackCreateSpec *specgen.SpecGenerator
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		rollbackCreateSpec = s
+		return podmanTypes.ContainerCreateResponse{ID: "restored-container-id"}, nil
+	}
+	rollbackStartCalled := false
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error {
+		rollbackStartCalled = true
+		return nil
+	}
+
+	body, _ := json.Marshal(UpdateContainerRequest{
+		ContainerID: "old-container-id",
+		Image:       "nginx:bad-tag",
+		Name:        "my-container",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on image resolve failure, got %d", w.Code)
+	}
+	if rollbackCreateSpec == nil {
+		t.Fatal("expected rollback create to be called after image resolve failure")
+	}
+	if rollbackCreateSpec.Image != "nginx:1.25" {
+		t.Errorf("expected rollback to use old image nginx:1.25, got %q", rollbackCreateSpec.Image)
+	}
+	if rollbackCreateSpec.Name != "my-container" {
+		t.Errorf("expected rollback container name my-container, got %q", rollbackCreateSpec.Name)
+	}
+	if !rollbackStartCalled {
+		t.Error("expected rollback container to be started (original was running)")
+	}
+}
+
+// TestUpdateContainerRollsBackWhenCreateFails verifies that if creating the new container
+// fails after the old container has been removed, the original container is recreated
+// (best-effort rollback).
+func TestUpdateContainerRollsBackWhenCreateFails(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "old-container-id",
+			Name:      "/my-container",
+			ImageName: "nginx:1.25",
+			State:     &define.InspectContainerState{Status: "exited"},
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{"opencloud/name": "my-container"},
+			},
+		}, nil
+	}
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error { return nil }
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		return nil, nil
+	}
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) { return ref, nil }
+
+	// First call (new container create) fails; second call (rollback) succeeds.
+	createCallCount := 0
+	var rollbackCreateSpec *specgen.SpecGenerator
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		createCallCount++
+		if createCallCount == 1 {
+			return podmanTypes.ContainerCreateResponse{}, fmt.Errorf("port already in use")
+		}
+		rollbackCreateSpec = s
+		return podmanTypes.ContainerCreateResponse{ID: "restored-container-id"}, nil
+	}
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error { return nil }
+
+	body, _ := json.Marshal(UpdateContainerRequest{
+		ContainerID: "old-container-id",
+		Image:       "nginx:latest",
+		Name:        "my-container",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on create failure, got %d", w.Code)
+	}
+	if rollbackCreateSpec == nil {
+		t.Fatal("expected rollback create to be called after container create failure")
+	}
+	if rollbackCreateSpec.Image != "nginx:1.25" {
+		t.Errorf("expected rollback to use old image nginx:1.25, got %q", rollbackCreateSpec.Image)
+	}
+}
+
+// TestUpdateContainerRollsBackWhenStartFails verifies that if starting the new container
+// fails, the new container is cleaned up and the original container is recreated
+// (best-effort rollback).
+func TestUpdateContainerRollsBackWhenStartFails(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "old-container-id",
+			Name:      "/my-container",
+			ImageName: "nginx:1.25",
+			State:     &define.InspectContainerState{Status: "running"},
+			Config: &define.InspectContainerConfig{
+				Env:    []string{"FOO=bar"},
+				Labels: map[string]string{"opencloud/name": "my-container"},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error { return nil }
+
+	removedIDs := []string{}
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		removedIDs = append(removedIDs, nameOrID)
+		return nil, nil
+	}
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) { return ref, nil }
+
+	// New container is created but fails to start.
+	createCallCount := 0
+	var rollbackCreateSpec *specgen.SpecGenerator
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		createCallCount++
+		if createCallCount == 1 {
+			return podmanTypes.ContainerCreateResponse{ID: "new-container-id"}, nil
+		}
+		rollbackCreateSpec = s
+		return podmanTypes.ContainerCreateResponse{ID: "restored-container-id"}, nil
+	}
+
+	startCallCount := 0
+	rollbackStartID := ""
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error {
+		startCallCount++
+		if startCallCount == 1 {
+			return fmt.Errorf("container failed to start: OCI error")
+		}
+		rollbackStartID = nameOrID
+		return nil
+	}
+
+	body, _ := json.Marshal(UpdateContainerRequest{
+		ContainerID: "old-container-id",
+		Image:       "nginx:latest",
+		Name:        "my-container",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on start failure, got %d", w.Code)
+	}
+
+	// The failed new container must be removed.
+	foundNewRemoved := false
+	for _, id := range removedIDs {
+		if id == "new-container-id" {
+			foundNewRemoved = true
+		}
+	}
+	if !foundNewRemoved {
+		t.Errorf("expected new-container-id to be removed on start failure; removedIDs=%v", removedIDs)
+	}
+
+	if rollbackCreateSpec == nil {
+		t.Fatal("expected rollback create to be called after start failure")
+	}
+	if rollbackCreateSpec.Image != "nginx:1.25" {
+		t.Errorf("expected rollback image nginx:1.25, got %q", rollbackCreateSpec.Image)
+	}
+	if rollbackStartID != "restored-container-id" {
+		t.Errorf("expected rollback container restored-container-id to be started, got %q", rollbackStartID)
+	}
+}
+
+// TestUpdateContainerRollsBackUsingHostConfigFallback verifies that when the
+// opencloud/volumes and opencloud/ports labels are absent, the rollback correctly
+// falls back to HostConfig.Binds and HostConfig.PortBindings to reconstruct the
+// original container spec.
+func TestUpdateContainerRollsBackUsingHostConfigFallback(t *testing.T) {
+	origConnection := updateContainerConnection
+	origInspect := updateContainerInspect
+	origStop := updateContainerStop
+	origRemove := updateContainerRemove
+	origEnsureImage := updateContainerEnsureImage
+	origCreate := updateContainerCreateWithSpec
+	origStart := updateContainerStart
+	t.Cleanup(func() {
+		updateContainerConnection = origConnection
+		updateContainerInspect = origInspect
+		updateContainerStop = origStop
+		updateContainerRemove = origRemove
+		updateContainerEnsureImage = origEnsureImage
+		updateContainerCreateWithSpec = origCreate
+		updateContainerStart = origStart
+	})
+
+	updateContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+	// No opencloud/volumes or opencloud/ports labels – forces HostConfig fallback.
+	updateContainerInspect = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "old-container-id",
+			Name:      "/my-container",
+			ImageName: "nginx:1.25",
+			State:     &define.InspectContainerState{Status: "running"},
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{"opencloud/name": "my-container"},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				Binds: []string{"/host/data:/container/data:ro"},
+				PortBindings: map[string][]define.InspectHostPort{
+					"80/tcp": {{HostIP: "", HostPort: "8080"}},
+				},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+	updateContainerStop = func(ctx context.Context, nameOrID string, opts *containers.StopOptions) error { return nil }
+	updateContainerRemove = func(ctx context.Context, nameOrID string, opts *containers.RemoveOptions) ([]*reports.RmReport, error) {
+		return nil, nil
+	}
+	// New image resolution fails to force the rollback path.
+	updateContainerEnsureImage = func(ctx context.Context, ref string) (string, error) {
+		if ref == "nginx:bad-tag" {
+			return "", fmt.Errorf("image not found: %s", ref)
+		}
+		return ref, nil
+	}
+
+	var rollbackCreateSpec *specgen.SpecGenerator
+	updateContainerCreateWithSpec = func(ctx context.Context, s *specgen.SpecGenerator, opts *containers.CreateOptions) (podmanTypes.ContainerCreateResponse, error) {
+		rollbackCreateSpec = s
+		return podmanTypes.ContainerCreateResponse{ID: "restored-container-id"}, nil
+	}
+	updateContainerStart = func(ctx context.Context, nameOrID string, opts *containers.StartOptions) error { return nil }
+
+	body, _ := json.Marshal(UpdateContainerRequest{
+		ContainerID: "old-container-id",
+		Image:       "nginx:bad-tag",
+		Name:        "my-container",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	UpdateContainer(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on image resolve failure, got %d", w.Code)
+	}
+	if rollbackCreateSpec == nil {
+		t.Fatal("expected rollback create to be called")
+	}
+	// Verify port mapping was recovered from HostConfig.PortBindings fallback.
+	if len(rollbackCreateSpec.PortMappings) != 1 {
+		t.Fatalf("expected 1 port mapping in rollback spec, got %d", len(rollbackCreateSpec.PortMappings))
+	}
+	if rollbackCreateSpec.PortMappings[0].HostPort != 8080 || rollbackCreateSpec.PortMappings[0].ContainerPort != 80 {
+		t.Errorf("unexpected rollback port mapping: %+v", rollbackCreateSpec.PortMappings[0])
+	}
+	// Verify volume was recovered from HostConfig.Binds fallback.
+	if len(rollbackCreateSpec.Mounts) != 1 {
+		t.Fatalf("expected 1 mount in rollback spec, got %d; volumes=%v", len(rollbackCreateSpec.Mounts), rollbackCreateSpec.Volumes)
+	}
+	if rollbackCreateSpec.Mounts[0].Source != "/host/data" || rollbackCreateSpec.Mounts[0].Destination != "/container/data" {
+		t.Errorf("unexpected rollback mount: %+v", rollbackCreateSpec.Mounts[0])
+	}
+}

@@ -1394,6 +1394,117 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	// ambiguity when the caller supplied a short ID or name.
 	canonicalID := data.ID
 
+	// Capture the original container configuration before any destructive operations
+	// so we can attempt a best-effort rollback if the update fails after removal.
+	oldWasRunning := data.State != nil && data.State.Status == "running"
+	oldName := strings.TrimPrefix(data.Name, "/")
+	oldImageName := data.ImageName
+
+	// Deep-copy the labels so later mutations don't affect the rollback spec.
+	oldLabels := make(map[string]string)
+	if data.Config != nil && data.Config.Labels != nil {
+		for k, v := range data.Config.Labels {
+			oldLabels[k] = v
+		}
+	}
+
+	// Prefer the opencloud/volumes label (exact original user strings); fall back
+	// to HostConfig.Binds which may omit options like :Z or :U.
+	var oldVolumeStrings []string
+	if volsLabel, ok := oldLabels["opencloud/volumes"]; ok && volsLabel != "" {
+		oldVolumeStrings = strings.Split(volsLabel, "\n")
+	} else if data.HostConfig != nil {
+		oldVolumeStrings = data.HostConfig.Binds
+	}
+
+	// Prefer the opencloud/ports label (exact original user strings); fall back
+	// to HostConfig.PortBindings which carries the /proto suffix on the container port.
+	var oldPortStrings []string
+	if portsLabel, ok := oldLabels["opencloud/ports"]; ok && portsLabel != "" {
+		oldPortStrings = strings.Fields(portsLabel)
+	} else if data.HostConfig != nil {
+		for containerPort, hostBindings := range data.HostConfig.PortBindings {
+			for _, hb := range hostBindings {
+				if hb.HostIP != "" {
+					oldPortStrings = append(oldPortStrings, fmt.Sprintf("%s:%s:%s", hb.HostIP, hb.HostPort, containerPort))
+				} else {
+					oldPortStrings = append(oldPortStrings, fmt.Sprintf("%s:%s", hb.HostPort, containerPort))
+				}
+			}
+		}
+	}
+
+	var oldEnv []string
+	if data.Config != nil {
+		oldEnv = data.Config.Env
+	}
+
+	var oldRestartPolicy string
+	var oldAutoRemove bool
+	if data.HostConfig != nil {
+		oldAutoRemove = data.HostConfig.AutoRemove
+		if data.HostConfig.RestartPolicy != nil {
+			oldRestartPolicy = data.HostConfig.RestartPolicy.Name
+		}
+	}
+
+	var oldCommand []string
+	if data.Config != nil && len(data.Config.Cmd) > 0 {
+		oldCommand = data.Config.Cmd
+	}
+
+	// rollbackOldContainer attempts to recreate the original container from the
+	// captured configuration. It is best-effort: errors are logged but not returned.
+	rollbackOldContainer := func() {
+		// Ensure the original image is still available locally (it may have been
+		// pruned between inspect and rollback).
+		resolvedOldImage, ensureErr := updateContainerEnsureImage(conn, oldImageName)
+		if ensureErr != nil {
+			log.Printf("UpdateContainer rollback: original image %q unavailable, cannot restore container %q: %v", oldImageName, oldName, ensureErr)
+			return
+		}
+
+		oldNamedVolumes, oldMounts := parseVolumeStrings(oldVolumeStrings)
+		var oldPortMappings []nettypes.PortMapping
+		for _, p := range oldPortStrings {
+			pm, parseErr := parsePortMapping(p)
+			if parseErr != nil {
+				log.Printf("UpdateContainer rollback: skipping unparseable port %q: %v", p, parseErr)
+				continue
+			}
+			oldPortMappings = append(oldPortMappings, pm)
+		}
+
+		oldEnvMap := envListToMap(oldEnv)
+		oldSpec := specgen.NewSpecGenerator(resolvedOldImage, false)
+		oldSpec.Name = oldName
+		oldSpec.Labels = oldLabels
+		oldSpec.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
+		oldSpec.Env = oldEnvMap
+		oldSpec.Mounts = oldMounts
+		oldSpec.Volumes = oldNamedVolumes
+		oldSpec.PortMappings = oldPortMappings
+		oldSpec.RestartPolicy = oldRestartPolicy
+		oldSpec.Remove = &oldAutoRemove
+		if len(oldCommand) > 0 {
+			oldSpec.Entrypoint = []string{}
+			oldSpec.Command = oldCommand
+		}
+
+		createResp, createErr := updateContainerCreateWithSpec(conn, oldSpec, nil)
+		if createErr != nil {
+			log.Printf("UpdateContainer rollback: failed to recreate original container %q: %v", oldName, createErr)
+			return
+		}
+
+		if oldWasRunning {
+			if startErr := updateContainerStart(conn, createResp.ID, nil); startErr != nil {
+				log.Printf("UpdateContainer rollback: failed to start recreated container %q: %v", createResp.ID, startErr)
+				_, _ = updateContainerRemove(conn, createResp.ID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true))
+			}
+		}
+	}
+
 	// Attempt a graceful stop when the container is running. If the stop fails
 	// (e.g. the process ignores SIGTERM, Podman times out, or the container has
 	// already exited) we log the error and continue: the subsequent force-remove
@@ -1418,6 +1529,7 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	// Resolve the image reference, pulling if necessary.
 	imageRef, err := updateContainerEnsureImage(conn, req.Image)
 	if err != nil {
+		rollbackOldContainer()
 		http.Error(w, fmt.Sprintf("Failed to resolve image %q: %v", req.Image, err), http.StatusInternalServerError)
 		return
 	}
@@ -1481,12 +1593,14 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 
 	createResponse, err := updateContainerCreateWithSpec(conn, spec, nil)
 	if err != nil {
+		rollbackOldContainer()
 		http.Error(w, fmt.Sprintf("Failed to create container: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	if err := updateContainerStart(conn, createResponse.ID, nil); err != nil {
 		_, _ = updateContainerRemove(conn, createResponse.ID, new(containers.RemoveOptions).WithForce(true).WithIgnore(true))
+		rollbackOldContainer()
 		http.Error(w, fmt.Sprintf("Failed to start container: %v", err), http.StatusInternalServerError)
 		return
 	}
