@@ -364,6 +364,11 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 	coveredDests := make(map[string]bool)
 
 	// Step 2 — prefer the opencloud/volumes label (stores original volume strings verbatim).
+	// The label is set by OpenCloud at container creation/update time and contains only
+	// user-specified volume strings (both bind mounts and named volumes such as
+	// "opencloud-mybucket:/app/data"). Anonymous volumes are never written to this label,
+	// so we do not need the bindDests guard here — all label entries are genuine
+	// user-specified mounts and should be included in detail.Binds.
 	if data.Config != nil {
 		if volsLabel := data.Config.Labels["opencloud/volumes"]; volsLabel != "" {
 			for _, vol := range strings.Split(volsLabel, "\n") {
@@ -372,8 +377,7 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				dest := parts[1]
-				if !bindDests[dest] {
-					// Not a genuine bind mount (e.g. label entry for an anonymous volume).
+				if coveredDests[dest] {
 					continue
 				}
 				coveredDests[dest] = true
