@@ -78,8 +78,6 @@ type EnvVar = {
 type VolumeMount = {
   hostPath: string
   containerPath: string
-  Z: boolean
-  U: boolean
 }
 
 // Formats a byte count into a human-readable string (e.g. 1048576 → "1.0 MB").
@@ -129,20 +127,11 @@ function parseEnvString(env: string): EnvVar {
 }
 
 // Parses a bind string like "hostPath:containerPath[:options]" into a VolumeMount.
-// The Z switch covers both "Z" (private relabeling) and "z" (shared relabeling).
-// Podman does not define a lowercase "u" option, so only uppercase "U" is checked.
 function parseBindString(bind: string): VolumeMount {
   const parts = bind.split(":")
-  const hostPath = parts[0] ?? ""
-  const containerPath = parts[1] ?? ""
-  const opts = parts[2] ?? ""
-  const optList = opts.split(",")
   return {
-    hostPath,
-    containerPath,
-    // "Z" = private relabel, "z" = shared relabel – map both to the Z toggle.
-    Z: optList.includes("Z") || optList.includes("z"),
-    U: optList.includes("U"),
+    hostPath: parts[0] ?? "",
+    containerPath: parts[1] ?? "",
   }
 }
 
@@ -171,7 +160,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
   const [editName, setEditName] = useState("")
   const [editPorts, setEditPorts] = useState<PortMapping[]>([{ hostPort: "", containerPort: "" }])
   const [editEnvVars, setEditEnvVars] = useState<EnvVar[]>([{ key: "", value: "" }])
-  const [editVolumes, setEditVolumes] = useState<VolumeMount[]>([{ hostPath: "", containerPath: "", Z: false, U: false }])
+  const [editVolumes, setEditVolumes] = useState<VolumeMount[]>([{ hostPath: "", containerPath: "" }])
   const [editRestartPolicy, setEditRestartPolicy] = useState("no")
   const [editAutoRemove, setEditAutoRemove] = useState(false)
   const [editCommand, setEditCommand] = useState("")
@@ -319,14 +308,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
 
       const volumes = editVolumes
         .filter(v => v.hostPath && v.containerPath)
-        .map(v => {
-          const opts: string[] = []
-          if (v.Z) opts.push("Z")
-          if (v.U) opts.push("U")
-          return opts.length > 0
-            ? `${v.hostPath}:${v.containerPath}:${opts.join(",")}`
-            : `${v.hostPath}:${v.containerPath}`
-        })
+        .map(v => `${v.hostPath}:${v.containerPath}`)
 
       const res = await client.post<{ status: string; containerId: string }>("/update-container", {
         containerId,
@@ -370,7 +352,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
     setEditEnvVars(prev => prev.map((e, idx) => (idx === i ? { ...e, [field]: value } : e)))
 
   // Edit form helpers for volume mounts
-  const addEditVolume = () => setEditVolumes(prev => [...prev, { hostPath: "", containerPath: "", Z: false, U: false }])
+  const addEditVolume = () => setEditVolumes(prev => [...prev, { hostPath: "", containerPath: "" }])
   const removeEditVolume = (i: number) => setEditVolumes(prev => prev.filter((_, idx) => idx !== i))
   const updateEditVolume = (i: number, field: keyof VolumeMount, value: string | boolean) =>
     setEditVolumes(prev => prev.map((v, idx) => (idx === i ? { ...v, [field]: value } : v)))
@@ -823,22 +805,6 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                       onChange={e => updateEditVolume(i, "containerPath", e.target.value)}
                       className="flex-1 min-w-[120px] font-mono text-sm"
                     />
-                    <div className="flex items-center gap-1">
-                      <Switch
-                        id={`edit-vol-z-${i}`}
-                        checked={vol.Z}
-                        onCheckedChange={v => updateEditVolume(i, "Z", v)}
-                      />
-                      <Label htmlFor={`edit-vol-z-${i}`} className="text-xs">Z</Label>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Switch
-                        id={`edit-vol-u-${i}`}
-                        checked={vol.U}
-                        onCheckedChange={v => updateEditVolume(i, "U", v)}
-                      />
-                      <Label htmlFor={`edit-vol-u-${i}`} className="text-xs">U</Label>
-                    </div>
                     <Button
                       variant="ghost"
                       size="sm"

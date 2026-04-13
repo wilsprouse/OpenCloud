@@ -1547,9 +1547,9 @@ func TestValidateVolumeMount(t *testing.T) {
 		{"../../etc:/container/data", true}, // path traversal in host
 		{"/host/data:../../etc", true},      // path traversal in container
 		{"/host/data", true},                // no colon
-		{"/host/data:/container/data:Z", false},     // Z option
-		{"/host/data:/container/data:U", false},     // U option
-		{"/host/data:/container/data:Z,U", false},   // Z and U combined
+		{"/host/data:/container/data:Z", true},      // Z option no longer valid
+		{"/host/data:/container/data:U", true},      // U option no longer valid
+		{"/host/data:/container/data:Z,U", true},    // Z and U combined no longer valid
 		{"/host/data:/container/data:ro", false},    // read-only option
 		{"/host/data:/container/data:badopt", true}, // unknown option
 	}
@@ -1569,16 +1569,15 @@ func TestParseMountOptions(t *testing.T) {
 		input   string
 		wantErr bool
 	}{
-		{"Z", false},
-		{"z", false},
-		{"U", false},
-		{"Z,U", false},
+		{"Z", true},    // Z no longer a valid option
+		{"z", true},    // z no longer a valid option
+		{"U", true},    // U no longer a valid option
+		{"Z,U", true},  // Z,U no longer valid
 		{"ro", false},
 		{"rw", false},
 		{"rbind", false},
-		{"Z,U,ro", false},
+		{"Z,U,ro", true},   // Z,U no longer valid
 		{"badopt", true},
-		{"Z,badopt", true},
 		{"", false}, // empty string is a no-op
 	}
 	for _, tt := range tests {
@@ -1646,7 +1645,7 @@ func TestParseVolumeStrings(t *testing.T) {
 	vols := []string{
 		"opencloud-my-bucket:/app/data",
 		"/host/path:/container/path",
-		"opencloud-second:/mnt:Z",
+		"opencloud-second:/mnt:ro",
 		"~/logs:/logs",
 	}
 	namedVolumes, bindMounts := parseVolumeStrings(vols)
@@ -1731,9 +1730,9 @@ func TestGetContainerReturnsDetail(t *testing.T) {
 			Mounts: []define.InspectMount{
 				{Type: "bind", Source: "/host/data", Destination: "/container/data", Mode: "rw"},
 			},
-			// HostConfig.Binds is the primary source for flags (Z, U, etc.).
+			// HostConfig.Binds is the primary source for options.
 			HostConfig: &define.InspectContainerHostConfig{
-				Binds:      []string{"/host/data:/container/data:rw,Z"},
+				Binds:      []string{"/host/data:/container/data:rw"},
 				AutoRemove: false,
 				RestartPolicy: &define.InspectRestartPolicy{
 					Name: "always",
@@ -1777,69 +1776,11 @@ func TestGetContainerReturnsDetail(t *testing.T) {
 	if len(detail.Env) != 2 {
 		t.Errorf("expected 2 env vars, got %d", len(detail.Env))
 	}
-	if len(detail.Binds) != 1 || detail.Binds[0] != "/host/data:/container/data:rw,Z" {
+	if len(detail.Binds) != 1 || detail.Binds[0] != "/host/data:/container/data:rw" {
 		t.Errorf("unexpected Binds: %v", detail.Binds)
 	}
 	if len(detail.Ports) != 1 {
 		t.Errorf("expected 1 port mapping, got %d", len(detail.Ports))
-	}
-}
-
-// TestGetContainerPreservesZAndUFlags verifies that the Z (SELinux relabeling)
-// and U (user-namespace chown) flags are preserved from HostConfig.Binds even
-// when they are absent from the corresponding InspectMount.Mode.  These flags
-// are applied by Podman at mount-setup time and are not guaranteed to round-trip
-// through the kernel-level mount options stored in Mode.
-func TestGetContainerPreservesZAndUFlags(t *testing.T) {
-	origConnection := getContainerConnection
-	origInspect := inspectPodmanContainer
-	t.Cleanup(func() {
-		getContainerConnection = origConnection
-		inspectPodmanContainer = origInspect
-	})
-
-	getContainerConnection = func(ctx context.Context) (context.Context, error) {
-		return ctx, nil
-	}
-
-	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
-		return &define.InspectContainerData{
-			ID:        "test-id",
-			Name:      "/test",
-			ImageName: "nginx:latest",
-			Created:   time.Now(),
-			// Mode does NOT include Z or U — simulates Podman's behavior where
-			// create-time flags are applied but not stored in Mount.Mode.
-			Mounts: []define.InspectMount{
-				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw"},
-			},
-			// HostConfig.Binds retains the original user-specified spec.
-			HostConfig: &define.InspectContainerHostConfig{
-				Binds:         []string{"/home/user/data:/usr/share/nginx/html:Z,U,rw"},
-				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
-			},
-		}, nil
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
-	w := httptest.NewRecorder()
-
-	GetContainer(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
-	}
-
-	var detail ContainerDetail
-	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if len(detail.Binds) != 1 {
-		t.Fatalf("expected 1 bind, got %d: %v", len(detail.Binds), detail.Binds)
-	}
-	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:Z,U,rw" {
-		t.Errorf("Z and U flags not preserved; got %q", detail.Binds[0])
 	}
 }
 
@@ -1868,7 +1809,7 @@ func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
 			Created:   time.Now(),
 			Mounts: []define.InspectMount{
 				// User-specified bind mount — must be included.
-				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw,Z"},
+				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw"},
 				// Anonymous volume created by Podman for an image VOLUME
 				// declaration — must be excluded (source is an internal path).
 				{Type: "volume", Source: "/home/ubuntu/a1b2c3d4e5f6", Destination: "/var/cache/nginx", Mode: "rw"},
@@ -1879,7 +1820,7 @@ func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
 			// removal and would cause a statfs error on recreate.
 			HostConfig: &define.InspectContainerHostConfig{
 				Binds: []string{
-					"/home/user/data:/usr/share/nginx/html:Z",
+					"/home/user/data:/usr/share/nginx/html",
 					"/home/ubuntu/a1b2c3d4e5f6:/var/cache/nginx",
 				},
 				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
@@ -1904,16 +1845,15 @@ func TestGetContainerExcludesAnonymousVolumes(t *testing.T) {
 	if len(detail.Binds) != 1 {
 		t.Fatalf("expected exactly 1 bind (anonymous volume excluded), got %d: %v", len(detail.Binds), detail.Binds)
 	}
-	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:Z" {
+	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html" {
 		t.Errorf("unexpected bind value: %q", detail.Binds[0])
 	}
 }
 
-// TestGetContainerUsesVolumeLabelForZAndUFlags verifies that when the
+// TestGetContainerUsesVolumeLabelForVolumes verifies that when the
 // opencloud/volumes label is present, GetContainer uses it as the primary source
-// for volume bind strings so that Z and U flags are preserved even when they are
-// absent from HostConfig.Binds and Mount.Mode.
-func TestGetContainerUsesVolumeLabelForZAndUFlags(t *testing.T) {
+// for volume bind strings.
+func TestGetContainerUsesVolumeLabelForVolumes(t *testing.T) {
 	origConnection := getContainerConnection
 	origInspect := inspectPodmanContainer
 	t.Cleanup(func() {
@@ -1933,17 +1873,15 @@ func TestGetContainerUsesVolumeLabelForZAndUFlags(t *testing.T) {
 			Created:   time.Now(),
 			Config: &define.InspectContainerConfig{
 				Labels: map[string]string{
-					// opencloud/volumes stores the original user-specified bind strings,
-					// including Z and U flags that Podman strips from HostConfig.Binds.
-					"opencloud/volumes": "/home/user/data:/usr/share/nginx/html:Z,U",
+					// opencloud/volumes stores the original user-specified bind strings.
+					"opencloud/volumes": "/home/user/data:/usr/share/nginx/html:ro",
 				},
 			},
 			// Mounts drives the allowlist (Type == "bind" only).
 			Mounts: []define.InspectMount{
-				// Mode does NOT include Z or U — Podman applies them at mount-setup time.
-				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "rw"},
+				{Type: "bind", Source: "/home/user/data", Destination: "/usr/share/nginx/html", Mode: "ro"},
 			},
-			// HostConfig.Binds also lacks Z and U (Podman stripped them during creation).
+			// HostConfig.Binds may differ from the label.
 			HostConfig: &define.InspectContainerHostConfig{
 				Binds:         []string{"/home/user/data:/usr/share/nginx/html:rw"},
 				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
@@ -1968,9 +1906,9 @@ func TestGetContainerUsesVolumeLabelForZAndUFlags(t *testing.T) {
 	if len(detail.Binds) != 1 {
 		t.Fatalf("expected 1 bind, got %d: %v", len(detail.Binds), detail.Binds)
 	}
-	// The label takes priority: Z and U must appear even though HostConfig.Binds lost them.
-	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:Z,U" {
-		t.Errorf("Z and U flags not recovered from label; got %q", detail.Binds[0])
+	// The label takes priority over HostConfig.Binds.
+	if detail.Binds[0] != "/home/user/data:/usr/share/nginx/html:ro" {
+		t.Errorf("volume label not recovered correctly; got %q", detail.Binds[0])
 	}
 }
 
@@ -1997,15 +1935,15 @@ func TestGetContainerVolumeLabelTakesPriorityOverHostConfigBinds(t *testing.T) {
 			Created:   time.Now(),
 			Config: &define.InspectContainerConfig{
 				Labels: map[string]string{
-					// Label has Z and U; HostConfig.Binds has only rw (Z/U were stripped).
-					"opencloud/volumes": "/data:/app:Z,U,ro",
+					// Label has ro; HostConfig.Binds has rw — label must win.
+					"opencloud/volumes": "/data:/app:ro",
 				},
 			},
 			Mounts: []define.InspectMount{
 				{Type: "bind", Source: "/data", Destination: "/app", Mode: "ro"},
 			},
 			HostConfig: &define.InspectContainerHostConfig{
-				Binds:         []string{"/data:/app:ro"},
+				Binds:         []string{"/data:/app:rw"},
 				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
 			},
 		}, nil
@@ -2028,13 +1966,13 @@ func TestGetContainerVolumeLabelTakesPriorityOverHostConfigBinds(t *testing.T) {
 	if len(detail.Binds) != 1 {
 		t.Fatalf("expected 1 bind, got %d: %v", len(detail.Binds), detail.Binds)
 	}
-	if detail.Binds[0] != "/data:/app:Z,U,ro" {
+	if detail.Binds[0] != "/data:/app:ro" {
 		t.Errorf("label did not take priority over HostConfig.Binds; got %q", detail.Binds[0])
 	}
 }
 
 // TestUpdateContainerStoresVolumesLabel verifies that UpdateContainer writes the
-// opencloud/volumes label so that GetContainer can later recover Z/U flags.
+// opencloud/volumes label so that GetContainer can later recover volume strings accurately.
 func TestUpdateContainerStoresVolumesLabel(t *testing.T) {
 	origConnection := updateContainerConnection
 	origInspect := updateContainerInspect
@@ -2080,7 +2018,7 @@ func TestUpdateContainerStoresVolumesLabel(t *testing.T) {
 		ContainerID: "old-id",
 		Image:       "nginx:latest",
 		Name:        "test-container",
-		Volumes:     []string{"/host/data:/container/data:Z,U"},
+		Volumes:     []string{"/host/data:/container/data:ro"},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -2099,14 +2037,13 @@ func TestUpdateContainerStoresVolumesLabel(t *testing.T) {
 	if !ok {
 		t.Fatal("expected opencloud/volumes label to be set")
 	}
-	if got != "/host/data:/container/data:Z,U" {
+	if got != "/host/data:/container/data:ro" {
 		t.Errorf("unexpected opencloud/volumes label value: %q", got)
 	}
 }
 
 // TestGetContainerMultipleVolumesFromLabel verifies that when the opencloud/volumes
-// label contains multiple volume entries (newline-separated), all are parsed correctly
-// and Z/U flags on each entry are preserved.
+// label contains multiple volume entries (newline-separated), all are parsed correctly.
 func TestGetContainerMultipleVolumesFromLabel(t *testing.T) {
 	origConnection := getContainerConnection
 	origInspect := inspectPodmanContainer
@@ -2127,16 +2064,15 @@ func TestGetContainerMultipleVolumesFromLabel(t *testing.T) {
 			Created:   time.Now(),
 			Config: &define.InspectContainerConfig{
 				Labels: map[string]string{
-					// Two volumes, newline-separated, each with Z/U flags.
-					"opencloud/volumes": "/data/a:/app/a:Z,U\n/data/b:/app/b:U",
+					// Two volumes, newline-separated.
+					"opencloud/volumes": "/data/a:/app/a:ro\n/data/b:/app/b",
 				},
 			},
 			Mounts: []define.InspectMount{
-				{Type: "bind", Source: "/data/a", Destination: "/app/a", Mode: "rw"},
+				{Type: "bind", Source: "/data/a", Destination: "/app/a", Mode: "ro"},
 				{Type: "bind", Source: "/data/b", Destination: "/app/b", Mode: "rw"},
 			},
 			HostConfig: &define.InspectContainerHostConfig{
-				// HostConfig.Binds lacks Z and U (stripped by Podman).
 				Binds:         []string{"/data/a:/app/a:rw", "/data/b:/app/b:rw"},
 				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
 			},
@@ -2164,11 +2100,11 @@ func TestGetContainerMultipleVolumesFromLabel(t *testing.T) {
 	for _, b := range detail.Binds {
 		bindsMap[b] = true
 	}
-	if !bindsMap["/data/a:/app/a:Z,U"] {
-		t.Errorf("expected /data/a:/app/a:Z,U in binds, got %v", detail.Binds)
+	if !bindsMap["/data/a:/app/a:ro"] {
+		t.Errorf("expected /data/a:/app/a:ro in binds, got %v", detail.Binds)
 	}
-	if !bindsMap["/data/b:/app/b:U"] {
-		t.Errorf("expected /data/b:/app/b:U in binds, got %v", detail.Binds)
+	if !bindsMap["/data/b:/app/b"] {
+		t.Errorf("expected /data/b:/app/b in binds, got %v", detail.Binds)
 	}
 }
 
