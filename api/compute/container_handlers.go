@@ -325,16 +325,12 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 	//
 	// Why three data sources are needed, in priority order:
 	//   1. opencloud/volumes label — set by OpenCloud at container creation/update time
-	//      and stores the original user-specified volume strings verbatim (e.g.
-	//      "/host:/ctr:Z,U"). This is the most reliable source because Z (SELinux
-	//      relabeling) and U (user-namespace UID/GID remapping) are applied by Podman
-	//      at mount-setup time and are NOT guaranteed to survive into either
-	//      HostConfig.Binds or data.Mounts[i].Mode; the label preserves them exactly.
+	//      and stores the original user-specified volume strings verbatim. This is the
+	//      most reliable source because the label preserves them exactly as provided.
 	//   2. data.HostConfig.Binds — used when the label is absent (e.g. containers
 	//      created before the label was introduced, or created by another tool).
 	//   3. data.Mounts fallback — used when neither the label nor HostConfig.Binds
-	//      covers a particular mount (e.g. added via --mount instead of -v). Note
-	//      that Z/U flags will be absent from this path.
+	//      covers a particular mount (e.g. added via --mount instead of -v).
 	//
 	// data.Mounts (Type == "bind") is always used to build an allowlist of genuine
 	// bind destinations so anonymous/named Podman volumes are excluded from Binds.
@@ -367,7 +363,7 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 
 	coveredDests := make(map[string]bool)
 
-	// Step 2 — prefer the opencloud/volumes label (preserves Z/U verbatim).
+	// Step 2 — prefer the opencloud/volumes label (stores original volume strings verbatim).
 	if data.Config != nil {
 		if volsLabel := data.Config.Labels["opencloud/volumes"]; volsLabel != "" {
 			for _, vol := range strings.Split(volsLabel, "\n") {
@@ -412,7 +408,6 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 4 — fallback for bind mounts not listed in either the label or HostConfig.Binds.
-	// Note: Z/U will be absent from m.Mode; this path is a last resort for --mount entries.
 	for _, m := range data.Mounts {
 		if m.Type != "bind" || coveredDests[m.Destination] {
 			continue
@@ -554,8 +549,8 @@ type PullAndRunRequest struct {
 	Ports []string `json:"ports,omitempty"`
 	// Env is a list of environment variables in "KEY=VALUE" or "KEY" format.
 	Env []string `json:"env,omitempty"`
-	// Volumes is a list of volume mounts in "hostPath:containerPath[:options]" format.
-	// Options is an optional comma-separated list of mount flags (e.g. "Z", "U", "Z,U").
+	// Volumes is a list of volume mounts in "source:containerPath[:options]" format.
+	// Options is an optional comma-separated list of mount flags (e.g. "ro", "rw").
 	Volumes []string `json:"volumes,omitempty"`
 	// RestartPolicy is the container restart policy ("no", "always", "on-failure", "unless-stopped").
 	RestartPolicy string `json:"restartPolicy,omitempty"`
@@ -630,8 +625,6 @@ func expandTildePath(p string) string {
 
 // validMountOptions is the set of option tokens accepted in the third segment of a volume mount string.
 var validMountOptions = map[string]bool{
-	"Z": true, "z": true,
-	"U":       true,
 	"rw":      true,
 	"ro":      true,
 	"rbind":   true,
@@ -701,7 +694,7 @@ func parseVolumeStrings(volStrings []string) ([]*specgen.NamedVolume, []specs.Mo
 		}
 
 		if isNamedVolumeMount(source) {
-			// Named volume — pass through volume options as-is (e.g. "Z", "U").
+			// Named volume — pass through volume options as-is (e.g. "ro", "rw").
 			var opts []string
 			for _, o := range strings.Split(optStr, ",") {
 				if o != "" && validMountOptions[o] {
@@ -730,7 +723,7 @@ func parseVolumeStrings(volStrings []string) ([]*specgen.NamedVolume, []specs.Mo
 // validateVolumeMount checks a volume mount string for path traversal, missing separators,
 // and invalid option flags. Volume mounts must be in "source:containerPath[:options]" format
 // where source is either an absolute filesystem path or a Podman named volume name, and
-// options is an optional comma-separated list of valid mount option flags (e.g. "Z,U").
+// options is an optional comma-separated list of valid mount option flags (e.g. "ro", "rw").
 func validateVolumeMount(mount string) string {
 	parts := strings.SplitN(mount, ":", 3)
 	if len(parts) < 2 {
@@ -970,9 +963,7 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	if len(req.Ports) > 0 {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
-	// Store the original volume strings verbatim so GetContainer can recover Z/U flags.
-	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
-	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
+	// Store the original volume strings verbatim so GetContainer can recover them accurately.
 	// Newline is used as the separator because it cannot appear in a valid bind specification.
 	if len(req.Volumes) > 0 {
 		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
@@ -1241,9 +1232,7 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 	if len(req.Ports) > 0 {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
-	// Store the original volume strings verbatim so GetContainer can recover Z/U flags.
-	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
-	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
+	// Store the original volume strings verbatim so GetContainer can recover them accurately.
 	if len(req.Volumes) > 0 {
 		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
 	}
@@ -1461,9 +1450,7 @@ func UpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if len(req.Ports) > 0 {
 		labels["opencloud/ports"] = strings.Join(req.Ports, " ")
 	}
-	// Store the original volume strings verbatim so GetContainer can recover Z/U flags.
-	// Podman applies Z (SELinux relabeling) and U (user-namespace chown) at mount-setup
-	// time and does not guarantee their round-trip through HostConfig.Binds or Mount.Mode.
+	// Store the original volume strings verbatim so GetContainer can recover them accurately.
 	if len(req.Volumes) > 0 {
 		labels["opencloud/volumes"] = strings.Join(req.Volumes, "\n")
 	}
