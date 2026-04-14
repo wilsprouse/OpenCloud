@@ -306,15 +306,38 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 		if data.HostConfig.RestartPolicy != nil {
 			detail.RestartPolicy = data.HostConfig.RestartPolicy.Name
 		}
+	}
 
+	// Build the Ports list for the edit form.
+	//
+	// Two data sources are used in priority order:
+	//   1. opencloud/ports label — set by OpenCloud at container creation/update time
+	//      and stores the original user-specified port strings verbatim (e.g. "80" for
+	//      dynamic host port assignment, or "8080:80" for an explicit mapping). This is
+	//      the authoritative source for OpenCloud-managed containers.
+	//   2. HostConfig.PortBindings — used as a fallback for containers not created by
+	//      OpenCloud (e.g. started by another tool or before the label was introduced).
+	portsFromLabel := false
+	if data.Config != nil {
+		if portsLabel := data.Config.Labels["opencloud/ports"]; portsLabel != "" {
+			for _, p := range strings.Fields(portsLabel) {
+				detail.Ports = append(detail.Ports, p)
+			}
+			portsFromLabel = true
+		}
+	}
+	if !portsFromLabel && data.HostConfig != nil {
 		// Convert the PortBindings map into "hostIP:hostPort:containerPort/proto" strings.
 		for containerPort, hostBindings := range data.HostConfig.PortBindings {
 			for _, hb := range hostBindings {
 				var mapping string
 				if hb.HostIP != "" {
 					mapping = fmt.Sprintf("%s:%s:%s", hb.HostIP, hb.HostPort, containerPort)
-				} else {
+				} else if hb.HostPort != "" {
 					mapping = fmt.Sprintf("%s:%s", hb.HostPort, containerPort)
+				} else {
+					// Dynamic (host port 0): expose just the container port.
+					mapping = containerPort
 				}
 				detail.Ports = append(detail.Ports, mapping)
 			}

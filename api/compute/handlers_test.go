@@ -2126,6 +2126,123 @@ func TestGetContainerIncludesMixedVolumesFromLabel(t *testing.T) {
 	}
 }
 
+// TestGetContainerUsesPortLabelForPorts verifies that when the opencloud/ports
+// label is present, GetContainer uses it as the primary source for port strings.
+// This is critical for dynamic host port mappings (e.g. "80") which must round-trip
+// back to the edit form without being overwritten by the runtime-assigned host port.
+func TestGetContainerUsesPortLabelForPorts(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				// opencloud/ports stores the original user-specified port strings.
+				// "80" represents a dynamic host port mapping.
+				Labels: map[string]string{
+					"opencloud/ports": "80",
+				},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				// Podman assigns ephemeral port 32768 at runtime — the label value
+				// must take priority so the edit form shows the original intent.
+				PortBindings: map[string][]define.InspectHostPort{
+					"80/tcp": {{HostIP: "", HostPort: "32768"}},
+				},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Ports) != 1 {
+		t.Fatalf("expected 1 port, got %d: %v", len(detail.Ports), detail.Ports)
+	}
+	// The label "80" must be returned, not the runtime-assigned "32768:80/tcp".
+	if detail.Ports[0] != "80" {
+		t.Errorf("port label not recovered correctly; got %q, want %q", detail.Ports[0], "80")
+	}
+}
+
+// TestGetContainerPortLabelFallbackToPortBindings verifies that when the
+// opencloud/ports label is absent, GetContainer falls back to HostConfig.PortBindings.
+func TestGetContainerPortLabelFallbackToPortBindings(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				PortBindings: map[string][]define.InspectHostPort{
+					"80/tcp": {{HostIP: "", HostPort: "8080"}},
+				},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Ports) != 1 {
+		t.Fatalf("expected 1 port, got %d: %v", len(detail.Ports), detail.Ports)
+	}
+	if detail.Ports[0] != "8080:80/tcp" {
+		t.Errorf("unexpected port; got %q, want %q", detail.Ports[0], "8080:80/tcp")
+	}
+}
+
 // TestUpdateContainerStoresVolumesLabel verifies that UpdateContainer writes the
 // opencloud/volumes label so that GetContainer can later recover volume strings accurately.
 func TestUpdateContainerStoresVolumesLabel(t *testing.T) {
