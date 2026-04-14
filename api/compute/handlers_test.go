@@ -1193,7 +1193,7 @@ func TestPullAndRunHandlerInvalidContainerName(t *testing.T) {
 
 // TestPullAndRunHandlerInvalidPort verifies that an invalid port mapping returns 400.
 func TestPullAndRunHandlerInvalidPort(t *testing.T) {
-	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	cases := []string{"nocodon", "../80:80", "8080;80"}
 	for _, port := range cases {
 		body, _ := json.Marshal(map[string]interface{}{"image": "nginx:latest", "ports": []string{port}})
 		req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(string(body)))
@@ -1342,7 +1342,7 @@ func TestPullAndRunStreamHandlerInvalidContainerName(t *testing.T) {
 
 // TestPullAndRunStreamHandlerInvalidPort verifies that an invalid port mapping returns 400.
 func TestPullAndRunStreamHandlerInvalidPort(t *testing.T) {
-	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	cases := []string{"nocodon", "../80:80", "8080;80"}
 	for _, port := range cases {
 		body, _ := json.Marshal(map[string]interface{}{"image": "nginx:latest", "ports": []string{port}})
 		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
@@ -1466,13 +1466,16 @@ func TestValidatePortMapping(t *testing.T) {
 		wantErr bool
 	}{
 		{"8080:80", false},
-		{"0:80", false},
 		{"8080:80/tcp", false},
 		{"0.0.0.0:8080:80", false},
-		{"8080", true},     // no colon
-		{"../80:80", true}, // path traversal
-		{"8080;80", true},  // semicolon
-		{"8080 80", true},  // space
+		{"80", false},       // dynamic host port (no colon required)
+		{"80/tcp", false},   // dynamic host port with protocol
+		{"8080", false},     // dynamic host port assignment
+		{"nocodon", true},   // non-numeric container port
+		{"0:80", true},      // host port 0 is invalid; use "80" for dynamic assignment
+		{"../80:80", true},  // path traversal
+		{"8080;80", true},   // semicolon
+		{"8080 80", true},   // space
 	}
 	for _, tt := range tests {
 		result := validatePortMapping(tt.input)
@@ -1512,6 +1515,30 @@ func TestParsePortMapping(t *testing.T) {
 		{
 			name:        "invalid numeric port",
 			input:       "abc:80",
+			expectError: true,
+		},
+		{
+			name:      "dynamic host port - container port only",
+			input:     "80",
+			hostPort:  0,
+			container: 80,
+			protocol:  "tcp",
+		},
+		{
+			name:      "dynamic host port with protocol",
+			input:     "443/tcp",
+			hostPort:  0,
+			container: 443,
+			protocol:  "tcp",
+		},
+		{
+			name:        "invalid dynamic port - non-numeric",
+			input:       "abc",
+			expectError: true,
+		},
+		{
+			name:        "invalid dynamic port - zero",
+			input:       "0",
 			expectError: true,
 		},
 	}
@@ -2476,7 +2503,7 @@ func TestUpdateContainerInvalidContainerName(t *testing.T) {
 
 // TestUpdateContainerInvalidPort verifies that an invalid port mapping returns 400.
 func TestUpdateContainerInvalidPort(t *testing.T) {
-	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	cases := []string{"nocodon", "../80:80", "8080;80"}
 	for _, port := range cases {
 		body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "abc123", Image: "nginx:latest", Ports: []string{port}})
 		req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))

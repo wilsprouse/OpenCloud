@@ -389,8 +389,8 @@ export default function ContainersPage() {
     try {
       // Build the request payload with non-empty port, env, and volume entries
       const ports = runPorts
-        .filter(p => p.hostPort && p.containerPort)
-        .map(p => `${p.hostPort}:${p.containerPort}`)
+        .filter(p => p.containerPort)
+        .map(p => p.hostPort ? `${p.hostPort}:${p.containerPort}` : p.containerPort)
 
       const envVars = runEnvVars
         .filter(e => e.key)
@@ -862,7 +862,7 @@ export default function ContainersPage() {
                       {runPorts.map((port, index) => (
                         <div key={index} className="flex items-center space-x-2">
                           <Input
-                            placeholder="Host port (e.g. 8080)"
+                            placeholder="Host port (optional, e.g. 8080)"
                             value={port.hostPort}
                             onChange={(e) => updatePortMapping(index, "hostPort", e.target.value)}
                           />
@@ -886,7 +886,7 @@ export default function ContainersPage() {
                         </div>
                       ))}
                       <p className="text-xs text-muted-foreground">
-                        Map host ports to container ports (-p hostPort:containerPort)
+                        Map host ports to container ports (-p hostPort:containerPort). Leave the host port blank to let the system assign a random available port automatically.
                       </p>
                     </div>
 
