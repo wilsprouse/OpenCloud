@@ -613,8 +613,8 @@ func validatePortMapping(mapping string) string {
 	}
 	// isPortNum returns true when s is a valid 1-65535 port number string.
 	isPortNum := func(s string) bool {
-		n, err := strconv.ParseUint(s, 10, 16)
-		return err == nil && n > 0
+		n, err := strconv.ParseUint(s, 10, 64)
+		return err == nil && n > 0 && n <= 65535
 	}
 	parts := strings.Split(portSpec, ":")
 	switch len(parts) {
