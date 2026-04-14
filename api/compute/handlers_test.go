@@ -1472,7 +1472,7 @@ func TestValidatePortMapping(t *testing.T) {
 		{"80/tcp", false},   // dynamic host port with protocol
 		{"8080", false},     // dynamic host port assignment
 		{"nocodon", true},   // non-numeric container port
-		{"0:80", true},      // "0:80" is rejected; use "80" (single-port) for dynamic host port assignment
+		{"0:80", true},      // host port must be 1-65535; port 0 is not a valid host port
 		{"../80:80", true},  // path traversal
 		{"8080;80", true},   // semicolon
 		{"8080 80", true},   // space
