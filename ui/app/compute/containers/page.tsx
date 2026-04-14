@@ -679,17 +679,7 @@ export default function ContainersPage() {
                           <span className="flex items-center">
                             ID: {c.Id.slice(7, 19)}
                           </span>
-                          <span>•</span>
-                          <span>{c.Status}</span>
-                          {c.State === "running" && (
-                            <>
-                              <span>•</span>
-                              <span className="flex items-center">
-                                <Activity className="h-3 w-3 mr-1" />
-                                {formatBytes(c.MemoryUsageBytes)}
-                              </span>
-                            </>
-                          )}
+
                         </div>
                       </div>
                     </div>
