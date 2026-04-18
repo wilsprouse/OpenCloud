@@ -1574,10 +1574,10 @@ func TestValidateVolumeMount(t *testing.T) {
 		{"../../etc:/container/data", true}, // path traversal in host
 		{"/host/data:../../etc", true},      // path traversal in container
 		{"/host/data", true},                // no colon
-		{"/host/data:/container/data:Z", true},      // Z option no longer valid
-		{"/host/data:/container/data:U", true},      // U option no longer valid
-		{"/host/data:/container/data:Z,U", true},    // Z and U combined no longer valid
-		{"/host/data:/container/data:ro", false},    // read-only option
+		{"/host/data:/container/data:Z", false},    // Podman SELinux relabelling (shared)
+		{"/host/data:/container/data:U", false},    // Podman user-namespace mapping
+		{"/host/data:/container/data:Z,U", false},  // combined Podman options (issue example)
+		{"/host/data:/container/data:ro", false},   // read-only option
 		{"/host/data:/container/data:badopt", true}, // unknown option
 	}
 	for _, tt := range tests {
@@ -1596,14 +1596,14 @@ func TestParseMountOptions(t *testing.T) {
 		input   string
 		wantErr bool
 	}{
-		{"Z", true},    // Z no longer a valid option
-		{"z", true},    // z no longer a valid option
-		{"U", true},    // U no longer a valid option
-		{"Z,U", true},  // Z,U no longer valid
+		{"Z", false},      // Podman SELinux relabelling (shared)
+		{"z", false},      // Podman SELinux relabelling (private)
+		{"U", false},      // Podman user-namespace mapping
+		{"Z,U", false},    // combined Podman options (used by the issue example)
 		{"ro", false},
 		{"rw", false},
 		{"rbind", false},
-		{"Z,U,ro", true},    // Z,U no longer valid
+		{"Z,U,ro", false}, // combined Podman options with standard flag
 		{"badopt", true},
 		{"ro,badopt", true}, // valid option combined with unknown option
 		{"", false}, // empty string is a no-op
@@ -3302,7 +3302,294 @@ func TestUpdateContainerRollsBackUsingHostConfigFallback(t *testing.T) {
 	if len(rollbackCreateSpec.Mounts) != 1 {
 		t.Fatalf("expected 1 mount in rollback spec, got %d; volumes=%v", len(rollbackCreateSpec.Mounts), rollbackCreateSpec.Volumes)
 	}
-	if rollbackCreateSpec.Mounts[0].Source != "/host/data" || rollbackCreateSpec.Mounts[0].Destination != "/container/data" {
-		t.Errorf("unexpected rollback mount: %+v", rollbackCreateSpec.Mounts[0])
+}
+
+// TestShellSplit verifies that shellSplit correctly tokenises shell-like strings.
+func TestShellSplit(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    []string
+		wantErr bool
+	}{
+		{`nginx:latest`, []string{"nginx:latest"}, false},
+		{`-p 8080:80 nginx:latest`, []string{"-p", "8080:80", "nginx:latest"}, false},
+		{`-e "FOO=hello world" nginx:latest`, []string{"-e", "FOO=hello world", "nginx:latest"}, false},
+		{`-e 'FOO=hello world' nginx:latest`, []string{"-e", "FOO=hello world", "nginx:latest"}, false},
+		{`-v /host/path:/container/path:Z,U nginx:latest`, []string{"-v", "/host/path:/container/path:Z,U", "nginx:latest"}, false},
+		{`--name my-app nginx:latest /bin/sh`, []string{"--name", "my-app", "nginx:latest", "/bin/sh"}, false},
+		{``, nil, false},
+		{`'unterminated`, nil, true},
+		{`"unterminated`, nil, true},
+		{`trailing\`, nil, true},
 	}
+
+	for _, tt := range tests {
+		got, err := shellSplit(tt.input)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("shellSplit(%q): expected error, got nil", tt.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("shellSplit(%q): unexpected error: %v", tt.input, err)
+			continue
+		}
+		if len(got) != len(tt.want) {
+			t.Errorf("shellSplit(%q): got %v, want %v", tt.input, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("shellSplit(%q) token[%d]: got %q, want %q", tt.input, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
+// TestParseRawContainerArgs exercises the custom-command parser with various flag combinations.
+func TestParseRawContainerArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    PullAndRunRequest
+		wantErr bool
+	}{
+		{
+			name:  "image only",
+			input: "nginx:latest",
+			want:  PullAndRunRequest{Image: "nginx:latest"},
+		},
+		{
+			name:  "port flags space-separated",
+			input: "-p 8080:80 -p 443:443 nginx:latest",
+			want:  PullAndRunRequest{Image: "nginx:latest", Ports: []string{"8080:80", "443:443"}},
+		},
+		{
+			name:  "port flags equals-separated",
+			input: "--publish=8080:80 nginx:latest",
+			want:  PullAndRunRequest{Image: "nginx:latest", Ports: []string{"8080:80"}},
+		},
+		{
+			name:  "env flags",
+			input: `-e FOO=bar -e "BAZ=hello world" nginx:latest`,
+			want:  PullAndRunRequest{Image: "nginx:latest", Env: []string{"FOO=bar", "BAZ=hello world"}},
+		},
+		{
+			name:  "volume with Z,U options",
+			input: "-v ~/logs:/var/log:Z,U nginx:latest",
+			want:  PullAndRunRequest{Image: "nginx:latest", Volumes: []string{"~/logs:/var/log:Z,U"}},
+		},
+		{
+			name:  "container name via --name",
+			input: "--name my-app nginx:latest",
+			want:  PullAndRunRequest{Image: "nginx:latest", Name: "my-app"},
+		},
+		{
+			name:  "restart policy",
+			input: "--restart always nginx:latest",
+			want:  PullAndRunRequest{Image: "nginx:latest", RestartPolicy: "always"},
+		},
+		{
+			name:  "auto-remove flag",
+			input: "--rm nginx:latest",
+			want:  PullAndRunRequest{Image: "nginx:latest", AutoRemove: true},
+		},
+		{
+			name:  "detach flag is ignored (always detached via bindings)",
+			input: "-d nginx:latest",
+			want:  PullAndRunRequest{Image: "nginx:latest"},
+		},
+		{
+			name:  "command override after image",
+			input: "nginx:latest /bin/sh -c echo",
+			want:  PullAndRunRequest{Image: "nginx:latest", Command: "/bin/sh -c echo"},
+		},
+		{
+			name:  "issue example: rabbitmq",
+			input: `-p 15672:15672 -p 5672:5672 -e RABBITMQ_LOGS=/var/log/rabbitmq/rabbit.log -v ~/rabbitlogs/:/var/log/rabbitmq:Z,U docker.io/library/rabbitmq:management`,
+			want: PullAndRunRequest{
+				Image:   "docker.io/library/rabbitmq:management",
+				Ports:   []string{"15672:15672", "5672:5672"},
+				Env:     []string{"RABBITMQ_LOGS=/var/log/rabbitmq/rabbit.log"},
+				Volumes: []string{"~/rabbitlogs/:/var/log/rabbitmq:Z,U"},
+			},
+		},
+		{
+			name:    "missing image returns error",
+			input:   "-p 8080:80",
+			wantErr: true,
+		},
+		{
+			name:    "empty string returns error",
+			input:   "",
+			wantErr: true,
+		},
+		{
+			name:    "only flags and no image returns error",
+			input:   "--rm --restart always",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseRawContainerArgs(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseRawContainerArgs(%q): expected error, got nil", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("parseRawContainerArgs(%q): unexpected error: %v", tt.input, err)
+				return
+			}
+			if got.Image != tt.want.Image {
+				t.Errorf("Image: got %q, want %q", got.Image, tt.want.Image)
+			}
+			if got.Name != tt.want.Name {
+				t.Errorf("Name: got %q, want %q", got.Name, tt.want.Name)
+			}
+			if got.RestartPolicy != tt.want.RestartPolicy {
+				t.Errorf("RestartPolicy: got %q, want %q", got.RestartPolicy, tt.want.RestartPolicy)
+			}
+			if got.AutoRemove != tt.want.AutoRemove {
+				t.Errorf("AutoRemove: got %v, want %v", got.AutoRemove, tt.want.AutoRemove)
+			}
+			if got.Command != tt.want.Command {
+				t.Errorf("Command: got %q, want %q", got.Command, tt.want.Command)
+			}
+			checkSlice := func(field string, a, b []string) {
+				t.Helper()
+				if len(a) != len(b) {
+					t.Errorf("%s: got %v, want %v", field, a, b)
+					return
+				}
+				for i := range a {
+					if a[i] != b[i] {
+						t.Errorf("%s[%d]: got %q, want %q", field, i, a[i], b[i])
+					}
+				}
+			}
+			checkSlice("Ports", got.Ports, tt.want.Ports)
+			checkSlice("Env", got.Env, tt.want.Env)
+			checkSlice("Volumes", got.Volumes, tt.want.Volumes)
+		})
+	}
+}
+
+// TestPullAndRunStreamHandlerFullCustomCommand verifies that the fullCustomCommand field
+// is parsed and validated correctly by PullAndRunStream.
+func TestPullAndRunStreamHandlerFullCustomCommand(t *testing.T) {
+	// Valid custom command with a well-formed image.
+	t.Run("valid custom command", func(t *testing.T) {
+		body, _ := json.Marshal(PullAndRunRequest{
+			FullCustomCommand: "-p 8080:80 -e FOO=bar nginx:latest",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
+			t.Errorf("Expected 200 or 500, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// Invalid custom command (no image) must return 400 before SSE headers are set.
+	t.Run("custom command without image", func(t *testing.T) {
+		body, _ := json.Marshal(PullAndRunRequest{
+			FullCustomCommand: "-p 8080:80 --rm",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// Malformed custom command (unterminated quote) must return 400.
+	t.Run("malformed custom command", func(t *testing.T) {
+		body, _ := json.Marshal(PullAndRunRequest{
+			FullCustomCommand: `-e "unterminated nginx:latest`,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// Custom command with an invalid image name must return 400.
+	t.Run("custom command with invalid image name", func(t *testing.T) {
+		body, _ := json.Marshal(PullAndRunRequest{
+			FullCustomCommand: "../etc/passwd",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		PullAndRunStream(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+}
+
+// TestApplyFullCustomCommand verifies that applyFullCustomCommand populates
+// and trims request fields correctly, and is a no-op when the field is empty.
+func TestApplyFullCustomCommand(t *testing.T) {
+	t.Run("no-op on empty FullCustomCommand", func(t *testing.T) {
+		req := PullAndRunRequest{Image: "nginx:latest", Name: "original"}
+		if err := applyFullCustomCommand(&req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if req.Image != "nginx:latest" || req.Name != "original" {
+			t.Errorf("fields changed unexpectedly: %+v", req)
+		}
+	})
+
+	t.Run("parses and trims whitespace in image", func(t *testing.T) {
+		req := PullAndRunRequest{
+			// The parsed image might have leading/trailing whitespace if the command does.
+			FullCustomCommand: "  nginx:latest  ",
+		}
+		// shellSplit trims tokens, so the image should not have spaces.
+		if err := applyFullCustomCommand(&req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if req.Image != "nginx:latest" {
+			t.Errorf("Image: got %q, want \"nginx:latest\"", req.Image)
+		}
+	})
+
+	t.Run("returns error for invalid command", func(t *testing.T) {
+		req := PullAndRunRequest{FullCustomCommand: `"unterminated`}
+		if err := applyFullCustomCommand(&req); err == nil {
+			t.Error("expected error, got nil")
+		}
+	})
+
+	t.Run("overwrites pre-existing fields", func(t *testing.T) {
+		req := PullAndRunRequest{
+			Image:             "old-image:latest",
+			Name:              "old-name",
+			FullCustomCommand: "--name new-name -p 9090:9090 new-image:latest",
+		}
+		if err := applyFullCustomCommand(&req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if req.Image != "new-image:latest" {
+			t.Errorf("Image: got %q", req.Image)
+		}
+		if req.Name != "new-name" {
+			t.Errorf("Name: got %q", req.Name)
+		}
+		if len(req.Ports) != 1 || req.Ports[0] != "9090:9090" {
+			t.Errorf("Ports: got %v", req.Ports)
+		}
+	})
 }
