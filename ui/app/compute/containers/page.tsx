@@ -804,47 +804,7 @@ export default function ContainersPage() {
                   </DialogHeader>
 
                   <div className="grid gap-4 py-4">
-                    {/* Toggle: Fully Custom Command */}
-                    <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="runFullCustom" className="text-sm font-medium cursor-pointer">
-                          Fully Custom Container Start Command
-                        </Label>
-                        <p className="text-xs text-muted-foreground">
-                          Enter a raw command appended to <code className="font-mono">podman run</code>, e.g.{" "}
-                          <code className="font-mono text-xs">-p 8080:80 -e FOO=bar nginx:latest</code>
-                        </p>
-                      </div>
-                      <Switch
-                        id="runFullCustom"
-                        checked={runFullCustom}
-                        onCheckedChange={setRunFullCustom}
-                        disabled={isPullingAndRunning}
-                      />
-                    </div>
-
-                    {runFullCustom ? (
-                      /* ── Fully custom command input ── */
-                      <div className="grid gap-2">
-                        <Label htmlFor="runCustomCommand">Custom Command *</Label>
-                        <Textarea
-                          id="runCustomCommand"
-                          placeholder={`-p 15672:15672 -p 5672:5672 -e RABBITMQ_LOGS=/var/log/rabbitmq/rabbit.log -v ~/rabbitlogs/:/var/log/rabbitmq:Z,U docker.io/library/rabbitmq:management`}
-                          value={runCustomCommand}
-                          onChange={(e) => setRunCustomCommand(e.target.value)}
-                          disabled={isPullingAndRunning}
-                          rows={4}
-                          className="font-mono text-sm"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Enter everything you would type after <code className="font-mono">podman run</code>. Supported flags:
-                          {" "}<code className="font-mono">-p</code>, <code className="font-mono">-e</code>,{" "}
-                          <code className="font-mono">-v</code>, <code className="font-mono">--name</code>,{" "}
-                          <code className="font-mono">--restart</code>, <code className="font-mono">--rm</code>.
-                          The image must be the first non-flag argument.
-                        </p>
-                      </div>
-                    ) : (
+                    {!runFullCustom ? (
                       /* ── Individual fields ── */
                       <>
                     {/* Image — dropdown of available images with a custom-image fallback */}
@@ -1101,7 +1061,41 @@ export default function ContainersPage() {
                       </Label>
                     </div>
                       </>
+                    ) : (
+                      /* ── Fully custom command input ── */
+                      <div className="grid gap-2">
+                        <Label htmlFor="runCustomCommand">Custom Command *</Label>
+                        <Textarea
+                          id="runCustomCommand"
+                          placeholder={`-p 8080:80 -e NGINX_HOST=example.com -v /my/content:/usr/share/nginx/html:ro nginx:latest`}
+                          value={runCustomCommand}
+                          onChange={(e) => setRunCustomCommand(e.target.value)}
+                          disabled={isPullingAndRunning}
+                          rows={4}
+                          className="font-mono text-sm"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Enter everything you would type after <code className="font-mono">podman run</code>. Supported flags:
+                          {" "}<code className="font-mono">-p</code>, <code className="font-mono">-e</code>,{" "}
+                          <code className="font-mono">-v</code>, <code className="font-mono">--name</code>,{" "}
+                          <code className="font-mono">--restart</code>, <code className="font-mono">--rm</code>.
+                          The image must be the first non-flag argument.
+                        </p>
+                      </div>
                     )}
+
+                    {/* Toggle: Fully Custom Command — low-profile, at the bottom */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <Switch
+                        id="runFullCustom"
+                        checked={runFullCustom}
+                        onCheckedChange={setRunFullCustom}
+                        disabled={isPullingAndRunning}
+                      />
+                      <Label htmlFor="runFullCustom" className="text-xs text-muted-foreground font-normal cursor-pointer">
+                        Use custom <code className="font-mono">podman run</code> command
+                      </Label>
+                    </div>
 
                     {/* Streaming progress output */}
                     {(isPullingAndRunning || pullRunOutput.length > 0 || pullRunError) && (
