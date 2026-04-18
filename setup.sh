@@ -32,13 +32,6 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-run_target_user_systemctl() {
-    sudo -u "$TARGET_USER" env \
-        XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=${PODMAN_RUNTIME_DIR}/bus" \
-        systemctl --user "$@"
-}
-
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -280,43 +273,7 @@ fi
 
 print_info "nginx configured successfully"
 
-# Step 11: Configure a rootless Podman socket so OpenCloud uses the app user's image store
-print_info "Configuring rootless Podman socket access..."
-
-if command -v podman &> /dev/null; then
-    print_info "podman is already installed"
-else
-    print_info "podman not found. Installing podman..."
-    sudo apt-get update -qq
-    sudo apt-get install -y podman
-    print_info "podman installed successfully"
-fi
-
-PODMAN_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${TARGET_USER_ID}}"
-export XDG_RUNTIME_DIR="$PODMAN_RUNTIME_DIR"
-export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${PODMAN_RUNTIME_DIR}/bus}"
-
-if ! sudo loginctl enable-linger "$TARGET_USER"; then
-    print_error "Failed to enable lingering for $TARGET_USER"
-    exit 1
-fi
-if ! sudo systemctl start "user@${TARGET_USER_ID}.service"; then
-    print_error "Failed to start the systemd user manager for $TARGET_USER"
-    exit 1
-fi
-run_target_user_systemctl daemon-reload
-run_target_user_systemctl enable podman.socket
-run_target_user_systemctl start podman.socket
-
-if [ -S "${PODMAN_RUNTIME_DIR}/podman/podman.sock" ]; then
-    print_info "Rootless Podman socket is available at ${PODMAN_RUNTIME_DIR}/podman/podman.sock"
-else
-    print_warning "Rootless Podman socket is not available yet — it will be created by the user podman.socket service"
-fi
-
-print_info "Rootless Podman socket access configured"
-
-# Step 12: Start the services
+# Step 11: Start the services
 print_info "Starting OpenCloud services..."
 
 # Reload systemd daemon to pick up new service
