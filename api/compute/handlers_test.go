@@ -1193,7 +1193,7 @@ func TestPullAndRunHandlerInvalidContainerName(t *testing.T) {
 
 // TestPullAndRunHandlerInvalidPort verifies that an invalid port mapping returns 400.
 func TestPullAndRunHandlerInvalidPort(t *testing.T) {
-	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	cases := []string{"nocodon", "../80:80", "8080;80"}
 	for _, port := range cases {
 		body, _ := json.Marshal(map[string]interface{}{"image": "nginx:latest", "ports": []string{port}})
 		req := httptest.NewRequest(http.MethodPost, "/pull-and-run", strings.NewReader(string(body)))
@@ -1342,7 +1342,7 @@ func TestPullAndRunStreamHandlerInvalidContainerName(t *testing.T) {
 
 // TestPullAndRunStreamHandlerInvalidPort verifies that an invalid port mapping returns 400.
 func TestPullAndRunStreamHandlerInvalidPort(t *testing.T) {
-	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	cases := []string{"nocodon", "../80:80", "8080;80"}
 	for _, port := range cases {
 		body, _ := json.Marshal(map[string]interface{}{"image": "nginx:latest", "ports": []string{port}})
 		req := httptest.NewRequest(http.MethodPost, "/pull-and-run-stream", strings.NewReader(string(body)))
@@ -1466,13 +1466,16 @@ func TestValidatePortMapping(t *testing.T) {
 		wantErr bool
 	}{
 		{"8080:80", false},
-		{"0:80", false},
 		{"8080:80/tcp", false},
 		{"0.0.0.0:8080:80", false},
-		{"8080", true},     // no colon
-		{"../80:80", true}, // path traversal
-		{"8080;80", true},  // semicolon
-		{"8080 80", true},  // space
+		{"80", false},       // dynamic host port (no colon required)
+		{"80/tcp", false},   // dynamic host port with protocol
+		{"8080", false},     // dynamic host port assignment
+		{"nocodon", true},   // non-numeric container port
+		{"0:80", true},      // host port must be 1-65535; port 0 is not a valid host port
+		{"../80:80", true},  // path traversal
+		{"8080;80", true},   // semicolon
+		{"8080 80", true},   // space
 	}
 	for _, tt := range tests {
 		result := validatePortMapping(tt.input)
@@ -1512,6 +1515,30 @@ func TestParsePortMapping(t *testing.T) {
 		{
 			name:        "invalid numeric port",
 			input:       "abc:80",
+			expectError: true,
+		},
+		{
+			name:      "dynamic host port - container port only",
+			input:     "80",
+			hostPort:  0,
+			container: 80,
+			protocol:  "tcp",
+		},
+		{
+			name:      "dynamic host port with protocol",
+			input:     "443/tcp",
+			hostPort:  0,
+			container: 443,
+			protocol:  "tcp",
+		},
+		{
+			name:        "invalid dynamic port - non-numeric",
+			input:       "abc",
+			expectError: true,
+		},
+		{
+			name:        "invalid dynamic port - zero",
+			input:       "0",
 			expectError: true,
 		},
 	}
@@ -2099,6 +2126,123 @@ func TestGetContainerIncludesMixedVolumesFromLabel(t *testing.T) {
 	}
 }
 
+// TestGetContainerUsesPortLabelForPorts verifies that when the opencloud/ports
+// label is present, GetContainer uses it as the primary source for port strings.
+// This is critical for dynamic host port mappings (e.g. "80") which must round-trip
+// back to the edit form without being overwritten by the runtime-assigned host port.
+func TestGetContainerUsesPortLabelForPorts(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				// opencloud/ports stores the original user-specified port strings.
+				// "80" represents a dynamic host port mapping.
+				Labels: map[string]string{
+					"opencloud/ports": "80",
+				},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				// Podman assigns ephemeral port 32768 at runtime — the label value
+				// must take priority so the edit form shows the original intent.
+				PortBindings: map[string][]define.InspectHostPort{
+					"80/tcp": {{HostIP: "", HostPort: "32768"}},
+				},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Ports) != 1 {
+		t.Fatalf("expected 1 port, got %d: %v", len(detail.Ports), detail.Ports)
+	}
+	// The label "80" must be returned, not the runtime-assigned "32768:80/tcp".
+	if detail.Ports[0] != "80" {
+		t.Errorf("port label not recovered correctly; got %q, want %q", detail.Ports[0], "80")
+	}
+}
+
+// TestGetContainerPortLabelFallbackToPortBindings verifies that when the
+// opencloud/ports label is absent, GetContainer falls back to HostConfig.PortBindings.
+func TestGetContainerPortLabelFallbackToPortBindings(t *testing.T) {
+	origConnection := getContainerConnection
+	origInspect := inspectPodmanContainer
+	t.Cleanup(func() {
+		getContainerConnection = origConnection
+		inspectPodmanContainer = origInspect
+	})
+
+	getContainerConnection = func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	}
+
+	inspectPodmanContainer = func(ctx context.Context, nameOrID string, opts *containers.InspectOptions) (*define.InspectContainerData, error) {
+		return &define.InspectContainerData{
+			ID:        "test-id",
+			Name:      "/test",
+			ImageName: "nginx:latest",
+			Created:   time.Now(),
+			Config: &define.InspectContainerConfig{
+				Labels: map[string]string{},
+			},
+			HostConfig: &define.InspectContainerHostConfig{
+				PortBindings: map[string][]define.InspectHostPort{
+					"80/tcp": {{HostIP: "", HostPort: "8080"}},
+				},
+				RestartPolicy: &define.InspectRestartPolicy{Name: "no"},
+			},
+		}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/get-container?id=test-id", nil)
+	w := httptest.NewRecorder()
+
+	GetContainer(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var detail ContainerDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(detail.Ports) != 1 {
+		t.Fatalf("expected 1 port, got %d: %v", len(detail.Ports), detail.Ports)
+	}
+	if detail.Ports[0] != "8080:80/tcp" {
+		t.Errorf("unexpected port; got %q, want %q", detail.Ports[0], "8080:80/tcp")
+	}
+}
+
 // TestUpdateContainerStoresVolumesLabel verifies that UpdateContainer writes the
 // opencloud/volumes label so that GetContainer can later recover volume strings accurately.
 func TestUpdateContainerStoresVolumesLabel(t *testing.T) {
@@ -2476,7 +2620,7 @@ func TestUpdateContainerInvalidContainerName(t *testing.T) {
 
 // TestUpdateContainerInvalidPort verifies that an invalid port mapping returns 400.
 func TestUpdateContainerInvalidPort(t *testing.T) {
-	cases := []string{"nocodon", "8080", "../80:80", "8080;80"}
+	cases := []string{"nocodon", "../80:80", "8080;80"}
 	for _, port := range cases {
 		body, _ := json.Marshal(UpdateContainerRequest{ContainerID: "abc123", Image: "nginx:latest", Ports: []string{port}})
 		req := httptest.NewRequest(http.MethodPost, "/update-container", strings.NewReader(string(body)))

@@ -104,11 +104,15 @@ function getBackendErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Failed to update container"
 }
 
-// Parses a port string like "8080:80/tcp" or "0.0.0.0:8080:80/tcp" into a PortMapping.
+// Parses a port string like "8080:80/tcp", "0.0.0.0:8080:80/tcp", or "80/tcp" (dynamic host port) into a PortMapping.
 function parsePortString(port: string): PortMapping | null {
   // Strip optional protocol suffix (e.g. "/tcp")
   const withoutProto = port.split("/")[0]
   const parts = withoutProto.split(":")
+  if (parts.length === 1) {
+    // Dynamic host port: only container port is present
+    return { hostPort: "", containerPort: parts[0] }
+  }
   if (parts.length === 2) {
     return { hostPort: parts[0], containerPort: parts[1] }
   }
@@ -298,8 +302,8 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
     setIsUpdating(true)
     try {
       const ports = editPorts
-        .filter(p => p.hostPort && p.containerPort)
-        .map(p => `${p.hostPort}:${p.containerPort}`)
+        .filter(p => p.containerPort)
+        .map(p => p.hostPort ? `${p.hostPort}:${p.containerPort}` : p.containerPort)
 
       const env = editEnvVars
         // Entries with an empty key are excluded. Empty values are preserved as KEY=.
@@ -690,7 +694,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                 {editPorts.map((port, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <Input
-                      placeholder="Host port"
+                      placeholder="Host port (optional)"
                       value={port.hostPort}
                       onChange={e => updateEditPort(i, "hostPort", e.target.value)}
                       className="w-32"
@@ -713,6 +717,9 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                     </Button>
                   </div>
                 ))}
+                <p className="text-xs text-muted-foreground">
+                  Leave the host port blank to let the system assign a random available port automatically.
+                </p>
               </CardContent>
             </Card>
 

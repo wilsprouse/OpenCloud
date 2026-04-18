@@ -306,15 +306,38 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 		if data.HostConfig.RestartPolicy != nil {
 			detail.RestartPolicy = data.HostConfig.RestartPolicy.Name
 		}
+	}
 
+	// Build the Ports list for the edit form.
+	//
+	// Two data sources are used in priority order:
+	//   1. opencloud/ports label — set by OpenCloud at container creation/update time
+	//      and stores the original user-specified port strings verbatim (e.g. "80" for
+	//      dynamic host port assignment, or "8080:80" for an explicit mapping). This is
+	//      the authoritative source for OpenCloud-managed containers.
+	//   2. HostConfig.PortBindings — used as a fallback for containers not created by
+	//      OpenCloud (e.g. started by another tool or before the label was introduced).
+	portsFromLabel := false
+	if data.Config != nil {
+		if portsLabel := data.Config.Labels["opencloud/ports"]; portsLabel != "" {
+			for _, p := range strings.Fields(portsLabel) {
+				detail.Ports = append(detail.Ports, p)
+			}
+			portsFromLabel = true
+		}
+	}
+	if !portsFromLabel && data.HostConfig != nil {
 		// Convert the PortBindings map into "hostIP:hostPort:containerPort/proto" strings.
 		for containerPort, hostBindings := range data.HostConfig.PortBindings {
 			for _, hb := range hostBindings {
 				var mapping string
 				if hb.HostIP != "" {
 					mapping = fmt.Sprintf("%s:%s:%s", hb.HostIP, hb.HostPort, containerPort)
-				} else {
+				} else if hb.HostPort != "" {
 					mapping = fmt.Sprintf("%s:%s", hb.HostPort, containerPort)
+				} else {
+					// Dynamic (host port 0): expose just the container port.
+					mapping = containerPort
 				}
 				detail.Ports = append(detail.Ports, mapping)
 			}
@@ -592,13 +615,11 @@ func validateContainerName(name string) string {
 }
 
 // validatePortMapping checks a port mapping string for invalid or dangerous patterns.
-// Accepts formats such as "hostPort:containerPort", "hostIP:hostPort:containerPort",
-// and "hostPort:containerPort/proto". Only alphanumeric characters, dots, colons,
-// slashes, and hyphens are permitted.
+// Accepts formats such as "containerPort" (dynamic host port), "hostPort:containerPort",
+// "hostIP:hostPort:containerPort", and any of the above with an optional "/proto" suffix.
+// Only alphanumeric characters, dots, colons, slashes, and hyphens are permitted.
+// Port number fields must be valid numeric port values.
 func validatePortMapping(mapping string) string {
-	if !strings.Contains(mapping, ":") {
-		return fmt.Sprintf("invalid port mapping %q: must contain a colon separator", mapping)
-	}
 	if strings.Contains(mapping, "..") {
 		return fmt.Sprintf("invalid port mapping %q: must not contain path traversal sequences", mapping)
 	}
@@ -607,6 +628,42 @@ func validatePortMapping(mapping string) string {
 			c == '.' || c == ':' || c == '/' || c == '-') {
 			return fmt.Sprintf("invalid port mapping %q: contains invalid character %q", mapping, c)
 		}
+	}
+	// Strip optional protocol suffix (e.g. "/tcp" or "/udp").
+	portSpec := mapping
+	if before, _, found := strings.Cut(mapping, "/"); found {
+		portSpec = before
+	}
+	// isPortNum returns true when s is a valid 1-65535 port number string.
+	isPortNum := func(s string) bool {
+		n, err := strconv.ParseUint(s, 10, 16)
+		return err == nil && n > 0
+	}
+	parts := strings.Split(portSpec, ":")
+	switch len(parts) {
+	case 1:
+		// "containerPort" — single port for dynamic host assignment.
+		if !isPortNum(parts[0]) {
+			return fmt.Sprintf("invalid port mapping %q: container port must be a valid port number", mapping)
+		}
+	case 2:
+		// "hostPort:containerPort"
+		if !isPortNum(parts[0]) {
+			return fmt.Sprintf("invalid port mapping %q: host port must be a valid port number", mapping)
+		}
+		if !isPortNum(parts[1]) {
+			return fmt.Sprintf("invalid port mapping %q: container port must be a valid port number", mapping)
+		}
+	case 3:
+		// "hostIP:hostPort:containerPort" — hostIP is allowed to be non-numeric.
+		if !isPortNum(parts[1]) {
+			return fmt.Sprintf("invalid port mapping %q: host port must be a valid port number", mapping)
+		}
+		if !isPortNum(parts[2]) {
+			return fmt.Sprintf("invalid port mapping %q: container port must be a valid port number", mapping)
+		}
+	default:
+		return fmt.Sprintf("invalid port mapping %q: too many colon-separated segments", mapping)
 	}
 	return ""
 }
@@ -797,8 +854,23 @@ func parsePortMapping(mapping string) (nettypes.PortMapping, error) {
 	}
 
 	parts := strings.Split(portSpec, ":")
+
+	// Single-part format: "containerPort" — host port is left at 0 for dynamic assignment.
+	if len(parts) == 1 {
+		containerPort, err := strconv.ParseUint(parts[0], 10, 16)
+		if err != nil || containerPort == 0 {
+			return nettypes.PortMapping{}, fmt.Errorf("invalid port mapping %q: container port must be a valid port number", mapping)
+		}
+		return nettypes.PortMapping{
+			HostPort:      0,
+			ContainerPort: uint16(containerPort),
+			Range:         1,
+			Protocol:      protocol,
+		}, nil
+	}
+
 	if len(parts) != 2 && len(parts) != 3 {
-		return nettypes.PortMapping{}, fmt.Errorf("invalid port mapping %q: expected hostPort:containerPort or hostIP:hostPort:containerPort", mapping)
+		return nettypes.PortMapping{}, fmt.Errorf("invalid port mapping %q: expected containerPort, hostPort:containerPort, or hostIP:hostPort:containerPort", mapping)
 	}
 
 	hostIP := ""
