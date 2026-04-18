@@ -1429,7 +1429,7 @@ func TestEnableContainersAutoEnablesRegistry(t *testing.T) {
 		t.Fatalf("IsServiceEnabled(container_registry) failed: %v", err)
 	}
 	if registryEnabled {
-		t.Skip("container_registry is already enabled; cannot test auto-enable behaviour")
+		t.Skip("container_registry is already enabled; cannot test auto-enable behavior")
 	}
 
 	// Replace the real installer scripts with stubs for the duration of this test.
