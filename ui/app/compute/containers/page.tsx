@@ -25,6 +25,7 @@ import { toast } from "sonner"
 import client from "@/app/utility/post"
 import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
 import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
+import { stripRegistryPrefix } from "@/lib/image-name"
 import { 
   RefreshCw, 
   Search,
@@ -698,7 +699,7 @@ export default function ContainersPage() {
                         <div className="hidden lg:flex items-center space-x-4 text-xs text-muted-foreground">
                           <span className="flex items-center">
                             <ImageIcon className="h-3 w-3 mr-1" />
-                            {c.Image}
+                            {stripRegistryPrefix(c.Image)}
                           </span>
                           <span>•</span>
                           <span className="flex items-center">
@@ -828,7 +829,7 @@ export default function ContainersPage() {
                               (img) => (img.RepoTags?.[0] || img.Image || img.Id) === runImage
                             ) && (
                               <SelectItem key="__preselected__" value={runImage}>
-                                {runImage}
+                                {stripRegistryPrefix(runImage)}
                               </SelectItem>
                             )}
                           {availableImages.map((img) => {
@@ -837,7 +838,7 @@ export default function ContainersPage() {
                             const tag = img.RepoTags?.[0] || img.Image || img.Id
                             return (
                               <SelectItem key={img.Id} value={tag}>
-                                {tag}
+                                {stripRegistryPrefix(tag)}
                               </SelectItem>
                             )
                           })}
