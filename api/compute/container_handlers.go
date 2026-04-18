@@ -585,6 +585,12 @@ type PullAndRunRequest struct {
 	AutoRemove bool `json:"autoRemove,omitempty"`
 	// Command overrides the default container entrypoint command.
 	Command string `json:"command,omitempty"`
+	// FullCustomCommand is an optional raw argument string (everything that follows
+	// "podman run" on the command line, e.g. "-p 8080:80 -e FOO=bar nginx:latest").
+	// When set, the handler parses common flags out of this string and the individual
+	// Image, Ports, Env, Volumes, Name, RestartPolicy, AutoRemove, and Command fields
+	// are ignored in favour of the parsed values.
+	FullCustomCommand string `json:"fullCustomCommand,omitempty"`
 }
 
 // validRestartPolicies lists the restart policies accepted by nerdctl.
@@ -696,6 +702,9 @@ var validMountOptions = map[string]bool{
 	"exec":   true, "noexec": true,
 	"suid":   true, "nosuid": true,
 	"dev":    true, "nodev": true,
+	// Podman-specific SELinux relabelling and user-namespace mapping options.
+	"Z": true, "z": true,
+	"U": true,
 }
 
 // parseMountOptions validates the comma-separated options string from a volume mount specification.
@@ -799,6 +808,202 @@ func validateVolumeMount(mount string) string {
 		}
 	}
 	return ""
+}
+
+// shellSplit splits a raw shell-like string into tokens, respecting single-quoted
+// strings, double-quoted strings, and backslash escapes.  It is used by
+// parseRawContainerArgs to tokenise the user-supplied custom command.
+func shellSplit(s string) ([]string, error) {
+	var args []string
+	var cur strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	for _, r := range s {
+		if escaped {
+			cur.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if (r == ' ' || r == '\t' || r == '\n') && !inSingle && !inDouble {
+			if cur.Len() > 0 {
+				args = append(args, cur.String())
+				cur.Reset()
+			}
+			continue
+		}
+		cur.WriteRune(r)
+	}
+
+	if inSingle {
+		return nil, fmt.Errorf("unterminated single quote in custom command")
+	}
+	if inDouble {
+		return nil, fmt.Errorf("unterminated double quote in custom command")
+	}
+	if escaped {
+		return nil, fmt.Errorf("trailing backslash in custom command")
+	}
+	if cur.Len() > 0 {
+		args = append(args, cur.String())
+	}
+
+	return args, nil
+}
+
+// flagsThatTakeValue is the set of known container-run flags that consume the
+// immediately following token as their value.  It is used by parseRawContainerArgs
+// to skip unknown flags that appear in space-separated ("--flag value") form so
+// that the image positional argument is not misidentified as a flag value.
+var flagsThatTakeValue = map[string]bool{
+	"-p": true, "--publish": true,
+	"-e": true, "--env": true,
+	"-v": true, "--volume": true,
+	"--name": true,
+	"--restart": true,
+	"--network": true,
+	"-l": true, "--label": true,
+	"-m": true, "--memory": true,
+	"--cpus": true,
+	"-w": true, "--workdir": true,
+	"-u": true, "--user": true,
+	"--hostname": true,
+	"--entrypoint": true,
+	"--expose": true,
+	"--add-host": true,
+	"--env-file": true,
+	"--log-driver": true,
+	"--log-opt": true,
+	"--cap-add": true, "--cap-drop": true,
+	"--security-opt": true,
+	"--ulimit": true,
+	"--device": true,
+	"--dns": true, "--dns-option": true, "--dns-search": true,
+	"--ip": true, "--ip6": true,
+	"--mac-address": true,
+	"--shm-size": true,
+	"--stop-signal": true,
+	"--stop-timeout": true,
+	"--health-cmd": true,
+	"--mount": true,
+	"--tmpfs": true,
+	"--annotation": true,
+	"--blkio-weight": true,
+	"--cpu-period": true, "--cpu-quota": true, "--cpu-shares": true,
+	"--cpuset-cpus": true, "--cpuset-mems": true,
+	"--memory-reservation": true, "--memory-swap": true,
+	"--pid": true,
+	"--pids-limit": true,
+	"--ipc": true,
+	"--userns": true,
+	"--uts": true,
+}
+
+// parseRawContainerArgs parses the raw argument string the user would supply
+// after "podman run" (e.g. "-p 8080:80 -e FOO=bar nginx:latest /bin/sh") into
+// a PullAndRunRequest.
+//
+// Supported flags: -p/--publish, -e/--env, -v/--volume, --name, --restart,
+// --rm, -d/--detach.  Unknown flags listed in flagsThatTakeValue have their
+// value token consumed so that the image positional argument is not
+// misidentified; all other unknown flags are silently skipped.
+//
+// The image is the first non-flag positional argument.  Any additional
+// positional arguments after the image are joined with spaces and stored as
+// the container Command override.
+func parseRawContainerArgs(raw string) (*PullAndRunRequest, error) {
+	args, err := shellSplit(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, err
+	}
+
+	req := &PullAndRunRequest{}
+
+	// nextVal returns the value for a flag that requires an argument.
+	// hasEq / eqVal handle the "--flag=value" form; otherwise the next token is consumed.
+	nextVal := func(i *int, hasEq bool, eqVal string) string {
+		if hasEq {
+			return eqVal
+		}
+		*i++
+		if *i < len(args) {
+			return args[*i]
+		}
+		return ""
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		if !strings.HasPrefix(arg, "-") {
+			// First positional argument is the image.
+			req.Image = arg
+			// Remaining positional arguments are the container command.
+			if i+1 < len(args) {
+				req.Command = strings.Join(args[i+1:], " ")
+			}
+			break
+		}
+
+		// Split "--flag=value" into flag name and inline value.
+		var flagName, eqVal string
+		hasEq := false
+		if idx := strings.IndexByte(arg, '='); idx >= 0 {
+			flagName = arg[:idx]
+			eqVal = arg[idx+1:]
+			hasEq = true
+		} else {
+			flagName = arg
+		}
+
+		switch flagName {
+		case "-p", "--publish":
+			if v := nextVal(&i, hasEq, eqVal); v != "" {
+				req.Ports = append(req.Ports, v)
+			}
+		case "-e", "--env":
+			if v := nextVal(&i, hasEq, eqVal); v != "" {
+				req.Env = append(req.Env, v)
+			}
+		case "-v", "--volume":
+			if v := nextVal(&i, hasEq, eqVal); v != "" {
+				req.Volumes = append(req.Volumes, v)
+			}
+		case "--name":
+			req.Name = nextVal(&i, hasEq, eqVal)
+		case "--restart":
+			req.RestartPolicy = nextVal(&i, hasEq, eqVal)
+		case "--rm":
+			req.AutoRemove = true
+		case "-d", "--detach":
+			// Always detached via the bindings API; no action needed.
+		default:
+			// For unknown flags that take a value, consume the next token so it is
+			// not mistaken for the image positional argument.
+			if !hasEq && flagsThatTakeValue[flagName] {
+				i++
+			}
+		}
+	}
+
+	if req.Image == "" {
+		return nil, fmt.Errorf("no image found in custom command: the image must be the first non-flag positional argument (e.g. \"nginx:latest\" or \"docker.io/library/rabbitmq:management\")")
+	}
+
+	return req, nil
 }
 
 func ensurePodmanImage(ctx context.Context, ref string) (string, error) {
@@ -924,6 +1129,24 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("PullAndRun frontend ports=%v\n", req.Ports)
 	fmt.Printf("PullAndRun frontend env=%v\n", req.Env)
 	fmt.Printf("PullAndRun frontend volumes=%v\n", req.Volumes)
+
+	// If the caller supplied a fully custom command string, parse it into individual
+	// fields so that the rest of the handler can proceed unchanged.
+	if req.FullCustomCommand != "" {
+		parsed, err := parseRawContainerArgs(req.FullCustomCommand)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.Image = parsed.Image
+		req.Name = parsed.Name
+		req.Ports = parsed.Ports
+		req.Env = parsed.Env
+		req.Volumes = parsed.Volumes
+		req.RestartPolicy = parsed.RestartPolicy
+		req.AutoRemove = parsed.AutoRemove
+		req.Command = parsed.Command
+	}
 
 	req.Image = strings.TrimSpace(req.Image)
 	req.Name = strings.TrimSpace(req.Name)
@@ -1138,6 +1361,24 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 
 	req.Image = strings.TrimSpace(req.Image)
 	req.Name = strings.TrimSpace(req.Name)
+
+	// If the caller supplied a fully custom command string, parse it into individual
+	// fields so that the rest of the handler can proceed unchanged.
+	if req.FullCustomCommand != "" {
+		parsed, err := parseRawContainerArgs(req.FullCustomCommand)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.Image = strings.TrimSpace(parsed.Image)
+		req.Name = strings.TrimSpace(parsed.Name)
+		req.Ports = parsed.Ports
+		req.Env = parsed.Env
+		req.Volumes = parsed.Volumes
+		req.RestartPolicy = parsed.RestartPolicy
+		req.AutoRemove = parsed.AutoRemove
+		req.Command = parsed.Command
+	}
 
 	if req.Image == "" {
 		http.Error(w, "image is required", http.StatusBadRequest)

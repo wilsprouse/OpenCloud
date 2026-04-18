@@ -19,6 +19,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
 import client from "@/app/utility/post"
 import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
@@ -151,6 +153,9 @@ export default function ContainersPage() {
   const [runRestartPolicy, setRunRestartPolicy] = useState("no")
   const [runAutoRemove, setRunAutoRemove] = useState(false)
   const [runCommand, setRunCommand] = useState("")
+  // Fully-custom command mode: when enabled the user types raw "podman run" args
+  const [runFullCustom, setRunFullCustom] = useState(false)
+  const [runCustomCommand, setRunCustomCommand] = useState("")
   // Streaming progress output for pull-and-run
   const [pullRunOutput, setPullRunOutput] = useState<string[]>([])
   const [pullRunError, setPullRunError] = useState<string | null>(null)
@@ -365,17 +370,27 @@ export default function ContainersPage() {
     setRunRestartPolicy("no")
     setRunAutoRemove(false)
     setRunCommand("")
+    setRunFullCustom(false)
+    setRunCustomCommand("")
     setPullRunOutput([])
     setPullRunError(null)
   }
 
   // Submit handler for pulling and running a container
   const handlePullAndRun = async () => {
-    // Resolve the actual image: use custom input when CUSTOM_IMAGE_VALUE is selected
-    const resolvedImage = runImage === CUSTOM_IMAGE_VALUE ? runCustomImage : runImage
-    if (!resolvedImage) {
-      toast.error("Please select or enter an image name to pull and run")
-      return
+    // In fully-custom mode the user provides everything in one command string.
+    if (runFullCustom) {
+      if (!runCustomCommand.trim()) {
+        toast.error("Please enter a custom container command")
+        return
+      }
+    } else {
+      // Resolve the actual image: use custom input when CUSTOM_IMAGE_VALUE is selected
+      const resolvedImage = runImage === CUSTOM_IMAGE_VALUE ? runCustomImage : runImage
+      if (!resolvedImage) {
+        toast.error("Please select or enter an image name to pull and run")
+        return
+      }
     }
 
     setIsPullingAndRunning(true)
@@ -387,23 +402,27 @@ export default function ContainersPage() {
     }
 
     try {
-      // Build the request payload with non-empty port, env, and volume entries
-      const ports = runPorts
-        .filter(p => p.containerPort)
-        .map(p => p.hostPort ? `${p.hostPort}:${p.containerPort}` : p.containerPort)
+      let requestBody: Record<string, unknown>
 
-      const envVars = runEnvVars
-        .filter(e => e.key)
-        .map(e => (e.value ? `${e.key}=${e.value}` : e.key))
+      if (runFullCustom) {
+        // Send the raw command string; the backend parses it.
+        requestBody = { fullCustomCommand: runCustomCommand.trim() }
+      } else {
+        // Build the request payload with non-empty port, env, and volume entries
+        const resolvedImage = runImage === CUSTOM_IMAGE_VALUE ? runCustomImage : runImage
+        const ports = runPorts
+          .filter(p => p.containerPort)
+          .map(p => p.hostPort ? `${p.hostPort}:${p.containerPort}` : p.containerPort)
 
-      const volumes = runVolumes
-        .filter(v => v.hostPath && v.containerPath)
-        .map(v => `${v.hostPath}:${v.containerPath}`)
+        const envVars = runEnvVars
+          .filter(e => e.key)
+          .map(e => (e.value ? `${e.key}=${e.value}` : e.key))
 
-      const response = await fetch("/api/pull-and-run-stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        const volumes = runVolumes
+          .filter(v => v.hostPath && v.containerPath)
+          .map(v => `${v.hostPath}:${v.containerPath}`)
+
+        requestBody = {
           image: resolvedImage,
           name: runContainerName || undefined,
           ports,
@@ -412,7 +431,13 @@ export default function ContainersPage() {
           restartPolicy: runRestartPolicy,
           autoRemove: runAutoRemove,
           command: runCommand || undefined,
-        }),
+        }
+      }
+
+      const response = await fetch("/api/pull-and-run-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
       })
 
       if (!response.ok) {
@@ -779,6 +804,49 @@ export default function ContainersPage() {
                   </DialogHeader>
 
                   <div className="grid gap-4 py-4">
+                    {/* Toggle: Fully Custom Command */}
+                    <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="runFullCustom" className="text-sm font-medium cursor-pointer">
+                          Fully Custom Container Start Command
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Enter a raw command appended to <code className="font-mono">podman run</code>, e.g.{" "}
+                          <code className="font-mono text-xs">-p 8080:80 -e FOO=bar nginx:latest</code>
+                        </p>
+                      </div>
+                      <Switch
+                        id="runFullCustom"
+                        checked={runFullCustom}
+                        onCheckedChange={setRunFullCustom}
+                        disabled={isPullingAndRunning}
+                      />
+                    </div>
+
+                    {runFullCustom ? (
+                      /* ── Fully custom command input ── */
+                      <div className="grid gap-2">
+                        <Label htmlFor="runCustomCommand">Custom Command *</Label>
+                        <Textarea
+                          id="runCustomCommand"
+                          placeholder={`-p 15672:15672 -p 5672:5672 -e RABBITMQ_LOGS=/var/log/rabbitmq/rabbit.log -v ~/rabbitlogs/:/var/log/rabbitmq:Z,U docker.io/library/rabbitmq:management`}
+                          value={runCustomCommand}
+                          onChange={(e) => setRunCustomCommand(e.target.value)}
+                          disabled={isPullingAndRunning}
+                          rows={4}
+                          className="font-mono text-sm"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Enter everything you would type after <code className="font-mono">podman run</code>. Supported flags:
+                          {" "}<code className="font-mono">-p</code>, <code className="font-mono">-e</code>,{" "}
+                          <code className="font-mono">-v</code>, <code className="font-mono">--name</code>,{" "}
+                          <code className="font-mono">--restart</code>, <code className="font-mono">--rm</code>.
+                          The image must be the first non-flag argument.
+                        </p>
+                      </div>
+                    ) : (
+                      /* ── Individual fields ── */
+                      <>
                     {/* Image — dropdown of available images with a custom-image fallback */}
                     <div className="grid gap-2">
                       <Label htmlFor="runImage">Image *</Label>
@@ -1032,6 +1100,8 @@ export default function ContainersPage() {
                         Automatically remove container when it stops (--rm)
                       </Label>
                     </div>
+                      </>
+                    )}
 
                     {/* Streaming progress output */}
                     {(isPullingAndRunning || pullRunOutput.length > 0 || pullRunError) && (
@@ -1064,11 +1134,16 @@ export default function ContainersPage() {
                     <Button
                       onClick={handlePullAndRun}
                       disabled={
-                        isPullingAndRunning ||
-                        !runImage ||
-                        runImage === NO_IMAGES_VALUE ||
-                        (runImage === CUSTOM_IMAGE_VALUE && !runCustomImage) ||
-                        !isContainerNameValid
+                        isPullingAndRunning || (
+                          runFullCustom
+                            ? !runCustomCommand.trim()
+                            : (
+                                !runImage ||
+                                runImage === NO_IMAGES_VALUE ||
+                                (runImage === CUSTOM_IMAGE_VALUE && !runCustomImage) ||
+                                !isContainerNameValid
+                              )
+                        )
                       }
                     >
                       {isPullingAndRunning ? (
