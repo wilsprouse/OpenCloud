@@ -261,6 +261,19 @@ func executeServiceInstaller(serviceName string) error {
 
 // EnableService enables a specific service in the ledger
 func EnableService(serviceName string) error {
+	// Container Compute requires Container Registry. Auto-enable it first if needed.
+	if serviceName == "containers" {
+		registryEnabled, err := IsServiceEnabled("container_registry")
+		if err != nil {
+			return fmt.Errorf("failed to check container_registry status: %w", err)
+		}
+		if !registryEnabled {
+			if err := EnableService("container_registry"); err != nil {
+				return fmt.Errorf("failed to enable required container_registry service: %w", err)
+			}
+		}
+	}
+
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
 
@@ -435,6 +448,49 @@ func EnableServiceStreamHandler(w http.ResponseWriter, r *http.Request) {
 	sendLine := func(line string) {
 		fmt.Fprintf(w, "data: %s\n\n", line)
 		flusher.Flush()
+	}
+
+	// Container Compute requires Container Registry. Auto-enable it with streaming output if needed.
+	if body.Service == "containers" {
+		registryEnabled, err := IsServiceEnabled("container_registry")
+		if err != nil {
+			errMsg := fmt.Sprintf("failed to check container_registry status: %s", err.Error())
+			log.Printf("EnableServiceStreamHandler: %s", errMsg)
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", errMsg)
+			flusher.Flush()
+			return
+		}
+		if !registryEnabled {
+			sendLine("[INFO] Container Registry is required by Containers. Enabling Container Registry first...")
+			if err := enableServiceWithStream("container_registry", sendLine); err != nil {
+				log.Printf("EnableServiceStreamHandler: installer error for 'container_registry': %v", err)
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+				flusher.Flush()
+				return
+			}
+			// Mark container_registry as enabled in the ledger.
+			ledgerMutex.Lock()
+			regLedger, err := ReadServiceLedger()
+			if err != nil {
+				ledgerMutex.Unlock()
+				errMsg := fmt.Sprintf("failed to read service ledger: %s", err.Error())
+				log.Printf("EnableServiceStreamHandler: %s", errMsg)
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", errMsg)
+				flusher.Flush()
+				return
+			}
+			regLedger["container_registry"] = ServiceStatus{Enabled: true}
+			if err := WriteServiceLedger(regLedger); err != nil {
+				ledgerMutex.Unlock()
+				errMsg := fmt.Sprintf("failed to write service ledger: %s", err.Error())
+				log.Printf("EnableServiceStreamHandler: %s", errMsg)
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", errMsg)
+				flusher.Flush()
+				return
+			}
+			ledgerMutex.Unlock()
+			sendLine("[SUCCESS] Container Registry service enabled successfully!")
+		}
 	}
 
 	// Run the installer with real-time streaming output.

@@ -60,6 +60,73 @@ func createTestScript(installerDir, serviceName string, exitCode int, message st
 	return scriptPath, err
 }
 
+// overwriteAndRestoreScript overwrites the installer script for the named service with a
+// stub script and registers a cleanup to restore the original content when the test ends.
+// If the file did not exist before the call it is deleted on cleanup instead of restored.
+// This prevents tests that use real service names from permanently removing production files.
+func overwriteAndRestoreScript(t *testing.T, installerDir, serviceName string, exitCode int, message string) string {
+	t.Helper()
+	scriptPath := filepath.Join(installerDir, serviceName+".sh")
+
+	// Back up the original file so we can restore it on cleanup.
+	origData, readErr := os.ReadFile(scriptPath)
+	var origMode os.FileMode = 0755
+	if readErr == nil {
+		if info, err := os.Stat(scriptPath); err == nil {
+			origMode = info.Mode()
+		}
+	}
+
+	t.Cleanup(func() {
+		if readErr != nil {
+			// The file did not exist before; remove the stub we created.
+			os.Remove(scriptPath)
+		} else {
+			// Restore the original content and permissions.
+			if err := os.WriteFile(scriptPath, origData, origMode); err != nil {
+				t.Logf("overwriteAndRestoreScript: failed to restore %s: %v", scriptPath, err)
+			}
+		}
+	})
+
+	escapedMessage := escapeSingleQuoteForBash(message)
+	scriptContent := fmt.Sprintf("#!/bin/bash\necho '%s'\nexit %d\n", escapedMessage, exitCode)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("overwriteAndRestoreScript: failed to write stub for %s: %v", serviceName, err)
+	}
+	return scriptPath
+}
+
+// saveLedgerState reads the current serviceLedger.json content and registers a
+// t.Cleanup to restore it when the test finishes. Tests that modify ledger entries
+// for real service names (e.g. "containers", "container_registry") must call this
+// at the start to prevent state leaking into subsequent tests.
+func saveLedgerState(t *testing.T) {
+	t.Helper()
+	ledgerPath, err := getLedgerPath()
+	if err != nil {
+		t.Fatalf("saveLedgerState: getLedgerPath failed: %v", err)
+	}
+
+	origData, readErr := os.ReadFile(ledgerPath)
+	var origMode os.FileMode = 0600
+	if readErr == nil {
+		if info, err := os.Stat(ledgerPath); err == nil {
+			origMode = info.Mode()
+		}
+	}
+
+	t.Cleanup(func() {
+		if readErr != nil {
+			os.Remove(ledgerPath)
+		} else {
+			if err := os.WriteFile(ledgerPath, origData, origMode); err != nil {
+				t.Logf("saveLedgerState: failed to restore %s: %v", ledgerPath, err)
+			}
+		}
+	})
+}
+
 func TestSyncFunctionsBasic(t *testing.T) {
 	// Setup: Create a temporary directory for test functions
 	tmpHome := t.TempDir()
@@ -1301,6 +1368,148 @@ func TestEnableContainersService(t *testing.T) {
 	}
 }
 
+// TestContainersBaseInstallerScriptExists verifies that the shared containers_base.sh
+// library exists and is readable, ensuring both installer scripts can source it.
+func TestContainersBaseInstallerScriptExists(t *testing.T) {
+	installerDir := getInstallerDir(t)
+	scriptPath := filepath.Join(installerDir, "containers_base.sh")
+
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatalf("containers_base.sh shared library not found at %s: %v", scriptPath, err)
+	}
+
+	// Verify the file is not empty
+	if info.Size() == 0 {
+		t.Error("containers_base.sh shared library is empty")
+	}
+}
+
+// TestContainerRegistryInstallerScriptExists verifies that the container_registry service
+// installer script exists and is executable.
+func TestContainerRegistryInstallerScriptExists(t *testing.T) {
+	installerDir := getInstallerDir(t)
+	scriptPath := filepath.Join(installerDir, "container_registry.sh")
+
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatalf("container_registry.sh installer script not found at %s: %v", scriptPath, err)
+	}
+
+	if info.Size() == 0 {
+		t.Error("container_registry.sh installer script is empty")
+	}
+
+	if info.Mode()&0111 == 0 {
+		t.Error("container_registry.sh installer script is not executable")
+	}
+}
+
+// TestEnableContainersAutoEnablesRegistry verifies that enabling the containers service
+// automatically enables container_registry when it is not yet enabled.
+func TestEnableContainersAutoEnablesRegistry(t *testing.T) {
+	// Preserve and restore the real serviceLedger.json to prevent state leaking
+	// into other tests that share the same ledger file.
+	saveLedgerState(t)
+
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("InitializeServiceLedger failed: %v", err)
+	}
+
+	installerDir := getInstallerDir(t)
+
+	// Confirm container_registry is not enabled before the test.
+	registryEnabled, err := IsServiceEnabled("container_registry")
+	if err != nil {
+		t.Fatalf("IsServiceEnabled(container_registry) failed: %v", err)
+	}
+	if registryEnabled {
+		t.Skip("container_registry is already enabled; cannot test auto-enable behaviour")
+	}
+
+	// Replace the real installer scripts with stubs for the duration of this test.
+	// overwriteAndRestoreScript restores the originals via t.Cleanup so no production
+	// files are permanently modified.
+	overwriteAndRestoreScript(t, installerDir, "containers", 0, "Containers installed")
+	overwriteAndRestoreScript(t, installerDir, "container_registry", 0, "Registry installed")
+
+	if err := EnableService("containers"); err != nil {
+		t.Fatalf("EnableService(containers) failed: %v", err)
+	}
+
+	// Both services must be enabled after the call.
+	registryEnabled, err = IsServiceEnabled("container_registry")
+	if err != nil {
+		t.Fatalf("IsServiceEnabled(container_registry) after EnableService(containers) failed: %v", err)
+	}
+	if !registryEnabled {
+		t.Error("container_registry should be auto-enabled when containers is enabled")
+	}
+
+	containersEnabled, err := IsServiceEnabled("containers")
+	if err != nil {
+		t.Fatalf("IsServiceEnabled(containers) failed: %v", err)
+	}
+	if !containersEnabled {
+		t.Error("containers service should be enabled after a successful EnableService call")
+	}
+}
+
+// TestEnableContainersSkipsRegistryWhenAlreadyEnabled verifies that enabling the
+// containers service does NOT re-run the container_registry installer when it is
+// already enabled.
+func TestEnableContainersSkipsRegistryWhenAlreadyEnabled(t *testing.T) {
+	// Preserve and restore the real serviceLedger.json to prevent state leaking
+	// into other tests that share the same ledger file.
+	saveLedgerState(t)
+
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	if err := InitializeServiceLedger(); err != nil {
+		t.Fatalf("InitializeServiceLedger failed: %v", err)
+	}
+
+	installerDir := getInstallerDir(t)
+
+	// Mark container_registry as already enabled in the ledger without running an installer.
+	ledgerMutex.Lock()
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		ledgerMutex.Unlock()
+		t.Fatalf("ReadServiceLedger failed: %v", err)
+	}
+	ledger["container_registry"] = ServiceStatus{Enabled: true}
+	if err := WriteServiceLedger(ledger); err != nil {
+		ledgerMutex.Unlock()
+		t.Fatalf("WriteServiceLedger failed: %v", err)
+	}
+	ledgerMutex.Unlock()
+
+	// Replace the real containers installer with a stub for the duration of this test.
+	overwriteAndRestoreScript(t, installerDir, "containers", 0, "Containers installed")
+
+	// EnableService should succeed without needing a container_registry installer.
+	if err := EnableService("containers"); err != nil {
+		t.Fatalf("EnableService(containers) failed when registry already enabled: %v", err)
+	}
+
+	containersEnabled, err := IsServiceEnabled("containers")
+	if err != nil {
+		t.Fatalf("IsServiceEnabled(containers) failed: %v", err)
+	}
+	if !containersEnabled {
+		t.Error("containers service should be enabled after EnableService")
+	}
+}
+
 // TestIncrementFunctionInvocations verifies that IncrementFunctionInvocations correctly
 // increments the invocation count for a function entry in the service ledger.
 func TestIncrementFunctionInvocations(t *testing.T) {
@@ -1350,7 +1559,6 @@ func TestIncrementFunctionInvocations(t *testing.T) {
 		t.Errorf("Expected invocations to be 2 after second increment, got %d", entry.Invocations)
 	}
 }
-
 // TestIncrementFunctionInvocationsNonExistent verifies that IncrementFunctionInvocations
 // returns nil (no error) when the function does not exist in the ledger.
 func TestIncrementFunctionInvocationsNonExistent(t *testing.T) {
