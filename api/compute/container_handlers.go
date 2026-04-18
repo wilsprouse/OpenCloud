@@ -1006,6 +1006,30 @@ func parseRawContainerArgs(raw string) (*PullAndRunRequest, error) {
 	return req, nil
 }
 
+// applyFullCustomCommand parses req.FullCustomCommand (if set) and overwrites
+// the individual request fields (Image, Name, Ports, Env, Volumes,
+// RestartPolicy, AutoRemove, Command) with the parsed values.  The Image and
+// Name fields are trimmed of whitespace after parsing.  It is a no-op when
+// FullCustomCommand is empty.
+func applyFullCustomCommand(req *PullAndRunRequest) error {
+	if req.FullCustomCommand == "" {
+		return nil
+	}
+	parsed, err := parseRawContainerArgs(req.FullCustomCommand)
+	if err != nil {
+		return err
+	}
+	req.Image = strings.TrimSpace(parsed.Image)
+	req.Name = strings.TrimSpace(parsed.Name)
+	req.Ports = parsed.Ports
+	req.Env = parsed.Env
+	req.Volumes = parsed.Volumes
+	req.RestartPolicy = parsed.RestartPolicy
+	req.AutoRemove = parsed.AutoRemove
+	req.Command = parsed.Command
+	return nil
+}
+
 func ensurePodmanImage(ctx context.Context, ref string) (string, error) {
 	if exists, err := images.Exists(ctx, ref, nil); err == nil && exists {
 		return ref, nil
@@ -1132,20 +1156,9 @@ func PullAndRun(w http.ResponseWriter, r *http.Request) {
 
 	// If the caller supplied a fully custom command string, parse it into individual
 	// fields so that the rest of the handler can proceed unchanged.
-	if req.FullCustomCommand != "" {
-		parsed, err := parseRawContainerArgs(req.FullCustomCommand)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		req.Image = parsed.Image
-		req.Name = parsed.Name
-		req.Ports = parsed.Ports
-		req.Env = parsed.Env
-		req.Volumes = parsed.Volumes
-		req.RestartPolicy = parsed.RestartPolicy
-		req.AutoRemove = parsed.AutoRemove
-		req.Command = parsed.Command
+	if err := applyFullCustomCommand(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	req.Image = strings.TrimSpace(req.Image)
@@ -1364,20 +1377,9 @@ func PullAndRunStream(w http.ResponseWriter, r *http.Request) {
 
 	// If the caller supplied a fully custom command string, parse it into individual
 	// fields so that the rest of the handler can proceed unchanged.
-	if req.FullCustomCommand != "" {
-		parsed, err := parseRawContainerArgs(req.FullCustomCommand)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		req.Image = strings.TrimSpace(parsed.Image)
-		req.Name = strings.TrimSpace(parsed.Name)
-		req.Ports = parsed.Ports
-		req.Env = parsed.Env
-		req.Volumes = parsed.Volumes
-		req.RestartPolicy = parsed.RestartPolicy
-		req.AutoRemove = parsed.AutoRemove
-		req.Command = parsed.Command
+	if err := applyFullCustomCommand(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	if req.Image == "" {

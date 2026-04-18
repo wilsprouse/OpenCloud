@@ -3538,3 +3538,58 @@ func TestPullAndRunStreamHandlerFullCustomCommand(t *testing.T) {
 		}
 	})
 }
+
+// TestApplyFullCustomCommand verifies that applyFullCustomCommand populates
+// and trims request fields correctly, and is a no-op when the field is empty.
+func TestApplyFullCustomCommand(t *testing.T) {
+	t.Run("no-op on empty FullCustomCommand", func(t *testing.T) {
+		req := PullAndRunRequest{Image: "nginx:latest", Name: "original"}
+		if err := applyFullCustomCommand(&req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if req.Image != "nginx:latest" || req.Name != "original" {
+			t.Errorf("fields changed unexpectedly: %+v", req)
+		}
+	})
+
+	t.Run("parses and trims whitespace in image", func(t *testing.T) {
+		req := PullAndRunRequest{
+			// The parsed image might have leading/trailing whitespace if the command does.
+			FullCustomCommand: "  nginx:latest  ",
+		}
+		// shellSplit trims tokens, so the image should not have spaces.
+		if err := applyFullCustomCommand(&req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if req.Image != "nginx:latest" {
+			t.Errorf("Image: got %q, want \"nginx:latest\"", req.Image)
+		}
+	})
+
+	t.Run("returns error for invalid command", func(t *testing.T) {
+		req := PullAndRunRequest{FullCustomCommand: `"unterminated`}
+		if err := applyFullCustomCommand(&req); err == nil {
+			t.Error("expected error, got nil")
+		}
+	})
+
+	t.Run("overwrites pre-existing fields", func(t *testing.T) {
+		req := PullAndRunRequest{
+			Image:             "old-image:latest",
+			Name:              "old-name",
+			FullCustomCommand: "--name new-name -p 9090:9090 new-image:latest",
+		}
+		if err := applyFullCustomCommand(&req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if req.Image != "new-image:latest" {
+			t.Errorf("Image: got %q", req.Image)
+		}
+		if req.Name != "new-name" {
+			t.Errorf("Name: got %q", req.Name)
+		}
+		if len(req.Ports) != 1 || req.Ports[0] != "9090:9090" {
+			t.Errorf("Ports: got %v", req.Ports)
+		}
+	})
+}
