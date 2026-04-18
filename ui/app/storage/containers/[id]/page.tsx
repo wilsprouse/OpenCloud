@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import client from "@/app/utility/post"
+import { stripRegistryPrefix } from "@/lib/image-name"
 import {
   ArrowLeft,
   RefreshCw,
@@ -170,12 +171,14 @@ export default function ImageDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   const displayName = image.repoTags?.[0] ?? imageName
+  // Strip registry prefix (e.g. "docker.io/library/") for display only.
+  const displayLabel = stripRegistryPrefix(displayName)
 
   return (
     <DashboardShell>
       {/* Page header */}
       <DashboardHeader
-        heading={displayName}
+        heading={displayLabel}
         text={image.id.startsWith("sha256:") ? image.id.slice(7, 19) : image.id.slice(0, 12)}
       >
         <div className="flex items-center space-x-2">
@@ -202,7 +205,7 @@ export default function ImageDetailPage({ params }: { params: Promise<{ id: stri
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <span className="font-medium">{displayName}</span>
+              <span className="font-medium">{displayLabel}</span>
               <Badge variant="secondary">available</Badge>
             </div>
             <p className="text-sm text-muted-foreground font-mono">
@@ -350,7 +353,7 @@ export default function ImageDetailPage({ params }: { params: Promise<{ id: stri
                     key={i}
                     className="font-mono text-xs bg-muted rounded px-2 py-1 break-all"
                   >
-                    {tag}
+                    {stripRegistryPrefix(tag)}
                   </li>
                 ))}
               </ul>

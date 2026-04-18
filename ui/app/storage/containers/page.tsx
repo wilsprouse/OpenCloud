@@ -30,6 +30,7 @@ import { toast } from "sonner"
 import client from "@/app/utility/post"
 import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
 import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
+import { stripRegistryPrefix } from "@/lib/image-name"
 import { 
   Container, 
   RefreshCw, 
@@ -634,6 +635,8 @@ export default function ContainerRegistry() {
                 {filteredImages.map((c) => {
                     // Strip a leading slash that Podman may prepend to image tags.
                     const displayName = c.RepoTags?.[0]?.replace(/^\//, "") || c.Image
+                    // Strip registry prefix (e.g. "docker.io/library/") for display only.
+                    const displayLabel = stripRegistryPrefix(displayName)
                     return (
                     <div
                       key={`${c.Id}-${c.Image}`}
@@ -646,9 +649,9 @@ export default function ContainerRegistry() {
                         </div>
                         <div className="space-y-1 flex-1 min-w-0">
                           <h4 className="font-medium text-foreground truncate">
-                            {displayName || "Unnamed"}
+                            {displayLabel || "Unnamed"}
                           </h4>
-                          <p className="text-sm text-muted-foreground truncate">{c.Image}</p>
+                          <p className="text-sm text-muted-foreground truncate">{stripRegistryPrefix(c.Image)}</p>
                           <div className="flex items-center space-x-4 text-xs text-muted-foreground">
                             <span className="flex items-center">
                               <Layers className="h-3 w-3 mr-1" />

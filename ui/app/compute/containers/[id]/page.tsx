@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import client from "@/app/utility/post"
+import { stripRegistryPrefix } from "@/lib/image-name"
 import {
   ArrowLeft,
   RefreshCw,
@@ -390,7 +391,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
       {/* Page header */}
       <DashboardHeader
         heading={container.name || container.id.slice(0, 12)}
-        text={container.image}
+        text={stripRegistryPrefix(container.image)}
       >
         <div className="flex items-center space-x-2">
           <Button variant="outline" size="sm" onClick={() => router.push("/compute/containers")}>
@@ -529,7 +530,7 @@ export default function ContainerDetailPage({ params }: { params: Promise<{ id: 
                     <Tag className="h-3 w-3 mr-1" />
                     Image
                   </span>
-                  <span className="text-right truncate max-w-[60%]">{container.image}</span>
+                  <span className="text-right truncate max-w-[60%]">{stripRegistryPrefix(container.image)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Full ID</span>
