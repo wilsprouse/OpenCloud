@@ -382,31 +382,64 @@ func addCron(filePath string, schedule string) error {
 
 	currentCrontab := out
 
-	// Resolve file path
+	// Resolve home directory
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Println("Home dir not grabbed")
 		return nil
 	}
 
-	fnDir := filepath.Join(home, ".opencloud", "logs", "functions")
-
-	if err := os.MkdirAll(fnDir, 0755); err != nil {
+	// Prepare log directory
+	logDir := filepath.Join(home, ".opencloud", "logs", "functions")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("failed to create logs directory: %v", err)
 	}
 
-	// Cron job to append
-	// Use function-specific log file based on the base filename
-	//fileName := filepath.Base(filePath)
-	//logFile := filepath.Join(fnDir, fmt.Sprintf("%s.log", fileName))
-	//baseName := strings.TrimSuffix(fileName, logFile.Ext(fileName))
-	//fmt.Sprint("%s", baseName)
+	fileName := filepath.Base(filePath)
+	baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	logFile := filepath.Join(logDir, baseName+".log")
 
-	fileName := filepath.Base(filePath)                              // hello.py
-	baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName)) // hello
-	logFile := filepath.Join(fnDir, baseName+".log")                 // hello.log
+	// Create cron wrapper script directory
+	cronDir := filepath.Join(home, ".opencloud", "cron")
+	if err := os.MkdirAll(cronDir, 0755); err != nil {
+		return fmt.Errorf("failed to create cron directory: %v", err)
+	}
 
-	newCronJob := fmt.Sprintf("%s %s %s >> %s 2>&1", schedule, detectRuntime(filePath), filePath, logFile)
+	wrapperScript := filepath.Join(cronDir, baseName+".sh")
+
+	// Validate the wrapper script path stays within the cron directory.
+	// filepath.Base above already strips directory components, but we check
+	// explicitly as a defense-in-depth measure.
+	if !strings.HasPrefix(filepath.Clean(wrapperScript), filepath.Clean(cronDir)+string(filepath.Separator)) {
+		return fmt.Errorf("invalid wrapper script path derived from function path")
+	}
+
+	// Write a wrapper shell script that executes the function and writes logs in the
+	// same structured format used by InvokeFunction:
+	//   ===EXECUTION_START:<timestamp>|<STATUS>===
+	//   <stdout><stderr>
+	//   ===EXECUTION_END===
+	wrapperContent := fmt.Sprintf(`#!/bin/sh
+TMPOUT=$(mktemp)
+TMPERR=$(mktemp)
+TS=$(date -u +"%%Y-%%m-%%dT%%H:%%M:%%SZ")
+%s %s >"$TMPOUT" 2>"$TMPERR"
+EC=$?
+if [ "$EC" -eq 0 ]; then S=SUCCESS; else S=ERROR; fi
+{
+  printf "===EXECUTION_START:%%s|%%s===\n" "$TS" "$S"
+  cat "$TMPOUT"
+  cat "$TMPERR"
+  printf "===EXECUTION_END===\n"
+} >> %s
+rm -f "$TMPOUT" "$TMPERR"
+`, detectRuntime(filePath), filePath, logFile)
+
+	if err := os.WriteFile(wrapperScript, []byte(wrapperContent), 0755); err != nil {
+		return fmt.Errorf("failed to create cron wrapper script: %v", err)
+	}
+
+	newCronJob := fmt.Sprintf("%s %s", schedule, wrapperScript)
 
 	// Prevent duplicate entries
 	if strings.Contains(currentCrontab, newCronJob) {
@@ -454,6 +487,23 @@ func removeCron(filePath string) error {
 
 	currentCrontab := out
 
+	// Derive the wrapper script path that addCron would have created.
+	// If home directory resolution fails, fall back to old-style matching only.
+	var wrapperScript string
+	home, homeErr := os.UserHomeDir()
+	if homeErr == nil {
+		fileName := filepath.Base(filePath)
+		baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+		cronDir := filepath.Join(home, ".opencloud", "cron")
+		candidate := filepath.Join(cronDir, baseName+".sh")
+		// Validate the candidate stays within the cron directory
+		if strings.HasPrefix(filepath.Clean(candidate), filepath.Clean(cronDir)+string(filepath.Separator)) {
+			wrapperScript = candidate
+		}
+	} else {
+		fmt.Printf("Warning: could not determine home directory for wrapper script path: %v\n", homeErr)
+	}
+
 	// Build the expected cron job pattern to remove
 	// We need to match any line that contains the filePath
 	lines := strings.Split(currentCrontab, "\n")
@@ -461,11 +511,12 @@ func removeCron(filePath string) error {
 	removed := false
 
 	for _, line := range lines {
-		// Skip lines that contain the filePath as a command to execute
-		// Check both " {filePath} " (with spaces) and " {filePath} >>" (followed by output redirection)
-		// to ensure we're matching the actual command, not just a substring
+		// Skip lines that contain the wrapper script (new-style) or the raw
+		// function path (old-style) to maintain backward compatibility.
 		trimmedLine := strings.TrimSpace(line)
-		if trimmedLine != "" && (strings.Contains(line, " "+filePath+" ") || strings.Contains(line, " "+filePath+" >>")) {
+		if trimmedLine != "" && ((wrapperScript != "" && strings.Contains(line, wrapperScript)) ||
+			strings.Contains(line, " "+filePath+" ") ||
+			strings.Contains(line, " "+filePath+" >>")) {
 			removed = true
 			fmt.Printf("Removing cron job: %s\n", line)
 			continue
@@ -495,6 +546,15 @@ func removeCron(filePath string) error {
 
 	if err != nil {
 		return fmt.Errorf("error updating crontab: %v\n%s", err, output)
+	}
+
+	// Clean up wrapper script file (best-effort)
+	if wrapperScript != "" {
+		if _, statErr := os.Stat(wrapperScript); statErr == nil {
+			if removeErr := os.Remove(wrapperScript); removeErr != nil {
+				fmt.Printf("Warning: failed to remove cron wrapper script: %v\n", removeErr)
+			}
+		}
 	}
 
 	fmt.Println("Cron job removed successfully.")
