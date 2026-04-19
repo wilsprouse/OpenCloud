@@ -45,7 +45,7 @@ type UpdateFunctionRequest struct {
 func detectRuntime(filename string) string {
 	switch filepath.Ext(filename) {
 	case ".py":
-		return "python"
+		return "python3"
 	case ".js":
 		return "nodejs"
 	case ".go":
@@ -149,7 +149,7 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	// Choose interpreter or build command
 	var cmd *exec.Cmd
 	switch runtime {
-	case "python":
+	case "python3":
 		cmd = exec.CommandContext(ctx, "python3", fnPath)
 	case "nodejs":
 		cmd = exec.CommandContext(ctx, "node", fnPath)

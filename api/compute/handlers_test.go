@@ -61,6 +61,26 @@ func setupCrontabTest(t *testing.T) (cleanup func()) {
 	}
 }
 
+func TestDetectRuntime(t *testing.T) {
+	tests := []struct {
+		filename string
+		expected string
+	}{
+		{"hello.py", "python3"},
+		{"app.js", "nodejs"},
+		{"main.go", "go"},
+		{"script.rb", "ruby"},
+		{"unknown.txt", "unknown"},
+	}
+
+	for _, tc := range tests {
+		result := detectRuntime(tc.filename)
+		if result != tc.expected {
+			t.Errorf("detectRuntime(%q) = %q, want %q", tc.filename, result, tc.expected)
+		}
+	}
+}
+
 func TestAddCron(t *testing.T) {
 	// Skip test if crontab is not available
 	if _, err := exec.LookPath("crontab"); err != nil {
@@ -121,6 +141,16 @@ func TestAddCron(t *testing.T) {
 	}
 	if !strings.Contains(crontabContent, testFuncPath) {
 		t.Errorf("Crontab does not contain expected function path: %s", testFuncPath)
+	}
+
+	// Verify the cron job uses python3 (not python) for .py files.
+	// Check for "python3 " to confirm the correct interpreter is used.
+	if !strings.Contains(crontabContent, "python3 ") {
+		t.Error("Crontab does not use 'python3' command for .py function")
+	}
+	// Check that bare "python " (without the 3) is not used as an interpreter.
+	if strings.Contains(crontabContent, "python ") && !strings.Contains(crontabContent, "python3 ") {
+		t.Error("Crontab uses bare 'python' command instead of 'python3' for .py function")
 	}
 
 	// Verify logs directory was created
