@@ -193,6 +193,8 @@ func main() {
 	mux.HandleFunc("/pull-and-run", computeapi.PullAndRun)
 	mux.HandleFunc("/pull-and-run-stream", computeapi.PullAndRunStream)
 	mux.HandleFunc("/update-container", computeapi.UpdateContainer)
+	mux.HandleFunc("/ssl-status", api.GetSSLStatus)
+	mux.HandleFunc("/configure-ssl-stream", api.ConfigureSSLStream)
 	mux.HandleFunc("/", computeapi.GetFunction)
 
 	// Wrap all routes with CORS middleware
