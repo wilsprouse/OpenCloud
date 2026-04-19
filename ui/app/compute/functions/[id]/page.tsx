@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -77,7 +78,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   
   // Editable form state
   const [name, setName] = useState("")
-  const [runtime, setRuntime] = useState("python")
+  const [runtime, setRuntime] = useState("python3")
   const [code, setCode] = useState("")
   const [memorySize, setMemorySize] = useState("128")
   const [timeout, setTimeout] = useState("3")
@@ -205,7 +206,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       ])
 
       if (res.status === 200 || res.status === 201) {
-        console.log("Function updated successfully")
+        toast.success("Function saved successfully")
         // If the name changed, redirect to the new URL
         if (fullName !== functionId) {
           router.push(`/compute/functions/${encodeURIComponent(fullName)}`)
@@ -215,6 +216,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       }
     } catch (err) {
       console.error("Failed to update function:", err)
+      toast.error("Failed to save function")
     } finally {
       setSaving(false)
     }
@@ -369,7 +371,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="nodejs">Node.js</SelectItem>
-                  <SelectItem value="python">Python</SelectItem>
+                  <SelectItem value="python3">Python</SelectItem>
                   <SelectItem value="java">Java</SelectItem>
                   <SelectItem value="go">Go</SelectItem>
                   <SelectItem value="dotnet">.NET</SelectItem>

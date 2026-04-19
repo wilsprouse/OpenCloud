@@ -61,6 +61,34 @@ func setupCrontabTest(t *testing.T) (cleanup func()) {
 	}
 }
 
+func TestDetectRuntime(t *testing.T) {
+	tests := []struct {
+		filename string
+		expected string
+	}{
+		{"hello.py", "python3"},
+		{"app.js", "nodejs"},
+		{"main.go", "go"},
+		{"script.rb", "ruby"},
+		{"unknown.txt", "unknown"},
+	}
+
+	for _, tc := range tests {
+		result := detectRuntime(tc.filename)
+		if result != tc.expected {
+			t.Errorf("detectRuntime(%q) = %q, want %q", tc.filename, result, tc.expected)
+		}
+	}
+}
+
+// cronWrapperPath returns the path of the cron wrapper script that addCron creates
+// for the given function file path, using the provided home directory.
+func cronWrapperPath(home, funcPath string) string {
+	fileName := filepath.Base(funcPath)
+	baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	return filepath.Join(home, ".opencloud", "cron", baseName+".sh")
+}
+
 func TestAddCron(t *testing.T) {
 	// Skip test if crontab is not available
 	if _, err := exec.LookPath("crontab"); err != nil {
@@ -95,7 +123,10 @@ func TestAddCron(t *testing.T) {
 		t.Fatalf("addCron failed: %v", err)
 	}
 
-	// Verify the cron job was added
+	// Derive the expected wrapper script path
+	wrapperPath := cronWrapperPath(tmpHome, testFuncPath)
+
+	// Verify the cron job was added and points to the wrapper script
 	cmd := exec.Command("crontab", "-l")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -103,24 +134,51 @@ func TestAddCron(t *testing.T) {
 	}
 
 	crontabContent := string(output)
-	expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "functions", "cron_test_function.py.log")
 
-	// Check that the cron job contains the function-specific log file
-	if !strings.Contains(crontabContent, expectedLogFile) {
-		t.Errorf("Crontab does not contain expected log file path.\nExpected: %s\nGot: %s", expectedLogFile, crontabContent)
+	// Crontab should reference the wrapper script, not the function directly
+	if !strings.Contains(crontabContent, wrapperPath) {
+		t.Errorf("Crontab does not contain wrapper script path.\nExpected: %s\nGot: %s", wrapperPath, crontabContent)
+	}
+
+	// Crontab should contain the schedule
+	if !strings.Contains(crontabContent, testSchedule) {
+		t.Errorf("Crontab does not contain expected schedule: %s", testSchedule)
 	}
 
 	// Check that the old generic log file name is NOT present
 	if strings.Contains(crontabContent, "go_cron_output.log") {
-		t.Error("Crontab still contains old generic log file name 'go_cron_output.log'")
+		t.Error("Crontab contains old generic log file name 'go_cron_output.log'")
 	}
 
-	// Verify the cron job contains the schedule and function path
-	if !strings.Contains(crontabContent, testSchedule) {
-		t.Errorf("Crontab does not contain expected schedule: %s", testSchedule)
+	// Verify the wrapper script was created with the correct content
+	wrapperContent, readErr := os.ReadFile(wrapperPath)
+	if readErr != nil {
+		t.Fatalf("Wrapper script was not created at %s: %v", wrapperPath, readErr)
 	}
-	if !strings.Contains(crontabContent, testFuncPath) {
-		t.Errorf("Crontab does not contain expected function path: %s", testFuncPath)
+	wrapperStr := string(wrapperContent)
+
+	// Wrapper script must use python3 for .py files
+	if !strings.Contains(wrapperStr, "python3 ") {
+		t.Error("Wrapper script does not use 'python3' command for .py function")
+	}
+
+	// Wrapper script must reference the function file
+	if !strings.Contains(wrapperStr, testFuncPath) {
+		t.Errorf("Wrapper script does not contain function path: %s", testFuncPath)
+	}
+
+	// Wrapper script must contain the structured log format markers
+	if !strings.Contains(wrapperStr, "===EXECUTION_START:") {
+		t.Error("Wrapper script does not contain EXECUTION_START log marker")
+	}
+	if !strings.Contains(wrapperStr, "===EXECUTION_END===") {
+		t.Error("Wrapper script does not contain EXECUTION_END log marker")
+	}
+
+	// Wrapper script must reference the function-specific log file (baseName.log)
+	expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "functions", "test_function.log")
+	if !strings.Contains(wrapperStr, expectedLogFile) {
+		t.Errorf("Wrapper script does not reference expected log file.\nExpected: %s\nGot: %s", expectedLogFile, wrapperStr)
 	}
 
 	// Verify logs directory was created
@@ -239,7 +297,8 @@ func TestAddCronMultipleFunctions(t *testing.T) {
 		}
 	}
 
-	// Verify all cron jobs were added with unique log files
+	// Verify all cron jobs were added — each should have its own wrapper script
+	// referenced from the crontab, with a unique log file inside the script.
 	cmd := exec.Command("crontab", "-l")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -248,11 +307,23 @@ func TestAddCronMultipleFunctions(t *testing.T) {
 
 	crontabContent := string(output)
 
-	// Verify each function has its own log file
+	// Verify each function has its own wrapper script in the crontab
 	for _, fn := range functions {
-		expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "functions", "cron_"+fn.name+".log")
-		if !strings.Contains(crontabContent, expectedLogFile) {
-			t.Errorf("Crontab does not contain expected log file for %s.\nExpected: %s\nCrontab:\n%s", fn.name, expectedLogFile, crontabContent)
+		funcPath := filepath.Join(funcDir, fn.name)
+		expectedWrapperPath := cronWrapperPath(tmpHome, funcPath)
+		if !strings.Contains(crontabContent, expectedWrapperPath) {
+			t.Errorf("Crontab does not reference wrapper script for %s.\nExpected: %s\nCrontab:\n%s", fn.name, expectedWrapperPath, crontabContent)
+		}
+
+		// Verify the wrapper script contains the correct log file path
+		baseName := strings.TrimSuffix(fn.name, filepath.Ext(fn.name))
+		expectedLogFile := filepath.Join(tmpHome, ".opencloud", "logs", "functions", baseName+".log")
+		wrapperContent, readErr := os.ReadFile(expectedWrapperPath)
+		if readErr != nil {
+			t.Fatalf("Wrapper script not found for %s at %s: %v", fn.name, expectedWrapperPath, readErr)
+		}
+		if !strings.Contains(string(wrapperContent), expectedLogFile) {
+			t.Errorf("Wrapper script for %s does not contain expected log file.\nExpected: %s\nScript:\n%s", fn.name, expectedLogFile, string(wrapperContent))
 		}
 	}
 
@@ -296,14 +367,15 @@ func TestRemoveCron(t *testing.T) {
 		t.Fatalf("addCron failed: %v", err)
 	}
 
-	// Verify the cron job was added
+	// Verify the cron job was added — the crontab should reference the wrapper script
+	wrapperPath := cronWrapperPath(tmpHome, testFuncPath)
 	cmd := exec.Command("crontab", "-l")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Failed to read crontab: %v", err)
 	}
-	if !strings.Contains(string(output), testFuncPath) {
-		t.Fatal("Cron job was not added successfully")
+	if !strings.Contains(string(output), wrapperPath) {
+		t.Fatal("Cron job was not added successfully (wrapper script not found in crontab)")
 	}
 
 	// Now remove the cron job
@@ -312,14 +384,19 @@ func TestRemoveCron(t *testing.T) {
 		t.Fatalf("removeCron failed: %v", err)
 	}
 
-	// Verify the cron job was removed
+	// Verify the cron job was removed (wrapper script path no longer in crontab)
 	cmd = exec.Command("crontab", "-l")
 	output, err = cmd.CombinedOutput()
 	crontabContent := string(output)
 
-	// Check if crontab is empty or doesn't contain the function
-	if err == nil && strings.Contains(crontabContent, testFuncPath) {
+	// Check if crontab no longer references the wrapper script
+	if err == nil && strings.Contains(crontabContent, wrapperPath) {
 		t.Errorf("Cron job was not removed. Crontab content:\n%s", crontabContent)
+	}
+
+	// Verify the wrapper script file was cleaned up
+	if _, statErr := os.Stat(wrapperPath); statErr == nil {
+		t.Errorf("Wrapper script was not removed: %s", wrapperPath)
 	}
 }
 
@@ -371,15 +448,16 @@ func TestRemoveCronMultipleFunctions(t *testing.T) {
 		}
 	}
 
-	// Verify all cron jobs were added
+	// Verify all cron jobs were added — check for wrapper script paths in crontab
 	cmd := exec.Command("crontab", "-l")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Failed to read crontab: %v", err)
 	}
 	for _, path := range funcPaths {
-		if !strings.Contains(string(output), path) {
-			t.Fatalf("Cron job for %s was not added", path)
+		wrapperPath := cronWrapperPath(tmpHome, path)
+		if !strings.Contains(string(output), wrapperPath) {
+			t.Fatalf("Cron job wrapper script for %s was not added to crontab", path)
 		}
 	}
 
@@ -397,16 +475,16 @@ func TestRemoveCronMultipleFunctions(t *testing.T) {
 	}
 	crontabContent := string(output)
 
-	// First and third should still exist
-	if !strings.Contains(crontabContent, funcPaths[0]) {
+	// First and third wrapper scripts should still exist in crontab
+	if !strings.Contains(crontabContent, cronWrapperPath(tmpHome, funcPaths[0])) {
 		t.Errorf("Cron job for %s was incorrectly removed", funcPaths[0])
 	}
-	if !strings.Contains(crontabContent, funcPaths[2]) {
+	if !strings.Contains(crontabContent, cronWrapperPath(tmpHome, funcPaths[2])) {
 		t.Errorf("Cron job for %s was incorrectly removed", funcPaths[2])
 	}
 
-	// Second should be removed
-	if strings.Contains(crontabContent, funcPaths[1]) {
+	// Second wrapper script should be removed from crontab
+	if strings.Contains(crontabContent, cronWrapperPath(tmpHome, funcPaths[1])) {
 		t.Errorf("Cron job for %s was not removed. Crontab content:\n%s", funcPaths[1], crontabContent)
 	}
 }
