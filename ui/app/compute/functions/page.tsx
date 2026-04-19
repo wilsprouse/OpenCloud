@@ -89,7 +89,7 @@ export default function FunctionsPage() {
   
   // Function form state
   const [functionName, setFunctionName] = useState<string>("")
-  const [functionRuntime, setFunctionRuntime] = useState<string>("python")
+  const [functionRuntime, setFunctionRuntime] = useState<string>("python3")
   const [functionCode, setFunctionCode] = useState<string>("")
   const isFunctionNameValid = isValidFunctionName(functionName)
   const {
@@ -422,7 +422,7 @@ export default function FunctionsPage() {
                       <SelectValue placeholder="Select Language" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="python">Python</SelectItem>
+                      <SelectItem value="python3">Python</SelectItem>
                       <SelectItem value="nodejs">Node.js (Coming Soon)</SelectItem>
                       <SelectItem value="java">Java 21 (Coming Soon)</SelectItem>
                       <SelectItem value="go">Go 1.x (Coming Soon)</SelectItem>

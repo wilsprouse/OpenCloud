@@ -78,7 +78,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   
   // Editable form state
   const [name, setName] = useState("")
-  const [runtime, setRuntime] = useState("python")
+  const [runtime, setRuntime] = useState("python3")
   const [code, setCode] = useState("")
   const [memorySize, setMemorySize] = useState("128")
   const [timeout, setTimeout] = useState("3")
@@ -371,7 +371,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="nodejs">Node.js</SelectItem>
-                  <SelectItem value="python">Python</SelectItem>
+                  <SelectItem value="python3">Python</SelectItem>
                   <SelectItem value="java">Java</SelectItem>
                   <SelectItem value="go">Go</SelectItem>
                   <SelectItem value="dotnet">.NET</SelectItem>
