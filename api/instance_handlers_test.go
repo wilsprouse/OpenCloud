@@ -193,4 +193,125 @@ func TestBuildNginxInstructions(t *testing.T) {
 	}
 }
 
+// TestBuildCertbotInstructions verifies that the certbot instructions contain
+// the domain and key certbot steps.
+func TestBuildCertbotInstructions(t *testing.T) {
+	domain := "cloud.example.com"
+	instructions := buildCertbotInstructions(domain)
 
+	checks := []string{
+		domain,
+		"certbot",
+		"--nginx",
+		"sudo certbot renew --dry-run",
+		"sudo systemctl reload nginx",
+	}
+	for _, check := range checks {
+		if !strings.Contains(instructions, check) {
+			t.Errorf("certbot instructions missing %q; got:\n%s", check, instructions)
+		}
+	}
+	// Email and flags should NOT appear in the generated command — certbot prompts interactively.
+	if strings.Contains(instructions, "--email") {
+		t.Errorf("certbot instructions should not contain --email; got:\n%s", instructions)
+	}
+	if strings.Contains(instructions, "--agree-tos") {
+		t.Errorf("certbot instructions should not contain --agree-tos; got:\n%s", instructions)
+	}
+}
+
+// TestGetSSLStatusHandlerMethodNotAllowed verifies that non-GET requests are rejected.
+func TestGetSSLStatusHandlerMethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/get-ssl-status", nil)
+	w := httptest.NewRecorder()
+	GetSSLStatusHandler(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestConfigureSSLHandlerMethodNotAllowed verifies that non-POST requests are rejected.
+func TestConfigureSSLHandlerMethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/configure-ssl", nil)
+	w := httptest.NewRecorder()
+	ConfigureSSLHandler(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestConfigureSSLHandlerMissingDomain verifies that a missing domain returns 400.
+func TestConfigureSSLHandlerMissingDomain(t *testing.T) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"domain": "",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ConfigureSSLHandler(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestConfigureSSLHandlerInvalidDomain verifies that an invalid domain returns 400.
+func TestConfigureSSLHandlerInvalidDomain(t *testing.T) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"domain": "bad domain!",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ConfigureSSLHandler(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestConfigureSSLHandlerSuccess verifies a successful SSL configuration request.
+// Note: saveLedgerState is not needed here because ConfigureSSLHandler no longer
+// writes to the service ledger — it only returns certbot commands.
+func TestConfigureSSLHandlerSuccess(t *testing.T) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"domain": "cloud.example.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ConfigureSSLHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp ConfigureSSLResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("invalid JSON response: %v", err)
+	}
+
+	if resp.Domain != "cloud.example.com" {
+		t.Errorf("response domain = %q; want %q", resp.Domain, "cloud.example.com")
+	}
+	if !strings.Contains(resp.CertbotCmd, "certbot") {
+		t.Errorf("CertbotCmd should contain certbot; got: %q", resp.CertbotCmd)
+	}
+	if !strings.Contains(resp.CertbotCmd, "cloud.example.com") {
+		t.Errorf("CertbotCmd should contain domain; got: %q", resp.CertbotCmd)
+	}
+	// Email and agree-tos flags should not be present — certbot prompts interactively.
+	if strings.Contains(resp.CertbotCmd, "--email") {
+		t.Errorf("CertbotCmd should not contain --email; got: %q", resp.CertbotCmd)
+	}
+	if strings.Contains(resp.CertbotCmd, "--agree-tos") {
+		t.Errorf("CertbotCmd should not contain --agree-tos; got: %q", resp.CertbotCmd)
+	}
+	if resp.CertbotInstallCmd == "" {
+		t.Error("CertbotInstallCmd should not be empty")
+	}
+	if resp.AutoRenewCmd == "" {
+		t.Error("AutoRenewCmd should not be empty")
+	}
+	if !strings.Contains(resp.Instructions, "cloud.example.com") {
+		t.Errorf("Instructions should mention the domain; got:\n%s", resp.Instructions)
+	}
+}

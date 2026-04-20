@@ -1,7 +1,7 @@
 'use client'
 
 import { useTheme } from "next-themes"
-import { Moon, Sun, Globe, Copy, Check, AlertCircle } from "lucide-react"
+import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -21,6 +21,13 @@ export default function SettingsPage() {
   const [nginxEditCmd, setNginxEditCmd] = useState("")
   const [nginxConfigLine, setNginxConfigLine] = useState("")
   const [nginxReloadCmd, setNginxReloadCmd] = useState("")
+
+  // SSL certificate state
+  const [sslLoading, setSSLLoading] = useState(false)
+  const [sslError, setSSLError] = useState("")
+  const [sslCertbotInstallCmd, setSSLCertbotInstallCmd] = useState("")
+  const [sslCertbotCmd, setSSLCertbotCmd] = useState("")
+  const [sslAutoRenewCmd, setSSLAutoRenewCmd] = useState("")
 
   // Track which code snippet was just copied
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -110,6 +117,44 @@ export default function SettingsPage() {
       setDomainError("Network error. Please try again.")
     } finally {
       setDomainLoading(false)
+    }
+  }
+
+  async function handleSSLConfigure() {
+    setSSLError("")
+    setSSLCertbotInstallCmd("")
+    setSSLCertbotCmd("")
+    setSSLAutoRenewCmd("")
+
+    if (!domain.trim() && !savedDomain) {
+      setSSLError("Please configure an instance domain before setting up SSL.")
+      return
+    }
+
+    setSSLLoading(true)
+    try {
+      const res = await fetch("/api/configure-ssl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domain: (domain.trim() || savedDomain),
+        }),
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        setSSLError(text || "Failed to configure SSL.")
+        return
+      }
+
+      const data = await res.json()
+      setSSLCertbotInstallCmd(data.certbotInstallCmd ?? "")
+      setSSLCertbotCmd(data.certbotCmd ?? "")
+      setSSLAutoRenewCmd(data.autoRenewCmd ?? "")
+    } catch {
+      setSSLError("Network error. Please try again.")
+    } finally {
+      setSSLLoading(false)
     }
   }
 
@@ -236,6 +281,80 @@ export default function SettingsPage() {
                     <CodeRow
                       code={nginxReloadCmd}
                       copyKey="reloadCmd"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t pt-4" />
+
+          {/* SSL Certificate section */}
+          <div className="flex items-start gap-3">
+            <Lock className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+            <div className="flex-1 space-y-3">
+              <div>
+                <Label className="text-sm font-medium">SSL Certificate (Let&apos;s Encrypt)</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Obtain a free SSL certificate from Let&apos;s Encrypt for your instance domain.
+                  Certbot will prompt for your email and Terms of Service agreement when run.
+                </p>
+              </div>
+
+              <Button
+                onClick={handleSSLConfigure}
+                disabled={sslLoading}
+                className="w-full sm:w-auto"
+              >
+                {sslLoading ? "Generating commands…" : "Configure SSL"}
+              </Button>
+
+              {sslError && (
+                <p className="text-xs text-destructive" role="alert">{sslError}</p>
+              )}
+
+              {/* Certbot instructions shown after a successful configure */}
+              {sslCertbotCmd && (
+                <div className="rounded-md border bg-muted/50 p-4 space-y-4 text-sm">
+                  <p className="font-medium">
+                    Ready to install! Run these commands on your server to obtain the SSL certificate:
+                  </p>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      1. Install certbot and the nginx plugin (if not already installed):
+                    </p>
+                    <CodeRow
+                      code={sslCertbotInstallCmd}
+                      copyKey="sslInstall"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      2. Obtain and install the SSL certificate (certbot will prompt for email and ToS):
+                    </p>
+                    <CodeRow
+                      code={sslCertbotCmd}
+                      copyKey="sslCertbot"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      3. Verify that automatic renewal is configured:
+                    </p>
+                    <CodeRow
+                      code={sslAutoRenewCmd}
+                      copyKey="sslAutoRenew"
                       copiedKey={copiedKey}
                       onCopy={copyToClipboard}
                     />
