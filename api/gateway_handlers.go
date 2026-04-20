@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -279,17 +280,53 @@ func DeleteGatewayRoute(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"message": "Gateway route deleted successfully"})
 }
 
+// reloadNginx attempts to reload the nginx process using several common
+// methods.  It tries each command in order and returns nil as soon as one
+// succeeds.  If no method works it returns an error so the caller can log a
+// helpful manual-intervention message without aborting the request.
+func reloadNginx() error {
+	type attempt struct {
+		name string
+		args []string
+	}
+	for _, a := range []attempt{
+		// Prefer the fastest method that doesn't require sudo.
+		{"nginx", []string{"-s", "reload"}},
+		// Try sudo variants for setups where the app user is not root.
+		{"sudo", []string{"nginx", "-s", "reload"}},
+		{"sudo", []string{"systemctl", "reload", "nginx"}},
+		{"systemctl", []string{"reload", "nginx"}},
+	} {
+		if err := exec.Command(a.name, a.args...).Run(); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"nginx reload: all methods failed (tried: nginx -s reload, " +
+			"sudo nginx -s reload, sudo systemctl reload nginx). " +
+			"Run one of those commands manually to apply the new routes.",
+	)
+}
+
 // applyGatewayNginxConfig reads all current gateway routes from the service
 // ledger and writes a nginx include file to
 // ~/.opencloud/gateway/nginx-gateway.conf.
 //
-// The generated file contains one `location` block per route.  It can be
-// included in the main nginx server block with:
+// The generated file contains one `location` block per route (plus a
+// companion `location =` block that redirects the bare path without a
+// trailing slash so that e.g. /app redirects to /app/).
 //
-//	include /home/<user>/.opencloud/gateway/nginx-gateway.conf;
+// Include this file inside your nginx server block BEFORE the catch-all
+// location:
 //
-// Operators should reload nginx after OpenCloud updates the file; this
-// function does not attempt to reload nginx automatically.
+//	# Replace /home/ubuntu with your actual $HOME
+//	include /home/ubuntu/.opencloud/gateway/nginx-gateway.conf;
+//	location / { proxy_pass http://localhost:3000; }
+//
+// After including the file, nginx must be reloaded once so it picks up the
+// directive.  Subsequent route changes are applied automatically because this
+// function calls `nginx -s reload` (or the first sudo variant that succeeds)
+// after every write.
 func applyGatewayNginxConfig() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -315,11 +352,13 @@ func applyGatewayNginxConfig() error {
 		return routes[i].CreatedAt < routes[j].CreatedAt
 	})
 
+	confPath := filepath.Join(gatewayDir, "nginx-gateway.conf")
+
 	var sb strings.Builder
 	sb.WriteString("# OpenCloud Gateway - auto-generated nginx location blocks\n")
 	sb.WriteString("# Do not edit manually; changes will be overwritten by OpenCloud.\n")
-	sb.WriteString("# Include this file inside your nginx server {} block:\n")
-	sb.WriteString("#   include " + filepath.Join(gatewayDir, "nginx-gateway.conf") + ";\n\n")
+	sb.WriteString("# Include this file inside your nginx server {} block BEFORE location /:\n")
+	sb.WriteString("#   include " + confPath + ";\n\n")
 
 	for _, route := range routes {
 		// Ensure the path prefix ends with / for consistent nginx prefix matching.
@@ -328,10 +367,26 @@ func applyGatewayNginxConfig() error {
 			prefix += "/"
 		}
 
-		// Ensure the target URL ends with / so nginx strips the prefix correctly.
+		// Ensure the target URL ends with / so nginx strips the prefix correctly
+		// (e.g. location /app/ { proxy_pass http://localhost:8080/; } causes
+		// nginx to strip /app/ from the request path before forwarding).
 		target := route.TargetURL
 		if !strings.HasSuffix(target, "/") {
 			target += "/"
+		}
+
+		// Emit a redirect from the bare path (without trailing slash) to the
+		// trailing-slash version.  This ensures that a browser visiting /rabby
+		// gets redirected to /rabby/ and subsequently matched by the location
+		// block below, instead of falling through to the catch-all location /.
+		bare := strings.TrimSuffix(prefix, "/")
+		if bare != "" && bare != "/" {
+			if route.Description != "" {
+				sb.WriteString(fmt.Sprintf("# %s\n", route.Description))
+			}
+			sb.WriteString(fmt.Sprintf("location = %s {\n", bare))
+			sb.WriteString(fmt.Sprintf("    return 301 $scheme://$host%s;\n", prefix))
+			sb.WriteString("}\n")
 		}
 
 		if route.Description != "" {
@@ -349,9 +404,16 @@ func applyGatewayNginxConfig() error {
 		sb.WriteString("}\n\n")
 	}
 
-	confPath := filepath.Join(gatewayDir, "nginx-gateway.conf")
 	if err := os.WriteFile(confPath, []byte(sb.String()), 0644); err != nil {
 		return fmt.Errorf("failed to write nginx gateway config: %w", err)
+	}
+
+	// Best-effort nginx reload so the new location blocks take effect
+	// immediately.  If the reload fails (e.g. the app doesn't have sudo
+	// privileges), a warning is printed and the caller should run the
+	// reload command manually.
+	if err := reloadNginx(); err != nil {
+		fmt.Printf("Warning: gateway config written to %s but nginx reload failed: %v\n", confPath, err)
 	}
 
 	return nil
