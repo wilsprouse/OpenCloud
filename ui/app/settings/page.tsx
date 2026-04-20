@@ -1,11 +1,12 @@
 'use client'
 
 import { useTheme } from "next-themes"
-import { Moon, Sun, Globe, Copy, Check, AlertCircle } from "lucide-react"
+import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useState, useEffect } from "react"
 
 export default function SettingsPage() {
@@ -22,10 +23,20 @@ export default function SettingsPage() {
   const [nginxConfigLine, setNginxConfigLine] = useState("")
   const [nginxReloadCmd, setNginxReloadCmd] = useState("")
 
+  // SSL certificate state
+  const [sslEmail, setSSLEmail] = useState("")
+  const [savedSSLEmail, setSavedSSLEmail] = useState("")
+  const [sslAgreeToTos, setSSLAgreeToTos] = useState(false)
+  const [sslLoading, setSSLLoading] = useState(false)
+  const [sslError, setSSLError] = useState("")
+  const [sslCertbotInstallCmd, setSSLCertbotInstallCmd] = useState("")
+  const [sslCertbotCmd, setSSLCertbotCmd] = useState("")
+  const [sslAutoRenewCmd, setSSLAutoRenewCmd] = useState("")
+
   // Track which code snippet was just copied
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
-  // Load the current configured domain on mount.
+  // Load the current configured domain and SSL email on mount.
   useEffect(() => {
     fetch("/api/get-instance-domain")
       .then((res) => res.json())
@@ -37,6 +48,17 @@ export default function SettingsPage() {
       })
       .catch(() => {
         // Non-fatal: domain may not be configured yet.
+      })
+    fetch("/api/get-ssl-status")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.email) {
+          setSavedSSLEmail(data.email)
+          setSSLEmail(data.email)
+        }
+      })
+      .catch(() => {
+        // Non-fatal: SSL may not be configured yet.
       })
   }, [])
 
@@ -110,6 +132,57 @@ export default function SettingsPage() {
       setDomainError("Network error. Please try again.")
     } finally {
       setDomainLoading(false)
+    }
+  }
+
+  async function handleSSLConfigure() {
+    setSSLError("")
+    setSSLCertbotInstallCmd("")
+    setSSLCertbotCmd("")
+    setSSLAutoRenewCmd("")
+
+    if (!domain.trim() && !savedDomain) {
+      setSSLError("Please configure an instance domain before setting up SSL.")
+      return
+    }
+
+    if (!sslEmail.trim()) {
+      setSSLError("Email address cannot be empty.")
+      return
+    }
+
+    if (!sslAgreeToTos) {
+      setSSLError("You must agree to the Let's Encrypt Terms of Service.")
+      return
+    }
+
+    setSSLLoading(true)
+    try {
+      const res = await fetch("/api/configure-ssl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domain: (domain.trim() || savedDomain),
+          email: sslEmail.trim(),
+          agreeToTos: sslAgreeToTos,
+        }),
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        setSSLError(text || "Failed to configure SSL.")
+        return
+      }
+
+      const data = await res.json()
+      setSavedSSLEmail(data.email)
+      setSSLCertbotInstallCmd(data.certbotInstallCmd ?? "")
+      setSSLCertbotCmd(data.certbotCmd ?? "")
+      setSSLAutoRenewCmd(data.autoRenewCmd ?? "")
+    } catch {
+      setSSLError("Network error. Please try again.")
+    } finally {
+      setSSLLoading(false)
     }
   }
 
@@ -236,6 +309,133 @@ export default function SettingsPage() {
                     <CodeRow
                       code={nginxReloadCmd}
                       copyKey="reloadCmd"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t pt-4" />
+
+          {/* SSL Certificate section */}
+          <div className="flex items-start gap-3">
+            <Lock className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+            <div className="flex-1 space-y-3">
+              <div>
+                <Label className="text-sm font-medium">SSL Certificate (Let&apos;s Encrypt)</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Obtain a free SSL certificate from Let&apos;s Encrypt for your instance domain.
+                  {savedSSLEmail && (
+                    <span className="ml-1 font-medium text-foreground">
+                      Configured for: <span className="font-mono">{savedSSLEmail}</span>
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="ssl-email" className="text-xs text-muted-foreground mb-1 block">
+                    Email address
+                  </Label>
+                  <Input
+                    id="ssl-email"
+                    type="email"
+                    placeholder="e.g. admin@example.com"
+                    value={sslEmail}
+                    onChange={(e) => {
+                      setSSLEmail(e.target.value)
+                      setSSLError("")
+                      setSSLCertbotInstallCmd("")
+                      setSSLCertbotCmd("")
+                      setSSLAutoRenewCmd("")
+                    }}
+                    className="font-mono"
+                    disabled={sslLoading}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Used by Let&apos;s Encrypt to send certificate expiry notices and recovery emails.
+                  </p>
+                </div>
+
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="ssl-tos"
+                    checked={sslAgreeToTos}
+                    onCheckedChange={(checked: boolean | "indeterminate") => {
+                      setSSLAgreeToTos(checked === true)
+                      setSSLError("")
+                    }}
+                    disabled={sslLoading}
+                  />
+                  <Label htmlFor="ssl-tos" className="text-xs leading-relaxed cursor-pointer">
+                    I agree to the{" "}
+                    <a
+                      href="https://letsencrypt.org/documents/LE-SA-v1.3-September-21-2022.pdf"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline text-primary"
+                    >
+                      Let&apos;s Encrypt Terms of Service
+                    </a>
+                  </Label>
+                </div>
+
+                <Button
+                  onClick={handleSSLConfigure}
+                  disabled={sslLoading || !sslAgreeToTos}
+                  className="w-full sm:w-auto"
+                >
+                  {sslLoading ? "Generating commands…" : "Configure SSL"}
+                </Button>
+              </div>
+
+              {sslError && (
+                <p className="text-xs text-destructive" role="alert">{sslError}</p>
+              )}
+
+              {/* Certbot instructions shown after a successful configure */}
+              {sslCertbotCmd && (
+                <div className="rounded-md border bg-muted/50 p-4 space-y-4 text-sm">
+                  <p className="font-medium">
+                    Ready to install! Run these commands on your server to obtain the SSL certificate:
+                  </p>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      1. Install certbot and the nginx plugin (if not already installed):
+                    </p>
+                    <CodeRow
+                      code={sslCertbotInstallCmd}
+                      copyKey="sslInstall"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      2. Obtain and install the SSL certificate:
+                    </p>
+                    <CodeRow
+                      code={sslCertbotCmd}
+                      copyKey="sslCertbot"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      3. Verify that automatic renewal is configured:
+                    </p>
+                    <CodeRow
+                      code={sslAutoRenewCmd}
+                      copyKey="sslAutoRenew"
                       copiedKey={copiedKey}
                       onCopy={copyToClipboard}
                     />

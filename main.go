@@ -195,6 +195,8 @@ func main() {
 	mux.HandleFunc("/update-container", computeapi.UpdateContainer)
 	mux.HandleFunc("/get-instance-domain", api.GetInstanceDomainHandler)
 	mux.HandleFunc("/set-instance-domain", api.SetInstanceDomainHandler)
+	mux.HandleFunc("/get-ssl-status", api.GetSSLStatusHandler)
+	mux.HandleFunc("/configure-ssl", api.ConfigureSSLHandler)
 	mux.HandleFunc("/", computeapi.GetFunction)
 
 	// Wrap all routes with CORS middleware

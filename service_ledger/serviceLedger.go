@@ -84,6 +84,8 @@ type ServiceStatus struct {
 	Buckets         map[string]BucketEntry        `json:"buckets,omitempty"`
 	// Domain stores the configured domain for the "instance" service ledger entry.
 	Domain string `json:"domain,omitempty"`
+	// SSLEmail stores the email address used for Let's Encrypt/certbot SSL configuration.
+	SSLEmail string `json:"sslEmail,omitempty"`
 }
 
 // ServiceLedger represents the complete service ledger
@@ -1270,6 +1272,43 @@ func SetInstanceDomain(domain string) error {
 	}
 
 	status.Domain = domain
+	ledger["instance"] = status
+
+	return WriteServiceLedger(ledger)
+}
+
+// GetInstanceSSLEmail retrieves the Let's Encrypt email from the "instance" service ledger entry.
+// Returns an empty string if no email has been configured yet.
+func GetInstanceSSLEmail() (string, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return "", err
+	}
+
+	status, exists := ledger["instance"]
+	if !exists {
+		return "", nil
+	}
+
+	return status.SSLEmail, nil
+}
+
+// SetInstanceSSLEmail stores the given Let's Encrypt email in the "instance" service ledger entry.
+func SetInstanceSSLEmail(email string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	status, exists := ledger["instance"]
+	if !exists {
+		status = ServiceStatus{Enabled: true}
+	}
+
+	status.SSLEmail = email
 	ledger["instance"] = status
 
 	return WriteServiceLedger(ledger)
