@@ -193,6 +193,8 @@ func main() {
 	mux.HandleFunc("/pull-and-run", computeapi.PullAndRun)
 	mux.HandleFunc("/pull-and-run-stream", computeapi.PullAndRunStream)
 	mux.HandleFunc("/update-container", computeapi.UpdateContainer)
+	mux.HandleFunc("/get-instance-domain", api.GetInstanceDomainHandler)
+	mux.HandleFunc("/set-instance-domain", api.SetInstanceDomainHandler)
 	mux.HandleFunc("/", computeapi.GetFunction)
 
 	// Wrap all routes with CORS middleware
