@@ -41,7 +41,7 @@ func isValidDomain(domain string) bool {
 func buildNginxInstructions(domain string) string {
 	return fmt.Sprintf(
 		"1. Edit the nginx configuration file:\n"+
-			"   sudo nano /etc/nginx/sites-available/opencloud\n\n"+
+			"   sudo vim /etc/nginx/sites-available/opencloud\n\n"+
 			"2. Find the 'server_name' line and replace it with:\n"+
 			"   server_name %s;\n\n"+
 			"3. Test the configuration:\n"+
