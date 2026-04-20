@@ -5,36 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
-
-// setupNginxConfig writes a temporary nginx config file and overrides the package-level
-// nginxConfigPath. It returns a cleanup function that restores the original value.
-func setupNginxConfig(t *testing.T, content string) string {
-	t.Helper()
-	tmp := t.TempDir()
-	cfgPath := filepath.Join(tmp, "opencloud")
-	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write temp nginx config: %v", err)
-	}
-	orig := nginxConfigPath
-	nginxConfigPath = cfgPath
-	t.Cleanup(func() { nginxConfigPath = orig })
-	return cfgPath
-}
-
-// setupReloadNginx replaces the package-level reloadNginx func with a no-op and
-// returns a cleanup function that restores the original.
-func setupReloadNginx(t *testing.T, reloadErr error) {
-	t.Helper()
-	orig := reloadNginx
-	reloadNginx = func() error { return reloadErr }
-	t.Cleanup(func() { reloadNginx = orig })
-}
 
 // saveLedgerState reads the current service ledger and registers a t.Cleanup that
 // restores it when the test finishes, preventing test state from leaking.
@@ -42,10 +17,7 @@ func saveLedgerState(t *testing.T) {
 	t.Helper()
 	origLedger, err := service_ledger.ReadServiceLedger()
 	if err != nil {
-		// Ledger does not exist yet; clean up any file created during the test.
-		t.Cleanup(func() {
-			// Best-effort: nothing useful to restore.
-		})
+		// Ledger does not exist yet; nothing to restore on cleanup.
 		return
 	}
 	t.Cleanup(func() {
@@ -54,16 +26,6 @@ func saveLedgerState(t *testing.T) {
 		}
 	})
 }
-
-// sampleNginxConf is a minimal nginx config containing a server_name directive.
-const sampleNginxConf = `server {
-    listen 80;
-    server_name _;
-    location / {
-        proxy_pass http://localhost:3000;
-    }
-}
-`
 
 // TestIsValidDomain checks the domain validation helper for a range of inputs.
 func TestIsValidDomain(t *testing.T) {
@@ -141,10 +103,9 @@ func TestSetInstanceDomainHandlerInvalidDomain(t *testing.T) {
 	}
 }
 
-// TestSetInstanceDomainHandlerSuccess verifies a successful domain update round-trip.
+// TestSetInstanceDomainHandlerSuccess verifies a successful domain save and checks that
+// the response contains nginx configuration instructions.
 func TestSetInstanceDomainHandlerSuccess(t *testing.T) {
-	cfgPath := setupNginxConfig(t, sampleNginxConf)
-	setupReloadNginx(t, nil)
 	saveLedgerState(t)
 
 	body, _ := json.Marshal(map[string]string{"domain": "cloud.example.com"})
@@ -157,30 +118,28 @@ func TestSetInstanceDomainHandlerSuccess(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Verify the nginx config file was updated.
-	cfgBytes, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("failed to read nginx config: %v", err)
-	}
-	if !bytes.Contains(cfgBytes, []byte("server_name cloud.example.com;")) {
-		t.Errorf("nginx config not updated; got:\n%s", string(cfgBytes))
-	}
-
-	// Verify the response body.
-	var resp map[string]string
+	var resp SetInstanceDomainResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("invalid JSON response: %v", err)
 	}
-	if resp["domain"] != "cloud.example.com" {
-		t.Errorf("response domain = %q; want %q", resp["domain"], "cloud.example.com")
+
+	if resp.Domain != "cloud.example.com" {
+		t.Errorf("response domain = %q; want %q", resp.Domain, "cloud.example.com")
+	}
+	if resp.NginxConfigLine != "server_name cloud.example.com;" {
+		t.Errorf("NginxConfigLine = %q; want %q", resp.NginxConfigLine, "server_name cloud.example.com;")
+	}
+	if resp.NginxReloadCmd == "" {
+		t.Error("NginxReloadCmd should not be empty")
+	}
+	if !strings.Contains(resp.Instructions, "cloud.example.com") {
+		t.Errorf("Instructions should mention the domain; got: %s", resp.Instructions)
 	}
 }
 
 // TestGetInstanceDomainHandlerReturnsStoredDomain verifies that after saving a domain
 // the GET handler returns it.
 func TestGetInstanceDomainHandlerReturnsStoredDomain(t *testing.T) {
-	setupNginxConfig(t, sampleNginxConf)
-	setupReloadNginx(t, nil)
 	saveLedgerState(t)
 
 	// First, set the domain via the handler.
@@ -210,33 +169,22 @@ func TestGetInstanceDomainHandlerReturnsStoredDomain(t *testing.T) {
 	}
 }
 
-// TestUpdateNginxServerName verifies that the server_name line is replaced correctly.
-func TestUpdateNginxServerName(t *testing.T) {
-	cfgPath := setupNginxConfig(t, sampleNginxConf)
+// TestBuildNginxInstructions verifies that the instructions mention the domain and key steps.
+func TestBuildNginxInstructions(t *testing.T) {
+	domain := "example.com"
+	instructions := buildNginxInstructions(domain)
 
-	if err := updateNginxServerName("example.com"); err != nil {
-		t.Fatalf("updateNginxServerName returned error: %v", err)
+	checks := []string{
+		domain,
+		"/etc/nginx/sites-available/opencloud",
+		"sudo nginx -t",
+		"sudo systemctl reload nginx",
 	}
-
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("failed to read nginx config: %v", err)
-	}
-
-	if !bytes.Contains(data, []byte("server_name example.com;")) {
-		t.Errorf("expected server_name example.com; in config, got:\n%s", string(data))
-	}
-}
-
-// TestUpdateNginxServerNameMissingFile verifies that a missing config file returns an error.
-func TestUpdateNginxServerNameMissingFile(t *testing.T) {
-	orig := nginxConfigPath
-	nginxConfigPath = "/nonexistent/path/opencloud"
-	t.Cleanup(func() { nginxConfigPath = orig })
-
-	err := updateNginxServerName("example.com")
-	if err == nil {
-		t.Fatal("expected error for missing nginx config file, got nil")
+	for _, check := range checks {
+		if !strings.Contains(instructions, check) {
+			t.Errorf("instructions missing %q; got:\n%s", check, instructions)
+		}
 	}
 }
+
 

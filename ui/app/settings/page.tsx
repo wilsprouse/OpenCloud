@@ -1,7 +1,7 @@
 'use client'
 
 import { useTheme } from "next-themes"
-import { Moon, Sun, Globe } from "lucide-react"
+import { Moon, Sun, Globe, Copy, Check } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -16,7 +16,13 @@ export default function SettingsPage() {
   const [savedDomain, setSavedDomain] = useState("")
   const [domainLoading, setDomainLoading] = useState(false)
   const [domainError, setDomainError] = useState("")
-  const [domainSuccess, setDomainSuccess] = useState("")
+
+  // nginx instructions returned by the backend after a successful save
+  const [nginxConfigLine, setNginxConfigLine] = useState("")
+  const [nginxReloadCmd, setNginxReloadCmd] = useState("")
+
+  // Track which code snippet was just copied
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
   // Load the current configured domain on mount.
   useEffect(() => {
@@ -37,9 +43,17 @@ export default function SettingsPage() {
     setTheme(checked ? "dark" : "light")
   }
 
+  function copyToClipboard(text: string, key: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedKey(key)
+      setTimeout(() => setCopiedKey(null), 2000)
+    })
+  }
+
   async function handleDomainSave() {
     setDomainError("")
-    setDomainSuccess("")
+    setNginxConfigLine("")
+    setNginxReloadCmd("")
 
     if (!domain.trim()) {
       setDomainError("Domain cannot be empty.")
@@ -62,7 +76,8 @@ export default function SettingsPage() {
 
       const data = await res.json()
       setSavedDomain(data.domain)
-      setDomainSuccess("Domain configured successfully. Nginx has been updated.")
+      setNginxConfigLine(data.nginxConfigLine ?? "")
+      setNginxReloadCmd(data.nginxReloadCmd ?? "")
     } catch {
       setDomainError("Network error. Please try again.")
     } finally {
@@ -113,7 +128,7 @@ export default function SettingsPage() {
                   Instance Domain
                 </Label>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Configure the domain name that nginx will route to this OpenCloud instance.
+                  Set the domain that nginx should route to this OpenCloud instance.
                   {savedDomain && (
                     <span className="ml-1 font-medium text-foreground">
                       Current: <span className="font-mono">{savedDomain}</span>
@@ -130,15 +145,13 @@ export default function SettingsPage() {
                   onChange={(e) => {
                     setDomain(e.target.value)
                     setDomainError("")
-                    setDomainSuccess("")
+                    setNginxConfigLine("")
+                    setNginxReloadCmd("")
                   }}
                   className="font-mono"
                   disabled={domainLoading}
                 />
-                <Button
-                  onClick={handleDomainSave}
-                  disabled={domainLoading}
-                >
+                <Button onClick={handleDomainSave} disabled={domainLoading}>
                   {domainLoading ? "Saving…" : "Save"}
                 </Button>
               </div>
@@ -146,8 +159,55 @@ export default function SettingsPage() {
               {domainError && (
                 <p className="text-xs text-destructive" role="alert">{domainError}</p>
               )}
-              {domainSuccess && (
-                <p className="text-xs text-green-600 dark:text-green-400" role="status">{domainSuccess}</p>
+
+              {/* Nginx instructions shown after a successful save */}
+              {nginxConfigLine && (
+                <div className="rounded-md border bg-muted/50 p-4 space-y-4 text-sm">
+                  <p className="font-medium">
+                    Domain saved! Apply it to nginx by following these steps on your server:
+                  </p>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      1. Open <span className="font-mono">/etc/nginx/sites-available/opencloud</span> and
+                      find the <span className="font-mono">server_name</span> line. Replace it with:
+                    </p>
+                    <div className="flex items-center gap-2 rounded bg-background border px-3 py-2">
+                      <code className="flex-1 font-mono text-xs">{nginxConfigLine}</code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0"
+                        onClick={() => copyToClipboard(nginxConfigLine, "configLine")}
+                        aria-label="Copy server_name line"
+                      >
+                        {copiedKey === "configLine"
+                          ? <Check className="h-3.5 w-3.5 text-green-500" />
+                          : <Copy className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      2. Test the configuration and reload nginx:
+                    </p>
+                    <div className="flex items-center gap-2 rounded bg-background border px-3 py-2">
+                      <code className="flex-1 font-mono text-xs">{nginxReloadCmd}</code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0"
+                        onClick={() => copyToClipboard(nginxReloadCmd, "reloadCmd")}
+                        aria-label="Copy reload command"
+                      >
+                        {copiedKey === "reloadCmd"
+                          ? <Check className="h-3.5 w-3.5 text-green-500" />
+                          : <Copy className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -156,3 +216,4 @@ export default function SettingsPage() {
     </div>
   )
 }
+

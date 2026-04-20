@@ -4,28 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
-
-// nginxConfigPath is the path to the nginx configuration file managed by OpenCloud.
-// It can be overridden in tests.
-var nginxConfigPath = "/etc/nginx/sites-available/opencloud"
-
-// reloadNginx is the function used to reload nginx after configuration changes.
-// It can be overridden in tests.
-var reloadNginx = func() error {
-	cmd := exec.Command("sudo", "nginx", "-s", "reload")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("nginx reload failed: %w\noutput: %s", err, string(out))
-	}
-	return nil
-}
 
 // domainRegex validates standard (non-wildcard) nginx server_name values.
 // Allowed characters are alphanumeric, hyphens, dots, and underscores.
@@ -52,36 +35,33 @@ func isValidDomain(domain string) bool {
 	return domainRegex.MatchString(domain)
 }
 
-// updateNginxServerName reads the nginx configuration file at nginxConfigPath, replaces
-// the server_name directive, and writes the file back.
-func updateNginxServerName(domain string) error {
-	data, err := os.ReadFile(nginxConfigPath)
-	if err != nil {
-		return fmt.Errorf("reading nginx config: %w", err)
-	}
+// buildNginxInstructions returns a human-readable string describing how to update
+// the nginx configuration to use the given domain, since OpenCloud does not have
+// root permissions to modify nginx directly.
+func buildNginxInstructions(domain string) string {
+	return fmt.Sprintf(
+		"1. Edit the nginx configuration file:\n"+
+			"   sudo nano /etc/nginx/sites-available/opencloud\n\n"+
+			"2. Find the 'server_name' line and replace it with:\n"+
+			"   server_name %s;\n\n"+
+			"3. Test the configuration:\n"+
+			"   sudo nginx -t\n\n"+
+			"4. Reload nginx to apply the change:\n"+
+			"   sudo systemctl reload nginx",
+		domain,
+	)
+}
 
-	lines := strings.Split(string(data), "\n")
-	updated := false
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "server_name ") {
-			// Preserve the original indentation.
-			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-			lines[i] = fmt.Sprintf("%sserver_name %s;", indent, domain)
-			updated = true
-		}
-	}
-
-	if !updated {
-		return fmt.Errorf("server_name directive not found in nginx config")
-	}
-
-	newContent := strings.Join(lines, "\n")
-	if err := os.WriteFile(nginxConfigPath, []byte(newContent), 0644); err != nil {
-		return fmt.Errorf("writing nginx config: %w", err)
-	}
-
-	return nil
+// SetInstanceDomainResponse is the JSON body returned by SetInstanceDomainHandler.
+type SetInstanceDomainResponse struct {
+	// Domain is the value that was saved.
+	Domain string `json:"domain"`
+	// NginxConfigLine is the exact server_name directive to place in the nginx config.
+	NginxConfigLine string `json:"nginxConfigLine"`
+	// NginxReloadCmd is the command the operator should run to apply and reload nginx.
+	NginxReloadCmd string `json:"nginxReloadCmd"`
+	// Instructions contains a full step-by-step guide for applying the nginx change.
+	Instructions string `json:"instructions"`
 }
 
 // GetInstanceDomainHandler handles GET /get-instance-domain.
@@ -105,11 +85,13 @@ func GetInstanceDomainHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetInstanceDomainHandler handles POST /set-instance-domain.
-// It validates the supplied domain, persists it in the service ledger, updates the nginx
-// configuration, and reloads nginx.
+// It validates the supplied domain and persists it in the service ledger.
+// Because OpenCloud does not run with root permissions, it cannot modify nginx
+// directly. Instead, the response includes the exact nginx configuration line
+// and step-by-step commands the operator should run to apply the change.
 //
 // Request body: {"domain": "<value>"}
-// Response:     {"domain": "<value>", "message": "Domain configured successfully"}
+// Response:     SetInstanceDomainResponse
 func SetInstanceDomainHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -135,35 +117,18 @@ func SetInstanceDomainHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist the domain in the service ledger first.
+	// Persist the domain in the service ledger.
 	if err := service_ledger.SetInstanceDomain(req.Domain); err != nil {
 		http.Error(w, "Failed to save domain: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Update the nginx configuration file. If the config file is absent (e.g., development
-	// environment without nginx), log a warning but still return success so the ledger value
-	// is saved.
-	if err := updateNginxServerName(req.Domain); err != nil {
-		if os.IsNotExist(err) || strings.Contains(err.Error(), "reading nginx config") {
-			// nginx config not present – skip reload (development mode)
-		} else {
-			http.Error(w, "Failed to update nginx configuration: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// Config updated successfully – reload nginx.
-		if err := reloadNginx(); err != nil {
-			// nginx reload failure is non-fatal: the domain is saved and the config file is
-			// updated. The operator can reload nginx manually.
-			http.Error(w, "Domain saved but nginx reload failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"domain":  req.Domain,
-		"message": "Domain configured successfully",
+	json.NewEncoder(w).Encode(SetInstanceDomainResponse{
+		Domain:          req.Domain,
+		NginxConfigLine: fmt.Sprintf("server_name %s;", req.Domain),
+		NginxReloadCmd:  "sudo nginx -t && sudo systemctl reload nginx",
+		Instructions:    buildNginxInstructions(req.Domain),
 	})
 }
+
