@@ -82,6 +82,8 @@ type ServiceStatus struct {
 	Pipelines       map[string]PipelineEntry      `json:"pipelines,omitempty"`
 	ContainerImages map[string]ContainerImageEntry `json:"containerImages,omitempty"`
 	Buckets         map[string]BucketEntry        `json:"buckets,omitempty"`
+	// Domain stores the configured domain for the "instance" service ledger entry.
+	Domain string `json:"domain,omitempty"`
 }
 
 // ServiceLedger represents the complete service ledger
@@ -180,6 +182,9 @@ func InitializeServiceLedger() error {
 		},
 		"pipelines": ServiceStatus{
 			Enabled: false,
+		},
+		"instance": ServiceStatus{
+			Enabled: true,
 		},
 	}
 
@@ -1229,6 +1234,43 @@ func RenameBucketEntry(currentName, newName string) error {
 	delete(serviceStatus.Buckets, currentName)
 
 	ledger["blob_storage"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// GetInstanceDomain retrieves the configured domain from the "instance" service ledger entry.
+// Returns an empty string if no domain has been configured yet.
+func GetInstanceDomain() (string, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return "", err
+	}
+
+	status, exists := ledger["instance"]
+	if !exists {
+		return "", nil
+	}
+
+	return status.Domain, nil
+}
+
+// SetInstanceDomain stores the given domain in the "instance" service ledger entry.
+func SetInstanceDomain(domain string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	status, exists := ledger["instance"]
+	if !exists {
+		status = ServiceStatus{Enabled: true}
+	}
+
+	status.Domain = domain
+	ledger["instance"] = status
 
 	return WriteServiceLedger(ledger)
 }
