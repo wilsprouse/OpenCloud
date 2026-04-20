@@ -25,6 +25,8 @@ type GatewayRoute struct {
 	PathPrefix  string `json:"pathPrefix"`
 	TargetURL   string `json:"targetURL"`
 	Description string `json:"description,omitempty"`
+	ServiceType string `json:"serviceType,omitempty"`
+	ServiceName string `json:"serviceName,omitempty"`
 	CreatedAt   string `json:"createdAt"`
 }
 
@@ -33,6 +35,8 @@ type CreateGatewayRouteRequest struct {
 	PathPrefix  string `json:"pathPrefix"`
 	TargetURL   string `json:"targetURL"`
 	Description string `json:"description,omitempty"`
+	ServiceType string `json:"serviceType,omitempty"`
+	ServiceName string `json:"serviceName,omitempty"`
 }
 
 // UpdateGatewayRouteRequest holds the fields that can be updated on an existing route.
@@ -40,6 +44,8 @@ type UpdateGatewayRouteRequest struct {
 	PathPrefix  string `json:"pathPrefix"`
 	TargetURL   string `json:"targetURL"`
 	Description string `json:"description,omitempty"`
+	ServiceType string `json:"serviceType,omitempty"`
+	ServiceName string `json:"serviceName,omitempty"`
 }
 
 // validateGatewayRoute checks that the path prefix and target URL supplied by
@@ -92,6 +98,8 @@ func ListGatewayRoutes(w http.ResponseWriter, r *http.Request) {
 			PathPrefix:  e.PathPrefix,
 			TargetURL:   e.TargetURL,
 			Description: e.Description,
+			ServiceType: e.ServiceType,
+			ServiceName: e.ServiceName,
 			CreatedAt:   e.CreatedAt,
 		})
 	}
@@ -135,6 +143,8 @@ func CreateGatewayRoute(w http.ResponseWriter, r *http.Request) {
 		PathPrefix:  req.PathPrefix,
 		TargetURL:   req.TargetURL,
 		Description: req.Description,
+		ServiceType: req.ServiceType,
+		ServiceName: req.ServiceName,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -153,6 +163,8 @@ func CreateGatewayRoute(w http.ResponseWriter, r *http.Request) {
 		PathPrefix:  entry.PathPrefix,
 		TargetURL:   entry.TargetURL,
 		Description: entry.Description,
+		ServiceType: entry.ServiceType,
+		ServiceName: entry.ServiceName,
 		CreatedAt:   entry.CreatedAt,
 	}
 
@@ -202,6 +214,8 @@ func UpdateGatewayRoute(w http.ResponseWriter, r *http.Request) {
 		PathPrefix:  req.PathPrefix,
 		TargetURL:   req.TargetURL,
 		Description: req.Description,
+		ServiceType: req.ServiceType,
+		ServiceName: req.ServiceName,
 		CreatedAt:   existing.CreatedAt,
 	}
 
@@ -219,6 +233,8 @@ func UpdateGatewayRoute(w http.ResponseWriter, r *http.Request) {
 		PathPrefix:  updated.PathPrefix,
 		TargetURL:   updated.TargetURL,
 		Description: updated.Description,
+		ServiceType: updated.ServiceType,
+		ServiceName: updated.ServiceName,
 		CreatedAt:   updated.CreatedAt,
 	}
 

@@ -89,6 +89,12 @@ type GatewayRouteEntry struct {
 	TargetURL string `json:"targetURL"`
 	// Description is an optional human-readable note about this route.
 	Description string `json:"description,omitempty"`
+	// ServiceType identifies the kind of service this route points to.
+	// Valid values are "function", "container", and "custom".
+	ServiceType string `json:"serviceType,omitempty"`
+	// ServiceName is the human-readable name of the function or container
+	// that this route targets.  Empty for custom routes.
+	ServiceName string `json:"serviceName,omitempty"`
 	// CreatedAt records when the route was created (RFC3339).
 	CreatedAt string `json:"createdAt"`
 }
