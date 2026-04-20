@@ -193,40 +193,14 @@ func TestBuildNginxInstructions(t *testing.T) {
 	}
 }
 
-// TestIsValidEmail checks the email validation helper.
-func TestIsValidEmail(t *testing.T) {
-	cases := []struct {
-		email string
-		want  bool
-	}{
-		{"user@example.com", true},
-		{"user.name+tag@sub.example.co.uk", true},
-		{"admin@localhost.example", true},
-		{"", false},
-		{"notanemail", false},
-		{"@example.com", false},
-		{"user@", false},
-		{"user@.com", false},
-	}
-
-	for _, tc := range cases {
-		got := isValidEmail(tc.email)
-		if got != tc.want {
-			t.Errorf("isValidEmail(%q) = %v; want %v", tc.email, got, tc.want)
-		}
-	}
-}
-
 // TestBuildCertbotInstructions verifies that the certbot instructions contain
-// the domain, email, and key certbot steps.
+// the domain and key certbot steps.
 func TestBuildCertbotInstructions(t *testing.T) {
 	domain := "cloud.example.com"
-	email := "admin@example.com"
-	instructions := buildCertbotInstructions(domain, email)
+	instructions := buildCertbotInstructions(domain)
 
 	checks := []string{
 		domain,
-		email,
 		"certbot",
 		"--nginx",
 		"sudo certbot renew --dry-run",
@@ -236,6 +210,13 @@ func TestBuildCertbotInstructions(t *testing.T) {
 		if !strings.Contains(instructions, check) {
 			t.Errorf("certbot instructions missing %q; got:\n%s", check, instructions)
 		}
+	}
+	// Email and flags should NOT appear in the generated command — certbot prompts interactively.
+	if strings.Contains(instructions, "--email") {
+		t.Errorf("certbot instructions should not contain --email; got:\n%s", instructions)
+	}
+	if strings.Contains(instructions, "--agree-tos") {
+		t.Errorf("certbot instructions should not contain --agree-tos; got:\n%s", instructions)
 	}
 }
 
@@ -262,9 +243,7 @@ func TestConfigureSSLHandlerMethodNotAllowed(t *testing.T) {
 // TestConfigureSSLHandlerMissingDomain verifies that a missing domain returns 400.
 func TestConfigureSSLHandlerMissingDomain(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
-		"domain":     "",
-		"email":      "admin@example.com",
-		"agreeToTos": true,
+		"domain": "",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -278,60 +257,7 @@ func TestConfigureSSLHandlerMissingDomain(t *testing.T) {
 // TestConfigureSSLHandlerInvalidDomain verifies that an invalid domain returns 400.
 func TestConfigureSSLHandlerInvalidDomain(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
-		"domain":     "bad domain!",
-		"email":      "admin@example.com",
-		"agreeToTos": true,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	ConfigureSSLHandler(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
-
-// TestConfigureSSLHandlerMissingEmail verifies that a missing email returns 400.
-func TestConfigureSSLHandlerMissingEmail(t *testing.T) {
-	body, _ := json.Marshal(map[string]interface{}{
-		"domain":     "cloud.example.com",
-		"email":      "",
-		"agreeToTos": true,
-	})
-	req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	ConfigureSSLHandler(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
-
-// TestConfigureSSLHandlerInvalidEmail verifies that an invalid email returns 400.
-func TestConfigureSSLHandlerInvalidEmail(t *testing.T) {
-	cases := []string{"notanemail", "@example.com", "user@", ""}
-	for _, e := range cases {
-		body, _ := json.Marshal(map[string]interface{}{
-			"domain":     "cloud.example.com",
-			"email":      e,
-			"agreeToTos": true,
-		})
-		req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		ConfigureSSLHandler(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("email %q: expected 400, got %d", e, w.Code)
-		}
-	}
-}
-
-// TestConfigureSSLHandlerTosNotAgreed verifies that failing to agree to ToS returns 400.
-func TestConfigureSSLHandlerTosNotAgreed(t *testing.T) {
-	body, _ := json.Marshal(map[string]interface{}{
-		"domain":     "cloud.example.com",
-		"email":      "admin@example.com",
-		"agreeToTos": false,
+		"domain": "bad domain!",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -344,12 +270,8 @@ func TestConfigureSSLHandlerTosNotAgreed(t *testing.T) {
 
 // TestConfigureSSLHandlerSuccess verifies a successful SSL configuration request.
 func TestConfigureSSLHandlerSuccess(t *testing.T) {
-	saveLedgerState(t)
-
 	body, _ := json.Marshal(map[string]interface{}{
-		"domain":     "cloud.example.com",
-		"email":      "admin@example.com",
-		"agreeToTos": true,
+		"domain": "cloud.example.com",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -368,17 +290,18 @@ func TestConfigureSSLHandlerSuccess(t *testing.T) {
 	if resp.Domain != "cloud.example.com" {
 		t.Errorf("response domain = %q; want %q", resp.Domain, "cloud.example.com")
 	}
-	if resp.Email != "admin@example.com" {
-		t.Errorf("response email = %q; want %q", resp.Email, "admin@example.com")
-	}
 	if !strings.Contains(resp.CertbotCmd, "certbot") {
 		t.Errorf("CertbotCmd should contain certbot; got: %q", resp.CertbotCmd)
 	}
 	if !strings.Contains(resp.CertbotCmd, "cloud.example.com") {
 		t.Errorf("CertbotCmd should contain domain; got: %q", resp.CertbotCmd)
 	}
-	if !strings.Contains(resp.CertbotCmd, "admin@example.com") {
-		t.Errorf("CertbotCmd should contain email; got: %q", resp.CertbotCmd)
+	// Email and agree-tos flags should not be present — certbot prompts interactively.
+	if strings.Contains(resp.CertbotCmd, "--email") {
+		t.Errorf("CertbotCmd should not contain --email; got: %q", resp.CertbotCmd)
+	}
+	if strings.Contains(resp.CertbotCmd, "--agree-tos") {
+		t.Errorf("CertbotCmd should not contain --agree-tos; got: %q", resp.CertbotCmd)
 	}
 	if resp.CertbotInstallCmd == "" {
 		t.Error("CertbotInstallCmd should not be empty")
@@ -388,41 +311,5 @@ func TestConfigureSSLHandlerSuccess(t *testing.T) {
 	}
 	if !strings.Contains(resp.Instructions, "cloud.example.com") {
 		t.Errorf("Instructions should mention the domain; got:\n%s", resp.Instructions)
-	}
-}
-
-// TestGetSSLStatusHandlerReturnsStoredEmail verifies that after configuring SSL
-// the GET handler returns the stored email.
-func TestGetSSLStatusHandlerReturnsStoredEmail(t *testing.T) {
-	saveLedgerState(t)
-
-	// Configure SSL first.
-	setBody, _ := json.Marshal(map[string]interface{}{
-		"domain":     "cloud.example.com",
-		"email":      "ssl@example.com",
-		"agreeToTos": true,
-	})
-	setReq := httptest.NewRequest(http.MethodPost, "/configure-ssl", bytes.NewReader(setBody))
-	setReq.Header.Set("Content-Type", "application/json")
-	setW := httptest.NewRecorder()
-	ConfigureSSLHandler(setW, setReq)
-	if setW.Code != http.StatusOK {
-		t.Fatalf("configure SSL: expected 200, got %d: %s", setW.Code, setW.Body.String())
-	}
-
-	// Retrieve SSL status.
-	getReq := httptest.NewRequest(http.MethodGet, "/get-ssl-status", nil)
-	getW := httptest.NewRecorder()
-	GetSSLStatusHandler(getW, getReq)
-	if getW.Code != http.StatusOK {
-		t.Fatalf("get SSL status: expected 200, got %d: %s", getW.Code, getW.Body.String())
-	}
-
-	var resp map[string]string
-	if err := json.NewDecoder(getW.Body).Decode(&resp); err != nil {
-		t.Fatalf("invalid JSON response: %v", err)
-	}
-	if resp["email"] != "ssl@example.com" {
-		t.Errorf("get ssl email = %q; want %q", resp["email"], "ssl@example.com")
 	}
 }

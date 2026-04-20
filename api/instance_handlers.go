@@ -19,8 +19,8 @@ var domainRegex = regexp.MustCompile(`^[a-zA-Z0-9_]([a-zA-Z0-9\-_\.]*[a-zA-Z0-9_
 // The asterisk-dot prefix must be followed by a valid domain name.
 var wildcardDomainRegex = regexp.MustCompile(`^\*\.[a-zA-Z0-9_]([a-zA-Z0-9\-_\.]*[a-zA-Z0-9_])?$`)
 
-// emailRegex validates an email address in the standard user@domain.tld format.
-var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+// emailRegex and isValidEmail were removed; email is no longer collected by the
+// SSL configuration flow — certbot prompts interactively during certificate issuance.
 
 // isValidDomain returns true when domain is an acceptable nginx server_name value.
 func isValidDomain(domain string) bool {
@@ -36,11 +36,6 @@ func isValidDomain(domain string) bool {
 		return wildcardDomainRegex.MatchString(domain)
 	}
 	return domainRegex.MatchString(domain)
-}
-
-// isValidEmail returns true when the email is a well-formed email address.
-func isValidEmail(email string) bool {
-	return len(email) <= 254 && emailRegex.MatchString(email)
 }
 
 // buildNginxInstructions returns a human-readable string describing how to update
@@ -61,18 +56,19 @@ func buildNginxInstructions(domain string) string {
 }
 
 // buildCertbotInstructions returns a human-readable step-by-step guide for obtaining
-// a Let's Encrypt SSL certificate using certbot.
-func buildCertbotInstructions(domain, email string) string {
+// a Let's Encrypt SSL certificate using certbot. Certbot will interactively prompt
+// the operator for an email address and Terms of Service agreement during issuance.
+func buildCertbotInstructions(domain string) string {
 	return fmt.Sprintf(
 		"1. Install certbot and the nginx plugin (if not already installed):\n"+
 			"   sudo apt-get install certbot python3-certbot-nginx -y\n\n"+
 			"2. Obtain and install the SSL certificate for %s:\n"+
-			"   sudo certbot --nginx -d %s --email %s --agree-tos --no-eff-email\n\n"+
+			"   sudo certbot --nginx -d %s\n\n"+
 			"3. Verify that automatic certificate renewal is configured:\n"+
 			"   sudo certbot renew --dry-run\n\n"+
 			"4. Reload nginx to apply the changes (if not reloaded automatically):\n"+
 			"   sudo systemctl reload nginx",
-		domain, domain, email,
+		domain, domain,
 	)
 }
 
@@ -163,21 +159,16 @@ func SetInstanceDomainHandler(w http.ResponseWriter, r *http.Request) {
 type ConfigureSSLRequest struct {
 	// Domain is the domain name for which to obtain the SSL certificate.
 	Domain string `json:"domain"`
-	// Email is the Let's Encrypt account email used for renewal notices.
-	Email string `json:"email"`
-	// AgreeToTos must be true; the user must accept the Let's Encrypt Terms of Service.
-	AgreeToTos bool `json:"agreeToTos"`
 }
 
 // ConfigureSSLResponse is the JSON body returned by ConfigureSSLHandler.
 type ConfigureSSLResponse struct {
 	// Domain is the domain the certificate is being requested for.
 	Domain string `json:"domain"`
-	// Email is the Let's Encrypt account email that was saved.
-	Email string `json:"email"`
 	// CertbotInstallCmd is the command to install certbot if it is not already present.
 	CertbotInstallCmd string `json:"certbotInstallCmd"`
 	// CertbotCmd is the command to run certbot and obtain/install the certificate.
+	// Certbot will interactively prompt for email and Terms of Service agreement.
 	CertbotCmd string `json:"certbotCmd"`
 	// AutoRenewCmd is the command to test the automatic renewal configuration.
 	AutoRenewCmd string `json:"autoRenewCmd"`
@@ -206,11 +197,12 @@ func GetSSLStatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // ConfigureSSLHandler handles POST /configure-ssl.
-// It validates the domain and email, persists the email in the service ledger, and
-// returns certbot commands for the operator to run to obtain a Let's Encrypt SSL certificate.
+// It validates the domain and returns certbot commands for the operator to run
+// to obtain a Let's Encrypt SSL certificate. Certbot will interactively prompt
+// for an email address and Terms of Service agreement during certificate issuance.
 // Because OpenCloud does not run with root permissions, it cannot invoke certbot directly.
 //
-// Request body: {"domain": "<value>", "email": "<value>", "agreeToTos": true}
+// Request body: {"domain": "<value>"}
 // Response:     ConfigureSSLResponse
 func ConfigureSSLHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -234,39 +226,14 @@ func ConfigureSSLHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Email == "" {
-		http.Error(w, "Missing required field: email", http.StatusBadRequest)
-		return
-	}
-
-	if !isValidEmail(req.Email) {
-		http.Error(w, "Invalid email address", http.StatusBadRequest)
-		return
-	}
-
-	if !req.AgreeToTos {
-		http.Error(w, "You must agree to the Let's Encrypt Terms of Service", http.StatusBadRequest)
-		return
-	}
-
-	// Persist the SSL email in the service ledger.
-	if err := service_ledger.SetInstanceSSLEmail(req.Email); err != nil {
-		http.Error(w, "Failed to save SSL configuration: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	certbotCmd := fmt.Sprintf(
-		"sudo certbot --nginx -d %s --email %s --agree-tos --no-eff-email",
-		req.Domain, req.Email,
-	)
+	certbotCmd := fmt.Sprintf("sudo certbot --nginx -d %s", req.Domain)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ConfigureSSLResponse{
 		Domain:            req.Domain,
-		Email:             req.Email,
 		CertbotInstallCmd: "sudo apt-get install certbot python3-certbot-nginx -y",
 		CertbotCmd:        certbotCmd,
 		AutoRenewCmd:      "sudo certbot renew --dry-run",
-		Instructions:      buildCertbotInstructions(req.Domain, req.Email),
+		Instructions:      buildCertbotInstructions(req.Domain),
 	})
 }
