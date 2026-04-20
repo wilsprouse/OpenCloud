@@ -12,8 +12,9 @@
 # - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/the-target-user/OpenCloud)
 #
 # Optional Flags:
-# - --ignore-nginx: Skip all nginx installation, configuration, and service management steps.
-#                   Use this when you have an existing nginx setup you do not want overwritten.
+# - --deploy-nginx: Install, configure, and start nginx as a reverse proxy for OpenCloud.
+#                   By default, nginx is not touched. Use this flag when you want setup.sh
+#                   to manage the nginx installation for you.
 
 set -e  # Exit on any error
 
@@ -37,15 +38,15 @@ print_warning() {
 }
 
 # Parse command-line flags
-IGNORE_NGINX=false
+DEPLOY_NGINX=false
 for arg in "$@"; do
     case "$arg" in
-        --ignore-nginx)
-            IGNORE_NGINX=true
+        --deploy-nginx)
+            DEPLOY_NGINX=true
             ;;
         *)
             print_error "Unknown argument: $arg"
-            echo "Usage: $0 [--ignore-nginx]"
+            echo "Usage: $0 [--deploy-nginx]"
             exit 1
             ;;
     esac
@@ -256,9 +257,7 @@ rm "$TEMP_UI_SERVICE"
 print_info "Frontend systemd service configured"
 
 # Step 10: Install and configure nginx
-if [ "$IGNORE_NGINX" = "true" ]; then
-    print_info "Skipping nginx setup (--ignore-nginx flag provided)"
-else
+if [ "$DEPLOY_NGINX" = "true" ]; then
     print_info "Setting up nginx web server..."
 
     # Check for and install nginx if not present
@@ -294,6 +293,8 @@ else
     fi
 
     print_info "nginx configured successfully"
+else
+    print_info "Skipping nginx setup (use --deploy-nginx to enable)"
 fi
 
 # Step 11: Start the services
@@ -311,11 +312,11 @@ sudo systemctl enable opencloud-ui.service
 sudo systemctl start opencloud-ui.service
 
 # Start nginx
-if [ "$IGNORE_NGINX" = "true" ]; then
-    print_info "Skipping nginx service start (--ignore-nginx flag provided)"
-else
+if [ "$DEPLOY_NGINX" = "true" ]; then
     sudo systemctl enable nginx
     sudo systemctl restart nginx
+else
+    print_info "Skipping nginx service start (use --deploy-nginx to enable)"
 fi
 
 # Wait a moment for services to start
@@ -339,14 +340,16 @@ else
     exit 1
 fi
 
-if [ "$IGNORE_NGINX" = "true" ]; then
-    print_info "Skipping nginx status check (--ignore-nginx flag provided)"
-elif sudo systemctl is-active --quiet nginx; then
-    print_info "nginx web server is running"
+if [ "$DEPLOY_NGINX" = "true" ]; then
+    if sudo systemctl is-active --quiet nginx; then
+        print_info "nginx web server is running"
+    else
+        print_error "nginx service failed to start"
+        sudo systemctl status nginx
+        exit 1
+    fi
 else
-    print_error "nginx service failed to start"
-    sudo systemctl status nginx
-    exit 1
+    print_info "Skipping nginx status check (use --deploy-nginx to enable)"
 fi
 
 # Print success message
@@ -355,14 +358,7 @@ print_info "========================================="
 print_info "OpenCloud setup completed successfully!"
 print_info "========================================="
 print_info ""
-if [ "$IGNORE_NGINX" = "true" ]; then
-    print_info "NOTE: nginx setup was skipped (--ignore-nginx flag was provided)."
-    print_info "  Ensure your existing nginx configuration routes traffic to OpenCloud."
-    print_info ""
-    print_info "Direct service access:"
-    print_info "  Backend API: http://localhost:3030"
-    print_info "  Frontend UI: http://localhost:3000"
-else
+if [ "$DEPLOY_NGINX" = "true" ]; then
     print_info "IMPORTANT: Access OpenCloud via nginx (port 80):"
     print_info "  Web Interface: http://123.123.123.123"
     print_info "  (Replace 123.123.123.123 with your actual server IP)"
@@ -375,6 +371,14 @@ else
     print_info "  Frontend UI: http://localhost:3000"
     print_info "  Note: Direct frontend access (port 3000) also works remotely"
     print_info "        thanks to Next.js API rewrites to the backend."
+else
+    print_info "NOTE: nginx setup was skipped (run with --deploy-nginx to configure nginx)."
+    print_info "  Ensure your existing nginx configuration routes traffic to OpenCloud,"
+    print_info "  or access the services directly:"
+    print_info ""
+    print_info "Direct service access:"
+    print_info "  Backend API: http://localhost:3030"
+    print_info "  Frontend UI: http://localhost:3000"
 fi
 print_info ""
 print_info "Service Management Commands:"
