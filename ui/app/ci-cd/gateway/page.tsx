@@ -487,7 +487,7 @@ export default function Gateway() {
             <DialogTitle>Delete Gateway Route</DialogTitle>
             <DialogDescription>
               Are you sure you want to delete this route? This action cannot be
-              undone and the nginx configuration will be updated immediately.
+              undone and the NGINX configuration will be updated immediately.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
