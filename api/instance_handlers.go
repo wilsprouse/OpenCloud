@@ -27,10 +27,14 @@ var reloadNginx = func() error {
 	return nil
 }
 
-// domainRegex validates nginx server_name values: alphanumeric characters, hyphens, dots,
-// underscores (catch-all "_"), asterisks (wildcard "*.example.com"), and colons (IPv6).
-// The value must not exceed 253 characters and must not be empty.
-var domainRegex = regexp.MustCompile(`^[a-zA-Z0-9_\*][a-zA-Z0-9\-_\.\*:]*$`)
+// domainRegex validates standard (non-wildcard) nginx server_name values.
+// Allowed characters are alphanumeric, hyphens, dots, and underscores.
+// The value must start and end with an alphanumeric character or underscore.
+var domainRegex = regexp.MustCompile(`^[a-zA-Z0-9_]([a-zA-Z0-9\-_\.]*[a-zA-Z0-9_])?$`)
+
+// wildcardDomainRegex validates wildcard nginx server_name values such as "*.example.com".
+// The asterisk-dot prefix must be followed by a valid domain name.
+var wildcardDomainRegex = regexp.MustCompile(`^\*\.[a-zA-Z0-9_]([a-zA-Z0-9\-_\.]*[a-zA-Z0-9_])?$`)
 
 // isValidDomain returns true when domain is an acceptable nginx server_name value.
 func isValidDomain(domain string) bool {
@@ -40,6 +44,10 @@ func isValidDomain(domain string) bool {
 	// "_" alone is the nginx catch-all directive – always valid.
 	if domain == "_" {
 		return true
+	}
+	// Wildcard subdomains must have the "*." prefix only at the very start.
+	if strings.HasPrefix(domain, "*") {
+		return wildcardDomainRegex.MatchString(domain)
 	}
 	return domainRegex.MatchString(domain)
 }

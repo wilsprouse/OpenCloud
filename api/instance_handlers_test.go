@@ -77,11 +77,12 @@ func TestIsValidDomain(t *testing.T) {
 		{"192.168.1.1", true},
 		{"_", true},
 		{"*.example.com", true},
-		{"::1", false},      // starts with colon
-		{"", false},         // empty
-		{"a b.com", false},  // space
-		{"a;b.com", false},  // semicolon
-		{"a\nb.com", false}, // newline – injection risk
+		{"exam*ple.com", false}, // asterisk only allowed at start
+		{"example*.com", false}, // asterisk only allowed at start
+		{"", false},             // empty
+		{"a b.com", false},      // space
+		{"a;b.com", false},      // semicolon
+		{"a\nb.com", false},     // newline – injection risk
 		{string(make([]byte, 254)), false}, // too long
 	}
 
