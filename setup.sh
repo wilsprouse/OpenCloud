@@ -10,6 +10,10 @@
 #
 # Optional Environment Variables:
 # - OPENCLOUD_INSTALL_DIR: Override installation directory (default: /home/the-target-user/OpenCloud)
+#
+# Optional Flags:
+# - --ignore-nginx: Skip all nginx installation, configuration, and service management steps.
+#                   Use this when you have an existing nginx setup you do not want overwritten.
 
 set -e  # Exit on any error
 
@@ -31,6 +35,21 @@ print_error() {
 print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
+
+# Parse command-line flags
+IGNORE_NGINX=false
+for arg in "$@"; do
+    case "$arg" in
+        --ignore-nginx)
+            IGNORE_NGINX=true
+            ;;
+        *)
+            print_error "Unknown argument: $arg"
+            echo "Usage: $0 [--ignore-nginx]"
+            exit 1
+            ;;
+    esac
+done
 
 # Get the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -237,41 +256,45 @@ rm "$TEMP_UI_SERVICE"
 print_info "Frontend systemd service configured"
 
 # Step 10: Install and configure nginx
-print_info "Setting up nginx web server..."
-
-# Check for and install nginx if not present
-if ! command -v nginx &> /dev/null; then
-    print_info "nginx not found. Installing nginx..."
-    sudo apt-get update -qq
-    sudo apt-get install -y nginx
-    print_info "nginx installed successfully"
+if [ "$IGNORE_NGINX" = "true" ]; then
+    print_info "Skipping nginx setup (--ignore-nginx flag provided)"
 else
-    print_info "nginx is already installed"
+    print_info "Setting up nginx web server..."
+
+    # Check for and install nginx if not present
+    if ! command -v nginx &> /dev/null; then
+        print_info "nginx not found. Installing nginx..."
+        sudo apt-get update -qq
+        sudo apt-get install -y nginx
+        print_info "nginx installed successfully"
+    else
+        print_info "nginx is already installed"
+    fi
+
+    # Copy nginx configuration
+    print_info "Configuring nginx for OpenCloud..."
+    sudo cp "${SCRIPT_DIR}/utils/opencloud.nginx.conf" /etc/nginx/sites-available/opencloud
+
+    # Remove default nginx site if it exists
+    if [ -f /etc/nginx/sites-enabled/default ]; then
+        sudo rm /etc/nginx/sites-enabled/default
+        print_info "Removed default nginx site"
+    fi
+
+    # Create symbolic link to enable the site
+    sudo ln -sf /etc/nginx/sites-available/opencloud /etc/nginx/sites-enabled/opencloud
+
+    # Test nginx configuration
+    print_info "Testing nginx configuration..."
+    if sudo nginx -t; then
+        print_info "nginx configuration is valid"
+    else
+        print_error "nginx configuration test failed"
+        exit 1
+    fi
+
+    print_info "nginx configured successfully"
 fi
-
-# Copy nginx configuration
-print_info "Configuring nginx for OpenCloud..."
-sudo cp "${SCRIPT_DIR}/utils/opencloud.nginx.conf" /etc/nginx/sites-available/opencloud
-
-# Remove default nginx site if it exists
-if [ -f /etc/nginx/sites-enabled/default ]; then
-    sudo rm /etc/nginx/sites-enabled/default
-    print_info "Removed default nginx site"
-fi
-
-# Create symbolic link to enable the site
-sudo ln -sf /etc/nginx/sites-available/opencloud /etc/nginx/sites-enabled/opencloud
-
-# Test nginx configuration
-print_info "Testing nginx configuration..."
-if sudo nginx -t; then
-    print_info "nginx configuration is valid"
-else
-    print_error "nginx configuration test failed"
-    exit 1
-fi
-
-print_info "nginx configured successfully"
 
 # Step 11: Start the services
 print_info "Starting OpenCloud services..."
@@ -288,8 +311,12 @@ sudo systemctl enable opencloud-ui.service
 sudo systemctl start opencloud-ui.service
 
 # Start nginx
-sudo systemctl enable nginx
-sudo systemctl restart nginx
+if [ "$IGNORE_NGINX" = "true" ]; then
+    print_info "Skipping nginx service start (--ignore-nginx flag provided)"
+else
+    sudo systemctl enable nginx
+    sudo systemctl restart nginx
+fi
 
 # Wait a moment for services to start
 sleep 3
@@ -312,7 +339,9 @@ else
     exit 1
 fi
 
-if sudo systemctl is-active --quiet nginx; then
+if [ "$IGNORE_NGINX" = "true" ]; then
+    print_info "Skipping nginx status check (--ignore-nginx flag provided)"
+elif sudo systemctl is-active --quiet nginx; then
     print_info "nginx web server is running"
 else
     print_error "nginx service failed to start"
@@ -326,18 +355,27 @@ print_info "========================================="
 print_info "OpenCloud setup completed successfully!"
 print_info "========================================="
 print_info ""
-print_info "IMPORTANT: Access OpenCloud via nginx (port 80):"
-print_info "  Web Interface: http://123.123.123.123"
-print_info "  (Replace 123.123.123.123 with your actual server IP)"
-print_info ""
-print_info "  If port 80 is not accessible, check your firewall/security groups"
-print_info "  to ensure port 80 is open for incoming connections."
-print_info ""
-print_info "Direct service access (for debugging/development only):"
-print_info "  Backend API: http://localhost:3030"
-print_info "  Frontend UI: http://localhost:3000"
-print_info "  Note: Direct frontend access (port 3000) also works remotely"
-print_info "        thanks to Next.js API rewrites to the backend."
+if [ "$IGNORE_NGINX" = "true" ]; then
+    print_info "NOTE: nginx setup was skipped (--ignore-nginx flag was provided)."
+    print_info "  Ensure your existing nginx configuration routes traffic to OpenCloud."
+    print_info ""
+    print_info "Direct service access:"
+    print_info "  Backend API: http://localhost:3030"
+    print_info "  Frontend UI: http://localhost:3000"
+else
+    print_info "IMPORTANT: Access OpenCloud via nginx (port 80):"
+    print_info "  Web Interface: http://123.123.123.123"
+    print_info "  (Replace 123.123.123.123 with your actual server IP)"
+    print_info ""
+    print_info "  If port 80 is not accessible, check your firewall/security groups"
+    print_info "  to ensure port 80 is open for incoming connections."
+    print_info ""
+    print_info "Direct service access (for debugging/development only):"
+    print_info "  Backend API: http://localhost:3030"
+    print_info "  Frontend UI: http://localhost:3000"
+    print_info "  Note: Direct frontend access (port 3000) also works remotely"
+    print_info "        thanks to Next.js API rewrites to the backend."
+fi
 print_info ""
 print_info "Service Management Commands:"
 print_info "  Backend: sudo systemctl {start|stop|restart|status} opencloud.service"
