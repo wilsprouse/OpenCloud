@@ -269,6 +269,8 @@ func TestConfigureSSLHandlerInvalidDomain(t *testing.T) {
 }
 
 // TestConfigureSSLHandlerSuccess verifies a successful SSL configuration request.
+// Note: saveLedgerState is not needed here because ConfigureSSLHandler no longer
+// writes to the service ledger — it only returns certbot commands.
 func TestConfigureSSLHandlerSuccess(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"domain": "cloud.example.com",
