@@ -1,7 +1,7 @@
 'use client'
 
 import { useTheme } from "next-themes"
-import { Moon, Sun, Globe, Copy, Check } from "lucide-react"
+import { Moon, Sun, Globe, Copy, Check, AlertCircle } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -18,6 +18,7 @@ export default function SettingsPage() {
   const [domainError, setDomainError] = useState("")
 
   // nginx instructions returned by the backend after a successful save
+  const [nginxEditCmd, setNginxEditCmd] = useState("")
   const [nginxConfigLine, setNginxConfigLine] = useState("")
   const [nginxReloadCmd, setNginxReloadCmd] = useState("")
 
@@ -44,14 +45,40 @@ export default function SettingsPage() {
   }
 
   function copyToClipboard(text: string, key: string) {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedKey(key)
-      setTimeout(() => setCopiedKey(null), 2000)
-    })
+    // navigator.clipboard requires a secure context (HTTPS / localhost).
+    // Fall back to the legacy execCommand approach on plain HTTP.
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopiedKey(key)
+        setTimeout(() => setCopiedKey(null), 2000)
+      }).catch(() => execCommandCopy(text, key))
+    } else {
+      execCommandCopy(text, key)
+    }
+  }
+
+  function execCommandCopy(text: string, key: string) {
+    const textarea = document.createElement("textarea")
+    textarea.value = text
+    textarea.style.position = "fixed"
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    try {
+      const ok = document.execCommand("copy")
+      if (ok) {
+        setCopiedKey(key)
+        setTimeout(() => setCopiedKey(null), 2000)
+      }
+    } finally {
+      document.body.removeChild(textarea)
+    }
   }
 
   async function handleDomainSave() {
     setDomainError("")
+    setNginxEditCmd("")
     setNginxConfigLine("")
     setNginxReloadCmd("")
 
@@ -76,6 +103,7 @@ export default function SettingsPage() {
 
       const data = await res.json()
       setSavedDomain(data.domain)
+      setNginxEditCmd(data.nginxEditCmd ?? "")
       setNginxConfigLine(data.nginxConfigLine ?? "")
       setNginxReloadCmd(data.nginxReloadCmd ?? "")
     } catch {
@@ -119,6 +147,15 @@ export default function SettingsPage() {
       <section className="rounded-lg border p-6">
         <h2 className="mb-4 text-lg font-semibold">Instance Management</h2>
 
+        {/* Root-permission notice */}
+        <div className="flex items-start gap-2 rounded-md border border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950/30 px-3 py-2 mb-4 text-xs text-yellow-800 dark:text-yellow-300">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <span>
+            OpenCloud does not have root permissions and cannot modify nginx configurations
+            directly. After saving, follow the instructions below to apply the change manually.
+          </span>
+        </div>
+
         <div className="space-y-4">
           <div className="flex items-start gap-3">
             <Globe className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
@@ -145,6 +182,7 @@ export default function SettingsPage() {
                   onChange={(e) => {
                     setDomain(e.target.value)
                     setDomainError("")
+                    setNginxEditCmd("")
                     setNginxConfigLine("")
                     setNginxReloadCmd("")
                   }}
@@ -164,48 +202,43 @@ export default function SettingsPage() {
               {nginxConfigLine && (
                 <div className="rounded-md border bg-muted/50 p-4 space-y-4 text-sm">
                   <p className="font-medium">
-                    Domain saved! Apply it to nginx by following these steps on your server:
+                    Domain saved! Apply it to nginx by running these commands on your server:
                   </p>
 
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      1. Open <span className="font-mono">/etc/nginx/sites-available/opencloud</span> and
-                      find the <span className="font-mono">server_name</span> line. Replace it with:
+                      1. Open the nginx config file with your preferred editor (requires <span className="font-mono">sudo</span>):
                     </p>
-                    <div className="flex items-center gap-2 rounded bg-background border px-3 py-2">
-                      <code className="flex-1 font-mono text-xs">{nginxConfigLine}</code>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0"
-                        onClick={() => copyToClipboard(nginxConfigLine, "configLine")}
-                        aria-label="Copy server_name line"
-                      >
-                        {copiedKey === "configLine"
-                          ? <Check className="h-3.5 w-3.5 text-green-500" />
-                          : <Copy className="h-3.5 w-3.5" />}
-                      </Button>
-                    </div>
+                    <CodeRow
+                      code={nginxEditCmd}
+                      copyKey="editCmd"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
                   </div>
 
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      2. Test the configuration and reload nginx:
+                      2. Find the <span className="font-mono">server_name</span> line and replace it with:
                     </p>
-                    <div className="flex items-center gap-2 rounded bg-background border px-3 py-2">
-                      <code className="flex-1 font-mono text-xs">{nginxReloadCmd}</code>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0"
-                        onClick={() => copyToClipboard(nginxReloadCmd, "reloadCmd")}
-                        aria-label="Copy reload command"
-                      >
-                        {copiedKey === "reloadCmd"
-                          ? <Check className="h-3.5 w-3.5 text-green-500" />
-                          : <Copy className="h-3.5 w-3.5" />}
-                      </Button>
-                    </div>
+                    <CodeRow
+                      code={nginxConfigLine}
+                      copyKey="configLine"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      3. Test the configuration and reload nginx:
+                    </p>
+                    <CodeRow
+                      code={nginxReloadCmd}
+                      copyKey="reloadCmd"
+                      copiedKey={copiedKey}
+                      onCopy={copyToClipboard}
+                    />
                   </div>
                 </div>
               )}
@@ -216,4 +249,31 @@ export default function SettingsPage() {
     </div>
   )
 }
+
+interface CodeRowProps {
+  code: string
+  copyKey: string
+  copiedKey: string | null
+  onCopy: (text: string, key: string) => void
+}
+
+function CodeRow({ code, copyKey, copiedKey, onCopy }: CodeRowProps) {
+  return (
+    <div className="flex items-center gap-2 rounded bg-background border px-3 py-2">
+      <code className="flex-1 font-mono text-xs break-all">{code}</code>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6 shrink-0"
+        onClick={() => onCopy(code, copyKey)}
+        aria-label="Copy to clipboard"
+      >
+        {copiedKey === copyKey
+          ? <Check className="h-3.5 w-3.5 text-green-500" />
+          : <Copy className="h-3.5 w-3.5" />}
+      </Button>
+    </div>
+  )
+}
+
 

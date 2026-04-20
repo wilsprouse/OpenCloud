@@ -126,6 +126,12 @@ func TestSetInstanceDomainHandlerSuccess(t *testing.T) {
 	if resp.Domain != "cloud.example.com" {
 		t.Errorf("response domain = %q; want %q", resp.Domain, "cloud.example.com")
 	}
+	if !strings.Contains(resp.NginxEditCmd, "sudo") {
+		t.Errorf("NginxEditCmd should contain sudo; got: %q", resp.NginxEditCmd)
+	}
+	if !strings.Contains(resp.NginxEditCmd, "/etc/nginx/sites-available/opencloud") {
+		t.Errorf("NginxEditCmd should contain the config path; got: %q", resp.NginxEditCmd)
+	}
 	if resp.NginxConfigLine != "server_name cloud.example.com;" {
 		t.Errorf("NginxConfigLine = %q; want %q", resp.NginxConfigLine, "server_name cloud.example.com;")
 	}

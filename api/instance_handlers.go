@@ -56,6 +56,8 @@ func buildNginxInstructions(domain string) string {
 type SetInstanceDomainResponse struct {
 	// Domain is the value that was saved.
 	Domain string `json:"domain"`
+	// NginxEditCmd is the command to open the nginx config for editing (requires sudo).
+	NginxEditCmd string `json:"nginxEditCmd"`
 	// NginxConfigLine is the exact server_name directive to place in the nginx config.
 	NginxConfigLine string `json:"nginxConfigLine"`
 	// NginxReloadCmd is the command the operator should run to apply and reload nginx.
@@ -126,6 +128,7 @@ func SetInstanceDomainHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(SetInstanceDomainResponse{
 		Domain:          req.Domain,
+		NginxEditCmd:    "sudo nano /etc/nginx/sites-available/opencloud",
 		NginxConfigLine: fmt.Sprintf("server_name %s;", req.Domain),
 		NginxReloadCmd:  "sudo nginx -t && sudo systemctl reload nginx",
 		Instructions:    buildNginxInstructions(req.Domain),
