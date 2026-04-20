@@ -193,6 +193,10 @@ func main() {
 	mux.HandleFunc("/pull-and-run", computeapi.PullAndRun)
 	mux.HandleFunc("/pull-and-run-stream", computeapi.PullAndRunStream)
 	mux.HandleFunc("/update-container", computeapi.UpdateContainer)
+	mux.HandleFunc("/list-gateway-routes", api.ListGatewayRoutes)
+	mux.HandleFunc("/create-gateway-route", api.CreateGatewayRoute)
+	mux.HandleFunc("/update-gateway-route/", api.UpdateGatewayRoute)
+	mux.HandleFunc("/delete-gateway-route/", api.DeleteGatewayRoute)
 	mux.HandleFunc("/", computeapi.GetFunction)
 
 	// Wrap all routes with CORS middleware

@@ -75,6 +75,24 @@ type BucketEntry struct {
 	VolumeName string `json:"volumeName,omitempty"`
 }
 
+// GatewayRouteEntry stores the configuration for a single gateway routing rule.
+// When the Gateway service is enabled, each route instructs the proxy (nginx or
+// the Go backend) to forward requests that match PathPrefix to the configured
+// target URL.
+type GatewayRouteEntry struct {
+	// ID is a unique identifier (random hex string) for this route.
+	ID string `json:"id"`
+	// PathPrefix is the URL path prefix that triggers this route (e.g. "/my-app/").
+	PathPrefix string `json:"pathPrefix"`
+	// TargetURL is the upstream URL to proxy matching requests to
+	// (e.g. "http://localhost:8080").
+	TargetURL string `json:"targetURL"`
+	// Description is an optional human-readable note about this route.
+	Description string `json:"description,omitempty"`
+	// CreatedAt records when the route was created (RFC3339).
+	CreatedAt string `json:"createdAt"`
+}
+
 // ServiceStatus represents the status of a single service
 type ServiceStatus struct {
 	Enabled         bool                          `json:"enabled"`
@@ -82,6 +100,7 @@ type ServiceStatus struct {
 	Pipelines       map[string]PipelineEntry      `json:"pipelines,omitempty"`
 	ContainerImages map[string]ContainerImageEntry `json:"containerImages,omitempty"`
 	Buckets         map[string]BucketEntry        `json:"buckets,omitempty"`
+	GatewayRoutes   map[string]GatewayRouteEntry  `json:"gatewayRoutes,omitempty"`
 }
 
 // ServiceLedger represents the complete service ledger
@@ -179,6 +198,9 @@ func InitializeServiceLedger() error {
 			Enabled: false,
 		},
 		"pipelines": ServiceStatus{
+			Enabled: false,
+		},
+		"gateway": ServiceStatus{
 			Enabled: false,
 		},
 	}
@@ -1231,4 +1253,84 @@ func RenameBucketEntry(currentName, newName string) error {
 	ledger["blob_storage"] = serviceStatus
 
 	return WriteServiceLedger(ledger)
+}
+
+// AddGatewayRoute adds or replaces a gateway route entry in the service ledger.
+func AddGatewayRoute(route GatewayRouteEntry) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["gateway"]
+	if !exists {
+		serviceStatus = ServiceStatus{Enabled: true, GatewayRoutes: make(map[string]GatewayRouteEntry)}
+	} else if serviceStatus.GatewayRoutes == nil {
+		serviceStatus.GatewayRoutes = make(map[string]GatewayRouteEntry)
+	}
+
+	serviceStatus.GatewayRoutes[route.ID] = route
+	ledger["gateway"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// DeleteGatewayRoute removes a gateway route entry from the service ledger.
+func DeleteGatewayRoute(routeID string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["gateway"]
+	if !exists || serviceStatus.GatewayRoutes == nil {
+		return nil // Nothing to delete
+	}
+
+	delete(serviceStatus.GatewayRoutes, routeID)
+	ledger["gateway"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// GetAllGatewayRoutes returns all gateway route entries from the service ledger.
+func GetAllGatewayRoutes() (map[string]GatewayRouteEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["gateway"]
+	if !exists || serviceStatus.GatewayRoutes == nil {
+		return make(map[string]GatewayRouteEntry), nil
+	}
+
+	return serviceStatus.GatewayRoutes, nil
+}
+
+// GetGatewayRoute retrieves a single gateway route entry from the service ledger.
+// Returns nil, nil when the route does not exist.
+func GetGatewayRoute(routeID string) (*GatewayRouteEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["gateway"]
+	if !exists || serviceStatus.GatewayRoutes == nil {
+		return nil, nil
+	}
+
+	entry, exists := serviceStatus.GatewayRoutes[routeID]
+	if !exists {
+		return nil, nil
+	}
+
+	return &entry, nil
 }
