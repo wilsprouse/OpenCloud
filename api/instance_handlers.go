@@ -128,7 +128,7 @@ func SetInstanceDomainHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(SetInstanceDomainResponse{
 		Domain:          req.Domain,
-		NginxEditCmd:    "sudo nano /etc/nginx/sites-available/opencloud",
+		NginxEditCmd:    "sudo vim /etc/nginx/sites-available/opencloud",
 		NginxConfigLine: fmt.Sprintf("server_name %s;", req.Domain),
 		NginxReloadCmd:  "sudo nginx -t && sudo systemctl reload nginx",
 		Instructions:    buildNginxInstructions(req.Domain),
