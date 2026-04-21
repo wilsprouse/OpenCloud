@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
@@ -311,22 +312,10 @@ func TestApplyGatewayNginxConfig_generatesFile(t *testing.T) {
 	}
 
 	content := string(data)
-	if !containsString(content, "/svc") {
+	if !strings.Contains(content, "/svc") {
 		t.Errorf("config missing expected prefix /svc; got:\n%s", content)
 	}
-	if !containsString(content, "http://localhost:9000") {
+	if !strings.Contains(content, "http://localhost:9000") {
 		t.Errorf("config missing expected target URL; got:\n%s", content)
 	}
-}
-
-// containsString is a small helper used by gateway tests.
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && (func() bool {
-		for i := 0; i <= len(s)-len(substr); i++ {
-			if s[i:i+len(substr)] == substr {
-				return true
-			}
-		}
-		return false
-	})())
 }

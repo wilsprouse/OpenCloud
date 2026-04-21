@@ -187,6 +187,9 @@ func InitializeServiceLedger() error {
 
 	// Create initial ledger with default services
 	initialLedger := ServiceLedger{
+		"blob_storage": ServiceStatus{
+			Enabled: false,
+		},
 		"container_registry": ServiceStatus{
 			Enabled: false,
 		},
@@ -196,17 +199,14 @@ func InitializeServiceLedger() error {
 		"Functions": ServiceStatus{
 			Enabled: false,
 		},
-		"blob_storage": ServiceStatus{
-			Enabled: false,
-		},
-		"pipelines": ServiceStatus{
-			Enabled: false,
-		},
 		"gateway": ServiceStatus{
 			Enabled: false,
 		},
 		"instance": ServiceStatus{
 			Enabled: true,
+		},
+		"pipelines": ServiceStatus{
+			Enabled: false,
 		},
 	}
 
