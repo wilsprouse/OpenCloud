@@ -75,6 +75,21 @@ type BucketEntry struct {
 	VolumeName string `json:"volumeName,omitempty"`
 }
 
+// GatewayRouteEntry stores a single routing rule for the Gateway service.
+// When a request arrives at PathPrefix, it is proxied to TargetURL.
+type GatewayRouteEntry struct {
+	// ID is a unique identifier for the route (hex random string).
+	ID string `json:"id"`
+	// PathPrefix is the URL path prefix that triggers this route (e.g. "/app").
+	PathPrefix string `json:"pathPrefix"`
+	// TargetURL is the upstream address to proxy matching requests to (e.g. "http://localhost:8080").
+	TargetURL string `json:"targetURL"`
+	// Description is an optional human-readable note for the route.
+	Description string `json:"description,omitempty"`
+	// CreatedAt is the RFC3339 timestamp when the route was created.
+	CreatedAt string `json:"createdAt"`
+}
+
 // ServiceStatus represents the status of a single service
 type ServiceStatus struct {
 	Enabled         bool                          `json:"enabled"`
@@ -82,6 +97,8 @@ type ServiceStatus struct {
 	Pipelines       map[string]PipelineEntry      `json:"pipelines,omitempty"`
 	ContainerImages map[string]ContainerImageEntry `json:"containerImages,omitempty"`
 	Buckets         map[string]BucketEntry        `json:"buckets,omitempty"`
+	// GatewayRoutes stores the routing rules for the Gateway service.
+	GatewayRoutes map[string]GatewayRouteEntry `json:"gatewayRoutes,omitempty"`
 	// Domain stores the configured domain for the "instance" service ledger entry.
 	Domain string `json:"domain,omitempty"`
 	// SSLEmail stores the email address used for Let's Encrypt/certbot SSL configuration.
@@ -183,6 +200,9 @@ func InitializeServiceLedger() error {
 			Enabled: false,
 		},
 		"pipelines": ServiceStatus{
+			Enabled: false,
+		},
+		"gateway": ServiceStatus{
 			Enabled: false,
 		},
 		"instance": ServiceStatus{
@@ -1312,4 +1332,63 @@ func SetInstanceSSLEmail(email string) error {
 	ledger["instance"] = status
 
 	return WriteServiceLedger(ledger)
+}
+
+// UpsertGatewayRouteEntry creates or updates a gateway route entry in the service ledger.
+func UpsertGatewayRouteEntry(route GatewayRouteEntry) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["gateway"]
+	if !exists {
+		serviceStatus = ServiceStatus{Enabled: false, GatewayRoutes: make(map[string]GatewayRouteEntry)}
+	} else if serviceStatus.GatewayRoutes == nil {
+		serviceStatus.GatewayRoutes = make(map[string]GatewayRouteEntry)
+	}
+
+	serviceStatus.GatewayRoutes[route.ID] = route
+	ledger["gateway"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// DeleteGatewayRouteEntry removes a gateway route entry from the service ledger.
+func DeleteGatewayRouteEntry(routeID string) error {
+	ledgerMutex.Lock()
+	defer ledgerMutex.Unlock()
+
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return err
+	}
+
+	serviceStatus, exists := ledger["gateway"]
+	if !exists || serviceStatus.GatewayRoutes == nil {
+		return nil // Nothing to delete
+	}
+
+	delete(serviceStatus.GatewayRoutes, routeID)
+	ledger["gateway"] = serviceStatus
+
+	return WriteServiceLedger(ledger)
+}
+
+// GetAllGatewayRouteEntries retrieves all gateway route entries from the service ledger.
+func GetAllGatewayRouteEntries() (map[string]GatewayRouteEntry, error) {
+	ledger, err := ReadServiceLedger()
+	if err != nil {
+		return nil, err
+	}
+
+	serviceStatus, exists := ledger["gateway"]
+	if !exists || serviceStatus.GatewayRoutes == nil {
+		return make(map[string]GatewayRouteEntry), nil
+	}
+
+	return serviceStatus.GatewayRoutes, nil
 }
