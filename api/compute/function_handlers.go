@@ -2,6 +2,8 @@ package compute
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,9 +30,10 @@ type FunctionItem struct {
 }
 
 type Trigger struct {
-	Type     string `json:"type"`     // "cron" for now
-	Schedule string `json:"schedule"` // CRON expression like "0 0 * * *"
-	Enabled  bool   `json:"enabled"`
+	Type              string `json:"type"`                        // "cron" or "gateway"
+	Schedule          string `json:"schedule,omitempty"`          // CRON expression like "0 0 * * *"
+	GatewayPathPrefix string `json:"gatewayPathPrefix,omitempty"` // Gateway URL path prefix
+	Enabled           bool   `json:"enabled"`
 }
 
 type UpdateFunctionRequest struct {
@@ -101,13 +104,21 @@ func ListFunctions(w http.ResponseWriter, r *http.Request) {
 		// Check if this function has metadata in the service ledger
 		if ledgerEntry, exists := ledgerFunctions[file.Name()]; exists {
 			fn.Invocations = ledgerEntry.Invocations
-			// If the function has a trigger and schedule in the ledger, populate it.
-			// The presence of trigger and schedule indicates the trigger is enabled.
-			if ledgerEntry.Trigger != "" && ledgerEntry.Schedule != "" {
+			// Populate trigger based on the stored trigger type.
+			switch ledgerEntry.Trigger {
+			case "cron":
+				if ledgerEntry.Schedule != "" {
+					fn.Trigger = &Trigger{
+						Type:     "cron",
+						Schedule: ledgerEntry.Schedule,
+						Enabled:  true,
+					}
+				}
+			case "gateway":
 				fn.Trigger = &Trigger{
-					Type:     ledgerEntry.Trigger,
-					Schedule: ledgerEntry.Schedule,
-					Enabled:  true,
+					Type:              "gateway",
+					GatewayPathPrefix: ledgerEntry.GatewayPathPrefix,
+					Enabled:           true,
 				}
 			}
 		}
@@ -267,6 +278,13 @@ func DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Remove gateway route if the function has a gateway trigger
+	if functionEntry != nil && functionEntry.Trigger == "gateway" && functionEntry.GatewayRouteID != "" {
+		if err := service_ledger.DeleteGatewayRouteEntry(functionEntry.GatewayRouteID); err != nil {
+			fmt.Printf("Warning: Failed to remove gateway route: %v\n", err)
+		}
+	}
+
 	// Remove log files
 	logsDir := filepath.Join(home, ".opencloud", "logs")
 
@@ -336,12 +354,20 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 	var invocations int
 	if ledgerEntry, err := service_ledger.GetFunctionEntry(fnName); err == nil && ledgerEntry != nil {
 		invocations = ledgerEntry.Invocations
-		// The presence of trigger and schedule in the ledger indicates the trigger is enabled
-		if ledgerEntry.Trigger != "" && ledgerEntry.Schedule != "" {
+		switch ledgerEntry.Trigger {
+		case "cron":
+			if ledgerEntry.Schedule != "" {
+				trigger = &Trigger{
+					Type:     "cron",
+					Schedule: ledgerEntry.Schedule,
+					Enabled:  true,
+				}
+			}
+		case "gateway":
 			trigger = &Trigger{
-				Type:     ledgerEntry.Trigger,
-				Schedule: ledgerEntry.Schedule,
-				Enabled:  true,
+				Type:              "gateway",
+				GatewayPathPrefix: ledgerEntry.GatewayPathPrefix,
+				Enabled:           true,
 			}
 		}
 	}
@@ -359,6 +385,15 @@ func GetFunction(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// generateRouteID produces a new 8-byte (16 hex char) random ID for a gateway route entry.
+func generateRouteID() (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate route ID: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func addCron(filePath string, schedule string) error {
@@ -641,7 +676,7 @@ func CreateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update service ledger with function entry
-	if err := service_ledger.UpdateFunctionEntry(functionFileName, req.Runtime, "", "", req.Code); err != nil {
+	if err := service_ledger.UpdateFunctionEntry(functionFileName, req.Runtime, "", "", "", "", req.Code); err != nil {
 		// Log the error but don't fail the request since function file was already created
 		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
 	}
@@ -729,14 +764,31 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get old cron trigger status before making changes
+	// Get old trigger status before making changes
 	oldFunctionEntry, _ := service_ledger.GetFunctionEntry(id)
 	hadCronTrigger := oldFunctionEntry != nil && oldFunctionEntry.Trigger == "cron"
+	hadGatewayTrigger := oldFunctionEntry != nil && oldFunctionEntry.Trigger == "gateway"
 
 	// Remove old cron job if it existed
 	if hadCronTrigger {
 		if err := removeCron(fnPath); err != nil {
 			fmt.Printf("Warning: Failed to remove old cron job: %v\n", err)
+		}
+	}
+
+	// Remove old gateway route if it existed (and we're changing trigger type or removing trigger)
+	newTriggerType := ""
+	if req.Trigger != nil && req.Trigger.Enabled {
+		newTriggerType = req.Trigger.Type
+	}
+	// The old gateway route must be removed when: the trigger is no longer gateway, OR the
+	// path prefix has changed (which means we'll create a fresh route below).
+	gatewayTriggerRemoved := hadGatewayTrigger && newTriggerType != "gateway"
+	gatewayPathChanged := hadGatewayTrigger && newTriggerType == "gateway" &&
+		req.Trigger != nil && req.Trigger.GatewayPathPrefix != oldFunctionEntry.GatewayPathPrefix
+	if (gatewayTriggerRemoved || gatewayPathChanged) && oldFunctionEntry.GatewayRouteID != "" {
+		if err := service_ledger.DeleteGatewayRouteEntry(oldFunctionEntry.GatewayRouteID); err != nil {
+			fmt.Printf("Warning: Failed to remove old gateway route: %v\n", err)
 		}
 	}
 
@@ -779,18 +831,52 @@ func UpdateFunction(w http.ResponseWriter, r *http.Request) {
 	// Update the service ledger with function metadata
 	trigger := ""
 	schedule := ""
+	gatewayPathPrefix := ""
+	gatewayRouteID := ""
 	if req.Trigger != nil && req.Trigger.Enabled {
 		trigger = req.Trigger.Type
-		schedule = req.Trigger.Schedule
-		// Add cron job to system crontab with the new file path
-		if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
-			http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
-			return
+		switch req.Trigger.Type {
+		case "cron":
+			schedule = req.Trigger.Schedule
+			// Add cron job to system crontab with the new file path
+			if err := addCron(fnPath, req.Trigger.Schedule); err != nil {
+				http.Error(w, "Failed to save cron trigger metadata", http.StatusInternalServerError)
+				return
+			}
+		case "gateway":
+			gatewayPathPrefix = req.Trigger.GatewayPathPrefix
+			if gatewayPathPrefix == "" {
+				http.Error(w, "gatewayPathPrefix is required for gateway trigger", http.StatusBadRequest)
+				return
+			}
+			// Reuse existing route ID if the path hasn't changed, otherwise create a new one.
+			if hadGatewayTrigger && oldFunctionEntry != nil && oldFunctionEntry.GatewayPathPrefix == gatewayPathPrefix && oldFunctionEntry.GatewayRouteID != "" {
+				gatewayRouteID = oldFunctionEntry.GatewayRouteID
+			} else {
+				newID, err := generateRouteID()
+				if err != nil {
+					http.Error(w, "Failed to generate gateway route ID", http.StatusInternalServerError)
+					return
+				}
+				gatewayRouteID = newID
+			}
+			// Create or update the gateway route pointing to this function's invoke endpoint.
+			route := service_ledger.GatewayRouteEntry{
+				ID:          gatewayRouteID,
+				PathPrefix:  gatewayPathPrefix,
+				TargetURL:   fmt.Sprintf("http://localhost:3030/invoke-function?name=%s", id),
+				Description: fmt.Sprintf("Gateway trigger for function %s", id),
+				CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+			}
+			if err := service_ledger.UpsertGatewayRouteEntry(route); err != nil {
+				http.Error(w, "Failed to save gateway route: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 
 	// Update service ledger with function entry using the new filename
-	if err := service_ledger.UpdateFunctionEntry(id, req.Runtime, trigger, schedule, req.Code); err != nil {
+	if err := service_ledger.UpdateFunctionEntry(id, req.Runtime, trigger, schedule, gatewayPathPrefix, gatewayRouteID, req.Code); err != nil {
 		// Log the error but don't fail the request since function code was already updated
 		fmt.Printf("Warning: Failed to update service ledger: %v\n", err)
 	}

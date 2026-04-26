@@ -691,12 +691,10 @@ func TestListFunctionsIncludesInvocations(t *testing.T) {
 
 	// Add an entry to the service ledger with a known invocation count
 	// using direct ledger manipulation to set a specific count
-	if err := service_ledger.UpdateFunctionEntry(fnName, "python", "", "", "print('hello')"); err != nil {
+	if err := service_ledger.UpdateFunctionEntry(fnName, "python", "", "", "", "", "print('hello')"); err != nil {
 		t.Fatalf("Failed to create function entry in ledger: %v", err)
 	}
 	defer service_ledger.DeleteFunctionEntry(fnName)
-
-	// Increment invocations twice so we have a non-zero count
 	for i := 0; i < 2; i++ {
 		if err := service_ledger.IncrementFunctionInvocations(fnName); err != nil {
 			t.Fatalf("Failed to increment invocations: %v", err)
@@ -756,7 +754,7 @@ func TestGetFunctionIncludesInvocations(t *testing.T) {
 	}
 
 	// Add an entry to the service ledger
-	if err := service_ledger.UpdateFunctionEntry(fnName, "python", "", "", "print('hello')"); err != nil {
+	if err := service_ledger.UpdateFunctionEntry(fnName, "python", "", "", "", "", "print('hello')"); err != nil {
 		t.Fatalf("Failed to create function entry in ledger: %v", err)
 	}
 	defer service_ledger.DeleteFunctionEntry(fnName)

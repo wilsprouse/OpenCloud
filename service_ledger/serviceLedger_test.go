@@ -219,7 +219,7 @@ func TestSyncFunctionsContentUpdate(t *testing.T) {
 	}
 
 	// Add function to ledger with trigger and schedule
-	if err := UpdateFunctionEntry(fnName, "python", "cron", "0 0 * * *", fnContent); err != nil {
+	if err := UpdateFunctionEntry(fnName, "python", "cron", "0 0 * * *", "", "", fnContent); err != nil {
 		t.Fatalf("Failed to create function entry: %v", err)
 	}
 
@@ -1516,7 +1516,7 @@ func TestIncrementFunctionInvocations(t *testing.T) {
 	fnName := "test_invocation_counter.py"
 
 	// Create a function entry in the ledger and clean it up when done
-	if err := UpdateFunctionEntry(fnName, "python", "", "", "print('hello')"); err != nil {
+	if err := UpdateFunctionEntry(fnName, "python", "", "", "", "", "print('hello')"); err != nil {
 		t.Fatalf("Failed to create function entry: %v", err)
 	}
 	defer DeleteFunctionEntry(fnName)
@@ -1574,7 +1574,7 @@ func TestUpdateFunctionEntryPreservesInvocations(t *testing.T) {
 	fnName := "test_preserve_invocations.py"
 
 	// Create initial entry
-	if err := UpdateFunctionEntry(fnName, "python", "", "", "print('v1')"); err != nil {
+	if err := UpdateFunctionEntry(fnName, "python", "", "", "", "", "print('v1')"); err != nil {
 		t.Fatalf("Failed to create function entry: %v", err)
 	}
 	defer DeleteFunctionEntry(fnName)
@@ -1587,7 +1587,7 @@ func TestUpdateFunctionEntryPreservesInvocations(t *testing.T) {
 	}
 
 	// Update the function entry (simulates a code update)
-	if err := UpdateFunctionEntry(fnName, "python", "cron", "0 0 * * *", "print('v2')"); err != nil {
+	if err := UpdateFunctionEntry(fnName, "python", "cron", "0 0 * * *", "", "", "print('v2')"); err != nil {
 		t.Fatalf("Failed to update function entry: %v", err)
 	}
 

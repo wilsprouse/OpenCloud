@@ -30,12 +30,14 @@ type FunctionLog struct {
 
 // FunctionEntry represents an individual function's metadata in the ledger
 type FunctionEntry struct {
-	Runtime     string        `json:"runtime"`
-	Trigger     string        `json:"trigger,omitempty"`
-	Schedule    string        `json:"schedule,omitempty"`
-	Content     string        `json:"content"`
-	Logs        []FunctionLog `json:"logs,omitempty"`
-	Invocations int           `json:"invocations"`
+	Runtime          string        `json:"runtime"`
+	Trigger          string        `json:"trigger,omitempty"`
+	Schedule         string        `json:"schedule,omitempty"`
+	GatewayPathPrefix string       `json:"gatewayPathPrefix,omitempty"`
+	GatewayRouteID   string        `json:"gatewayRouteId,omitempty"`
+	Content          string        `json:"content"`
+	Logs             []FunctionLog `json:"logs,omitempty"`
+	Invocations      int           `json:"invocations"`
 }
 
 // PipelineEntry represents an individual pipeline's metadata in the ledger
@@ -555,8 +557,10 @@ func EnableServiceStreamHandler(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 }
 
-// UpdateFunctionEntry updates a specific function entry in the Functions service ledger
-func UpdateFunctionEntry(functionName, runtime, trigger, schedule, content string) error {
+// UpdateFunctionEntry updates a specific function entry in the Functions service ledger.
+// For cron triggers, set trigger="cron", schedule=<cron expression>, gatewayPathPrefix="", gatewayRouteID="".
+// For gateway triggers, set trigger="gateway", schedule="", gatewayPathPrefix=<path>, gatewayRouteID=<id>.
+func UpdateFunctionEntry(functionName, runtime, trigger, schedule, gatewayPathPrefix, gatewayRouteID, content string) error {
 	ledgerMutex.Lock()
 	defer ledgerMutex.Unlock()
 
@@ -584,12 +588,14 @@ func UpdateFunctionEntry(functionName, runtime, trigger, schedule, content strin
 	}
 
 	status.Functions[functionName] = FunctionEntry{
-		Runtime:     runtime,
-		Trigger:     trigger,
-		Schedule:    schedule,
-		Content:     content,
-		Logs:        existingLogs,        // Preserve existing logs
-		Invocations: existingInvocations, // Preserve existing invocation count
+		Runtime:           runtime,
+		Trigger:           trigger,
+		Schedule:          schedule,
+		GatewayPathPrefix: gatewayPathPrefix,
+		GatewayRouteID:    gatewayRouteID,
+		Content:           content,
+		Logs:              existingLogs,        // Preserve existing logs
+		Invocations:       existingInvocations, // Preserve existing invocation count
 	}
 
 	ledger["Functions"] = status

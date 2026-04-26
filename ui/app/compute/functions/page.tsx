@@ -35,6 +35,7 @@ import {
   Plus,
   Zap,
   Clock,
+  Globe,
   Activity,
   Play,
   Edit,
@@ -56,6 +57,7 @@ type FunctionItem = {
   trigger?: {
     type: string
     schedule: string
+    gatewayPathPrefix?: string
     enabled: boolean
   }
 }
@@ -573,10 +575,17 @@ export default function FunctionsPage() {
                       {fn.trigger && fn.trigger.enabled && (
                         <>
                           <span>•</span>
-                          <span className="flex items-center text-blue-600">
-                            <Clock className="h-3 w-3 mr-1" />
-                            CRON: {fn.trigger.schedule}
-                          </span>
+                          {fn.trigger.type === "gateway" ? (
+                            <span className="flex items-center text-green-600">
+                              <Globe className="h-3 w-3 mr-1" />
+                              GATEWAY: {fn.trigger.gatewayPathPrefix}
+                            </span>
+                          ) : (
+                            <span className="flex items-center text-blue-600">
+                              <Clock className="h-3 w-3 mr-1" />
+                              CRON: {fn.trigger.schedule}
+                            </span>
+                          )}
                         </>
                       )}
                       <span>•</span>
