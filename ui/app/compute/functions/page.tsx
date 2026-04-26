@@ -237,7 +237,7 @@ export default function FunctionsPage() {
       if (res.status === 200 || res.status === 201) {
         setIsFunctionDialogOpen(false)
         setFunctionName("")
-        setFunctionRuntime("nodejs20.x")
+        setFunctionRuntime("python3")
         setFunctionCode(DEFAULT_FUNCTION_CODE)
         resetFunctionNameWarning()
         fetchFunctions()
