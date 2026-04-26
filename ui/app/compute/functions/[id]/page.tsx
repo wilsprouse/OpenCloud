@@ -18,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import client from "@/app/utility/post"
@@ -32,6 +31,7 @@ import {
   Zap,
   Code,
   Clock,
+  Globe,
   Activity,
   Calendar,
   Settings,
@@ -60,6 +60,7 @@ type FunctionDetail = {
   trigger?: {
     type: string
     schedule: string
+    gatewayPathPrefix?: string
     enabled: boolean
   }
 }
@@ -81,7 +82,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   const [runtime, setRuntime] = useState("python3")
   const [code, setCode] = useState("")
   const [memorySize, setMemorySize] = useState("128")
-  const [timeout, setTimeout] = useState("3")
+  const [timeoutValue, setTimeoutValue] = useState("3")
   const isFunctionNameValid = isValidFunctionName(name)
   const {
     handleBeforeInput: handleNameBeforeInput,
@@ -91,8 +92,10 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
   } = useFunctionNameWarning(setName)
   
   // Trigger state
-  const [triggerEnabled, setTriggerEnabled] = useState(false)
+  // triggerType: "none" | "crontab" | "gateway"
+  const [triggerType, setTriggerType] = useState<"none" | "crontab" | "gateway">("none")
   const [triggerSchedule, setTriggerSchedule] = useState("0 0 * * *")
+  const [gatewayPathPrefix, setGatewayPathPrefix] = useState("")
 
   // Fetch function details
   const fetchFunctionDetails = async () => {
@@ -116,15 +119,23 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       setRuntime(data.runtime)
       setCode(data.code || DEFAULT_FUNCTION_CODE)
       setMemorySize(data.memorySize?.toString() || "128")
-      setTimeout(data.timeout?.toString() || "3")
+      setTimeoutValue(data.timeout?.toString() || "3")
       
       // Populate trigger fields
-      if (data.trigger) {
-        setTriggerEnabled(data.trigger.enabled)
-        setTriggerSchedule(data.trigger.schedule || "0 0 * * *")
+      if (data.trigger && data.trigger.enabled) {
+        if (data.trigger.type === "cron") {
+          setTriggerType("crontab")
+          setTriggerSchedule(data.trigger.schedule || "0 0 * * *")
+        } else if (data.trigger.type === "gateway") {
+          setTriggerType("gateway")
+          setGatewayPathPrefix(data.trigger.gatewayPathPrefix || "")
+        } else {
+          setTriggerType("none")
+        }
       } else {
-        setTriggerEnabled(false)
+        setTriggerType("none")
         setTriggerSchedule("0 0 * * *")
+        setGatewayPathPrefix("")
       }
     } catch (err) {
       console.error("Failed to fetch function details:", err)
@@ -186,6 +197,14 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       
       // Add the correct extension
       const fullName = extension ? baseName + extension : baseName
+
+      // Build trigger payload based on selected type
+      let triggerPayload: { type: string; schedule?: string; gatewayPathPrefix?: string; enabled: boolean } | null = null
+      if (triggerType === "crontab") {
+        triggerPayload = { type: "cron", schedule: triggerSchedule, enabled: true }
+      } else if (triggerType === "gateway") {
+        triggerPayload = { type: "gateway", gatewayPathPrefix, enabled: true }
+      }
       
       console.log(`Updating function: ${fullName}`)
       const minDelay = new Promise<void>(resolve => setTimeout(resolve, 500))
@@ -195,12 +214,8 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
           runtime,
           code,
           memorySize: parseInt(memorySize),
-          timeout: parseInt(timeout),
-          trigger: triggerEnabled ? {
-            type: "cron",
-            schedule: triggerSchedule,
-            enabled: true
-          } : null
+          timeout: parseInt(timeoutValue),
+          trigger: triggerPayload
         }),
         minDelay,
       ])
@@ -381,23 +396,40 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
             </div>
 
             <div className="pt-4 border-t space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label htmlFor="trigger-enabled" className="text-base">
-                    CRON Trigger
-                  </Label>
-                  <div className="text-sm text-muted-foreground">
-                    Schedule automatic function execution
-                  </div>
-                </div>
-                <Switch
-                  id="trigger-enabled"
-                  checked={triggerEnabled}
-                  onCheckedChange={setTriggerEnabled}
-                />
+              <div className="space-y-2">
+                <Label htmlFor="trigger-type">Trigger</Label>
+                <Select
+                  value={triggerType}
+                  onValueChange={(v) => {
+                    const next = v as "none" | "crontab" | "gateway"
+                    setTriggerType(next)
+                    if (next === "gateway") {
+                      // Derive a clean path prefix from the function name (strip extension).
+                      const baseName = functionId.replace(/\.[^.]+$/, "")
+                      const pathPrefix = encodeURIComponent(`/${baseName}`)
+                      const targetURL = encodeURIComponent(
+                        `http://localhost:3030/invoke-function?name=${encodeURIComponent(functionId)}`
+                      )
+                      const description = encodeURIComponent(`Route to function: ${functionId}`)
+                      window.open(
+                        `/ci-cd/gateway?create=true&pathPrefix=${pathPrefix}&targetURL=${targetURL}&description=${description}`,
+                        "_blank"
+                      )
+                    }
+                  }}
+                >
+                  <SelectTrigger id="trigger-type">
+                    <SelectValue placeholder="Select trigger type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="crontab">Crontab</SelectItem>
+                    <SelectItem value="gateway">Gateway</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              
-              {triggerEnabled && (
+
+              {triggerType === "crontab" && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5">
                     <Label htmlFor="trigger-schedule">CRON Schedule</Label>
@@ -428,6 +460,36 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                   </p>
                 </div>
               )}
+
+              {triggerType === "gateway" && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="gateway-path-prefix">Gateway Path Prefix</Label>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p className="text-xs">
+                            The URL path prefix that will route HTTP requests to this function via the Gateway. Must start with /.
+                          </p>
+                          <p className="text-xs mt-1">Example: <span className="font-mono">/my-function</span></p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <Input
+                    id="gateway-path-prefix"
+                    value={gatewayPathPrefix}
+                    onChange={(e) => setGatewayPathPrefix(e.target.value)}
+                    placeholder="/my-function"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    HTTP requests to this path will invoke the function.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="pt-4">
@@ -435,10 +497,6 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                 <Code className="h-4 w-4" />
                 <span>Runtime: {runtime}</span>
               </div>
-              {/*<div className="flex items-center space-x-2 text-sm text-muted-foreground mt-2">
-                <Clock className="h-4 w-4" />
-                <span>Timeout: {timeout}s</span>
-              </div>*/}
             </div>
           </CardContent>
         </Card>
