@@ -164,6 +164,7 @@ func main() {
 	mux.HandleFunc("/invoke-function", computeapi.InvokeFunction)
 	mux.HandleFunc("/create-function", computeapi.CreateFunction)
 	mux.HandleFunc("/delete-function", computeapi.DeleteFunction)
+	mux.HandleFunc("/get-function/", computeapi.GetFunction)
 	mux.HandleFunc("/update-function/", computeapi.UpdateFunction)
 	mux.HandleFunc("/get-function-logs/", computeapi.GetFunctionLogs)
 	mux.HandleFunc("/get-service-status", service_ledger.GetServiceStatusHandler)
