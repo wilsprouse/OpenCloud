@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import client from "@/app/utility/post"
-import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
+import { DEFAULT_FUNCTION_CODE, FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
 import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
 import { 
   RefreshCw, 
@@ -90,7 +90,7 @@ export default function FunctionsPage() {
   // Function form state
   const [functionName, setFunctionName] = useState<string>("")
   const [functionRuntime, setFunctionRuntime] = useState<string>("python3")
-  const [functionCode, setFunctionCode] = useState<string>("")
+  const [functionCode, setFunctionCode] = useState<string>(DEFAULT_FUNCTION_CODE)
   const isFunctionNameValid = isValidFunctionName(functionName)
   const {
     handleBeforeInput: handleFunctionNameBeforeInput,
@@ -237,8 +237,8 @@ export default function FunctionsPage() {
       if (res.status === 200 || res.status === 201) {
         setIsFunctionDialogOpen(false)
         setFunctionName("")
-        setFunctionRuntime("nodejs20.x")
-        setFunctionCode("")
+        setFunctionRuntime("python3")
+        setFunctionCode(DEFAULT_FUNCTION_CODE)
         resetFunctionNameWarning()
         fetchFunctions()
       }

@@ -22,7 +22,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import client from "@/app/utility/post"
-import { FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
+import { DEFAULT_FUNCTION_CODE, FUNCTION_NAME_MAX_LENGTH, isValidFunctionName } from "@/lib/function-name"
 import { useFunctionNameWarning } from "@/lib/use-function-name-warning"
 import { 
   ArrowLeft,
@@ -114,7 +114,7 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
       setName(nameWithoutExt)
       resetNameWarning()
       setRuntime(data.runtime)
-      setCode(data.code || "")
+      setCode(data.code || DEFAULT_FUNCTION_CODE)
       setMemorySize(data.memorySize?.toString() || "128")
       setTimeout(data.timeout?.toString() || "3")
       
