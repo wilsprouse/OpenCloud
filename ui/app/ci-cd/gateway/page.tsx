@@ -29,6 +29,9 @@ import {
   ArrowRight,
   Power,
   Network,
+  Container,
+  Zap,
+  MousePointerClick,
 } from "lucide-react"
 
 // GatewayRoute mirrors the backend GatewayRouteEntry type.
@@ -40,13 +43,55 @@ type GatewayRoute = {
   createdAt: string
 }
 
+// ContainerItem from the /get-containers endpoint.
+type ContainerItem = {
+  Id: string
+  Names: string[]
+  Image: string
+  State: string
+  Status: string
+}
+
+// ContainerDetail from the /get-container?id=... endpoint (includes ports).
+type ContainerDetail = {
+  id: string
+  name: string
+  image: string
+  state: string
+  ports: string[]
+}
+
+// FunctionItem from the /list-functions endpoint.
+type FunctionItem = {
+  id: string
+  name: string
+  runtime: string
+  status: string
+}
+
+/** Parse the host port from a port-mapping string like "8080:80/tcp" or "0.0.0.0:8080:80/tcp". */
+function extractHostPort(portStr: string): string | null {
+  // Strip protocol suffix (e.g. /tcp, /udp)
+  const clean = portStr.split("/")[0]
+  const parts = clean.split(":")
+  if (parts.length === 1) return null          // bare container port, no host binding
+  if (parts.length === 2) return parts[0]      // "hostPort:containerPort"
+  if (parts.length === 3) return parts[1]      // "hostIP:hostPort:containerPort"
+  return null
+}
+
 export default function GatewayPage() {
   const [routes, setRoutes] = useState<GatewayRoute[]>([])
   const [isEnabled, setIsEnabled] = useState(false)
   const [isEnabling, setIsEnabling] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
 
-  // Create dialog state
+  // Services available to click-to-route
+  const [containers, setContainers] = useState<ContainerItem[]>([])
+  const [functions, setFunctions] = useState<FunctionItem[]>([])
+  const [isFetchingServices, setIsFetchingServices] = useState(false)
+
+  // Create / quick-route dialog state (shared)
   const [createOpen, setCreateOpen] = useState(false)
   const [createPathPrefix, setCreatePathPrefix] = useState("")
   const [createTargetURL, setCreateTargetURL] = useState("")
@@ -89,9 +134,30 @@ export default function GatewayPage() {
     }
   }
 
+  /** Fetch running containers and functions so the user can click-to-route. */
+  const fetchServices = async () => {
+    setIsFetchingServices(true)
+    try {
+      const [cRes, fRes] = await Promise.allSettled([
+        client.get<ContainerItem[]>("/get-containers"),
+        client.get<FunctionItem[]>("/list-functions"),
+      ])
+      if (cRes.status === "fulfilled") {
+        // Only show running containers.
+        setContainers((cRes.value.data ?? []).filter((c) => c.State?.toLowerCase() === "running"))
+      }
+      if (fRes.status === "fulfilled") {
+        setFunctions(fRes.value.data ?? [])
+      }
+    } finally {
+      setIsFetchingServices(false)
+    }
+  }
+
   useEffect(() => {
     fetchStatus()
     fetchRoutes()
+    fetchServices()
   }, [])
 
   /** Enable the gateway service via the streaming enable endpoint. */
@@ -107,6 +173,48 @@ export default function GatewayPage() {
     } finally {
       setIsEnabling(false)
     }
+  }
+
+  /** Open the Create Route dialog pre-filled for a running container.
+   *  Fetches the container detail to determine the host port. */
+  const openRouteForContainer = async (container: ContainerItem) => {
+    const name = (container.Names[0] ?? container.Id).replace(/^\//, "")
+    // Fetch detail to get port info.
+    let targetURL = ""
+    try {
+      const res = await client.get<ContainerDetail>(`/get-container?id=${container.Id}`)
+      const detail = res.data
+      if (detail?.ports && detail.ports.length > 0) {
+        const hostPort = extractHostPort(detail.ports[0])
+        if (hostPort) {
+          targetURL = `http://localhost:${hostPort}`
+        }
+      }
+    } catch {
+      // If we can't fetch details, leave targetURL blank so the user fills it in.
+    }
+    setCreatePathPrefix(`/${name}`)
+    setCreateTargetURL(targetURL)
+    setCreateDescription(`Route to container: ${name}`)
+    setCreateOpen(true)
+  }
+
+  /** Open the Create Route dialog pre-filled for a function. */
+  const openRouteForFunction = (fn: FunctionItem) => {
+    // Strip the file extension to get a clean path prefix (e.g. "hello.py" → "/hello").
+    const baseName = fn.name.replace(/\.[^.]+$/, "")
+    setCreatePathPrefix(`/${baseName}`)
+    setCreateTargetURL(`http://localhost:3030/invoke-function?name=${encodeURIComponent(fn.name)}`)
+    setCreateDescription(`Route to function: ${fn.name}`)
+    setCreateOpen(true)
+  }
+
+  /** Reset and open a blank Create Route dialog. */
+  const openBlankCreate = () => {
+    setCreatePathPrefix("")
+    setCreateTargetURL("")
+    setCreateDescription("")
+    setCreateOpen(true)
   }
 
   /** Create a new gateway route. */
@@ -194,6 +302,9 @@ export default function GatewayPage() {
     }
   }
 
+  // Helper: check whether a route already exists for a given pathPrefix
+  const hasRoute = (prefix: string) => routes.some((r) => r.pathPrefix === prefix)
+
   return (
     <DashboardShell>
       <DashboardHeader
@@ -201,62 +312,10 @@ export default function GatewayPage() {
         text="Route incoming traffic to individual services or containers using path-prefix rules."
       >
         {isEnabled ? (
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                New Route
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create Gateway Route</DialogTitle>
-                <DialogDescription>
-                  Map an incoming URL path prefix to a target service URL.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="pathPrefix">Path Prefix</Label>
-                  <Input
-                    id="pathPrefix"
-                    placeholder="/my-service"
-                    value={createPathPrefix}
-                    onChange={(e) => setCreatePathPrefix(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Must start with &apos;/&apos;. Requests matching this prefix will be forwarded.
-                  </p>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="targetURL">Target URL</Label>
-                  <Input
-                    id="targetURL"
-                    placeholder="http://localhost:8080"
-                    value={createTargetURL}
-                    onChange={(e) => setCreateTargetURL(e.target.value)}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="description">Description (optional)</Label>
-                  <Textarea
-                    id="description"
-                    placeholder="Brief description of this route"
-                    value={createDescription}
-                    onChange={(e) => setCreateDescription(e.target.value)}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setCreateOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleCreate} disabled={isCreating}>
-                  {isCreating ? "Creating..." : "Create Route"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <Button onClick={openBlankCreate}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Route
+          </Button>
         ) : (
           <Button onClick={handleEnable} disabled={isEnabling}>
             <Power className="mr-2 h-4 w-4" />
@@ -275,21 +334,121 @@ export default function GatewayPage() {
                 Gateway service is not enabled
               </p>
               <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                Enable the Gateway service to start routing traffic. Once enabled you can define path-prefix
-                rules that proxy requests to your running services or containers.
+                Enable the Gateway service to start routing traffic. Once enabled you can click any
+                running container or function below to add a route in seconds.
               </p>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Routes list */}
+      {/* ── Click-to-route: available services ── */}
+      {isEnabled && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <MousePointerClick className="h-5 w-5 text-primary" />
+                Click a Service to Route
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Select a running container or function to automatically create a gateway route for it.
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchServices}
+              disabled={isFetchingServices}
+            >
+              <RefreshCw className={`h-4 w-4 ${isFetchingServices ? "animate-spin" : ""}`} />
+              <span className="ml-2">Refresh</span>
+            </Button>
+          </div>
+
+          {/* Containers */}
+          <div>
+            <h3 className="mb-2 text-sm font-medium text-muted-foreground flex items-center gap-1">
+              <Container className="h-4 w-4" /> Running Containers
+            </h3>
+            {isFetchingServices ? (
+              <p className="text-sm text-muted-foreground">Loading containers…</p>
+            ) : containers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No running containers found.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {containers.map((c) => {
+                  const name = (c.Names[0] ?? c.Id).replace(/^\//, "")
+                  const prefix = `/${name}`
+                  const alreadyRouted = hasRoute(prefix)
+                  return (
+                    <Button
+                      key={c.Id}
+                      variant={alreadyRouted ? "secondary" : "outline"}
+                      size="sm"
+                      disabled={alreadyRouted}
+                      onClick={() => openRouteForContainer(c)}
+                      title={alreadyRouted ? `Route already exists for ${prefix}` : `Add route for ${name}`}
+                      className="gap-2"
+                    >
+                      <Container className="h-4 w-4 shrink-0" />
+                      <span>{name}</span>
+                      {alreadyRouted && (
+                        <Badge variant="outline" className="ml-1 text-xs">routed</Badge>
+                      )}
+                    </Button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Functions */}
+          <div>
+            <h3 className="mb-2 text-sm font-medium text-muted-foreground flex items-center gap-1">
+              <Zap className="h-4 w-4" /> Functions
+            </h3>
+            {isFetchingServices ? (
+              <p className="text-sm text-muted-foreground">Loading functions…</p>
+            ) : functions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No functions found.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {functions.map((fn) => {
+                  const baseName = fn.name.replace(/\.[^.]+$/, "")
+                  const prefix = `/${baseName}`
+                  const alreadyRouted = hasRoute(prefix)
+                  return (
+                    <Button
+                      key={fn.id}
+                      variant={alreadyRouted ? "secondary" : "outline"}
+                      size="sm"
+                      disabled={alreadyRouted}
+                      onClick={() => openRouteForFunction(fn)}
+                      title={alreadyRouted ? `Route already exists for ${prefix}` : `Add route for ${fn.name}`}
+                      className="gap-2"
+                    >
+                      <Zap className="h-4 w-4 shrink-0" />
+                      <span>{fn.name}</span>
+                      {alreadyRouted && (
+                        <Badge variant="outline" className="ml-1 text-xs">routed</Badge>
+                      )}
+                    </Button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Active routes list ── */}
       {isEnabled && (
         <>
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
               {routes.length === 0
-                ? "No routes configured. Create one to get started."
+                ? "No routes configured. Click a service above or create one manually."
                 : `${routes.length} route${routes.length !== 1 ? "s" : ""} configured`}
             </p>
             <Button variant="ghost" size="sm" onClick={fetchRoutes} disabled={isLoading}>
@@ -311,9 +470,9 @@ export default function GatewayPage() {
                   <Globe className="mb-4 h-12 w-12 text-muted-foreground" />
                   <h3 className="mb-2 text-lg font-semibold">No routes yet</h3>
                   <p className="mb-4 text-sm text-muted-foreground">
-                    Add your first gateway route to start routing traffic.
+                    Click a service above, or create a route manually.
                   </p>
-                  <Button onClick={() => setCreateOpen(true)}>
+                  <Button onClick={openBlankCreate}>
                     <Plus className="mr-2 h-4 w-4" />
                     Create Route
                   </Button>
@@ -372,7 +531,66 @@ export default function GatewayPage() {
         </>
       )}
 
-      {/* Edit dialog */}
+      {/* ── Create / quick-route dialog ── */}
+      <Dialog open={createOpen} onOpenChange={(open) => {
+        setCreateOpen(open)
+        if (!open) {
+          setCreatePathPrefix("")
+          setCreateTargetURL("")
+          setCreateDescription("")
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Gateway Route</DialogTitle>
+            <DialogDescription>
+              Map an incoming URL path prefix to a target service URL.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="pathPrefix">Path Prefix</Label>
+              <Input
+                id="pathPrefix"
+                placeholder="/my-service"
+                value={createPathPrefix}
+                onChange={(e) => setCreatePathPrefix(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Must start with &apos;/&apos;. Requests matching this prefix will be forwarded.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="targetURL">Target URL</Label>
+              <Input
+                id="targetURL"
+                placeholder="http://localhost:8080"
+                value={createTargetURL}
+                onChange={(e) => setCreateTargetURL(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="description">Description (optional)</Label>
+              <Textarea
+                id="description"
+                placeholder="Brief description of this route"
+                value={createDescription}
+                onChange={(e) => setCreateDescription(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={isCreating}>
+              {isCreating ? "Creating..." : "Create Route"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit dialog ── */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader>
@@ -416,7 +634,7 @@ export default function GatewayPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirmation dialog */}
+      {/* ── Delete confirmation dialog ── */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
@@ -440,3 +658,4 @@ export default function GatewayPage() {
     </DashboardShell>
   )
 }
+
