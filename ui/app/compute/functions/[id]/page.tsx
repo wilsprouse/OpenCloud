@@ -398,7 +398,26 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
             <div className="pt-4 border-t space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="trigger-type">Trigger</Label>
-                <Select value={triggerType} onValueChange={(v) => setTriggerType(v as "none" | "crontab" | "gateway")}>
+                <Select
+                  value={triggerType}
+                  onValueChange={(v) => {
+                    const next = v as "none" | "crontab" | "gateway"
+                    setTriggerType(next)
+                    if (next === "gateway") {
+                      // Derive a clean path prefix from the function name (strip extension).
+                      const baseName = functionId.replace(/\.[^.]+$/, "")
+                      const pathPrefix = encodeURIComponent(`/${baseName}`)
+                      const targetURL = encodeURIComponent(
+                        `http://localhost:3030/invoke-function?name=${encodeURIComponent(functionId)}`
+                      )
+                      const description = encodeURIComponent(`Route to function: ${functionId}`)
+                      window.open(
+                        `/ci-cd/gateway?create=true&pathPrefix=${pathPrefix}&targetURL=${targetURL}&description=${description}`,
+                        "_blank"
+                      )
+                    }
+                  }}
+                >
                   <SelectTrigger id="trigger-type">
                     <SelectValue placeholder="Select trigger type" />
                   </SelectTrigger>

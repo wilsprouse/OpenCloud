@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -81,6 +82,15 @@ function extractHostPort(portStr: string): string | null {
 }
 
 export default function GatewayPage() {
+  return (
+    <Suspense>
+      <GatewayPageInner />
+    </Suspense>
+  )
+}
+
+function GatewayPageInner() {
+  const searchParams = useSearchParams()
   const [routes, setRoutes] = useState<GatewayRoute[]>([])
   const [isEnabled, setIsEnabled] = useState(false)
   const [isEnabling, setIsEnabling] = useState(false)
@@ -159,6 +169,20 @@ export default function GatewayPage() {
     fetchRoutes()
     fetchServices()
   }, [])
+
+  // If the page was opened with ?create=true (e.g. from the function trigger dropdown),
+  // pre-fill the Create Route dialog and open it automatically.
+  useEffect(() => {
+    if (searchParams.get("create") === "true") {
+      const pathPrefix = searchParams.get("pathPrefix") ?? ""
+      const targetURL = searchParams.get("targetURL") ?? ""
+      const description = searchParams.get("description") ?? ""
+      setCreatePathPrefix(pathPrefix)
+      setCreateTargetURL(targetURL)
+      setCreateDescription(description)
+      setCreateOpen(true)
+    }
+  }, [searchParams])
 
   /** Enable the gateway service via the streaming enable endpoint. */
   const handleEnable = async () => {
