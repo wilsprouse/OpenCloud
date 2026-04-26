@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -332,6 +333,85 @@ func UpdateGatewayRoute(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(updated)
+}
+
+// HandleGatewayRoutes is the catch-all HTTP handler registered at "/" in the
+// Go backend. It resolves the request path against the configured gateway
+// routes stored in the service ledger and, when a match is found, forwards the
+// request to the route's target URL using an HTTP reverse proxy.
+//
+// Route matching uses a longest-prefix strategy so that more-specific routes
+// take precedence over less-specific ones. Trailing slashes on both the request
+// path and the configured prefix are normalised before comparison so that
+// "/openc" and "/openc/" both match a route registered as "/openc".
+//
+// If no gateway route matches the request path the handler returns HTTP 404.
+func HandleGatewayRoutes(w http.ResponseWriter, r *http.Request) {
+	routes, err := service_ledger.GetAllGatewayRouteEntries()
+	if err != nil {
+		http.Error(w, "Failed to read gateway routes", http.StatusInternalServerError)
+		return
+	}
+
+	// Normalise the request path: strip trailing slashes (except for root "/").
+	reqPath := strings.TrimRight(r.URL.Path, "/")
+	if reqPath == "" {
+		reqPath = "/"
+	}
+
+	// Longest-prefix match across all configured routes.
+	var best *service_ledger.GatewayRouteEntry
+	var bestPrefixLen int
+	for _, route := range routes {
+		prefix := strings.TrimRight(route.PathPrefix, "/")
+		if !strings.HasPrefix(prefix, "/") {
+			prefix = "/" + prefix
+		}
+		if reqPath == prefix || strings.HasPrefix(reqPath, prefix+"/") {
+			if best == nil || len(prefix) > bestPrefixLen {
+				routeCopy := route
+				best = &routeCopy
+				bestPrefixLen = len(prefix)
+			}
+		}
+	}
+
+	if best == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	targetURL, err := url.Parse(best.TargetURL)
+	if err != nil {
+		http.Error(w, "Invalid gateway target URL", http.StatusInternalServerError)
+		return
+	}
+
+	// Forward the request to the configured target URL. The Director is
+	// customised so that the full target URL (path + query string) is used
+	// verbatim — gateway routes forward to a fixed upstream endpoint, not a
+	// path-mapped upstream where the suffix of the request path would be
+	// appended. Any additional query parameters supplied by the client are
+	// merged with the target URL's own query string so that, for example, a
+	// function-invoke target (?name=openc.py) is not silently overwritten by a
+	// client parameter.
+	mergedQuery := targetURL.RawQuery
+	if r.URL.RawQuery != "" {
+		if mergedQuery != "" {
+			mergedQuery = mergedQuery + "&" + r.URL.RawQuery
+		} else {
+			mergedQuery = r.URL.RawQuery
+		}
+	}
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = targetURL.Scheme
+		req.URL.Host = targetURL.Host
+		req.URL.Path = targetURL.Path
+		req.URL.RawQuery = mergedQuery
+		req.Host = targetURL.Host
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 // DeleteGatewayRoute handles DELETE /delete-gateway-route/{id}.

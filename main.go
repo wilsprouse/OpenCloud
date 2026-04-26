@@ -201,7 +201,7 @@ func main() {
 	mux.HandleFunc("/create-gateway-route", api.CreateGatewayRoute)
 	mux.HandleFunc("/update-gateway-route/", api.UpdateGatewayRoute)
 	mux.HandleFunc("/delete-gateway-route/", api.DeleteGatewayRoute)
-	mux.HandleFunc("/", computeapi.GetFunction)
+	mux.HandleFunc("/", api.HandleGatewayRoutes)
 
 	// Wrap all routes with CORS middleware
 	handler := withCORS(mux)
