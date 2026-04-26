@@ -1,4 +1,11 @@
 export const FUNCTION_NAME_MAX_LENGTH = 50
+
+export const DEFAULT_FUNCTION_CODE = `def main():
+  # TODO: Add Code here!
+  return "OpenCloud"
+
+main()`
+
 export const FUNCTION_NAME_SPACE_WARNING = "Function names cannot contain spaces."
 export const FUNCTION_NAME_LENGTH_WARNING = `Function names must be ${FUNCTION_NAME_MAX_LENGTH} characters or fewer.`
 
