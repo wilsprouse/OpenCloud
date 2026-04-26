@@ -16,6 +16,44 @@ import (
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
 
+// extractFunctionName returns the function name encoded in a targetURL of the
+// form "http://localhost:3030/invoke-function?name=<functionName>", or the empty
+// string if the URL does not match that pattern.
+func extractFunctionName(targetURL string) string {
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		return ""
+	}
+	if u.Path != "/invoke-function" {
+		return ""
+	}
+	return u.Query().Get("name")
+}
+
+// syncFunctionGatewayTrigger upserts the gateway trigger metadata on the function
+// entry in the service ledger.  It is a best-effort helper and silently swallows
+// errors so that failures do not block the gateway route operation.
+func syncFunctionGatewayTrigger(fnName, pathPrefix, routeID string) {
+	entry, _ := service_ledger.GetFunctionEntry(fnName)
+	runtime := ""
+	content := ""
+	if entry != nil {
+		runtime = entry.Runtime
+		content = entry.Content
+	}
+	_ = service_ledger.UpdateFunctionEntry(fnName, runtime, "gateway", "", pathPrefix, routeID, content)
+}
+
+// clearFunctionGatewayTrigger removes the gateway trigger from a function's ledger
+// entry.  It is a best-effort helper and silently swallows errors.
+func clearFunctionGatewayTrigger(fnName string) {
+	entry, err := service_ledger.GetFunctionEntry(fnName)
+	if err != nil || entry == nil {
+		return
+	}
+	_ = service_ledger.UpdateFunctionEntry(fnName, entry.Runtime, "", "", "", "", entry.Content)
+}
+
 // gatewayDir returns the path to the gateway configuration directory
 // (~/.opencloud/gateway/).
 func gatewayDir() (string, error) {
@@ -188,6 +226,12 @@ func CreateGatewayRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If this route targets a function's invoke endpoint, update the function's
+	// service ledger entry so the trigger is visible on the functions page.
+	if fnName := extractFunctionName(req.TargetURL); fnName != "" {
+		syncFunctionGatewayTrigger(fnName, req.PathPrefix, routeID)
+	}
+
 	// Regenerate nginx config.
 	routes, err := service_ledger.GetAllGatewayRouteEntries()
 	if err == nil {
@@ -269,6 +313,17 @@ func UpdateGatewayRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sync function ledger entries for old and new target URLs.
+	oldFnName := extractFunctionName(old.TargetURL)
+	newFnName := extractFunctionName(req.TargetURL)
+	if oldFnName != "" && oldFnName != newFnName {
+		// The route no longer targets the old function – clear its gateway trigger.
+		clearFunctionGatewayTrigger(oldFnName)
+	}
+	if newFnName != "" {
+		syncFunctionGatewayTrigger(newFnName, req.PathPrefix, routeID)
+	}
+
 	// Regenerate nginx config.
 	routes, err := service_ledger.GetAllGatewayRouteEntries()
 	if err == nil {
@@ -291,6 +346,15 @@ func DeleteGatewayRoute(w http.ResponseWriter, r *http.Request) {
 	if routeID == "" {
 		http.Error(w, "Missing route ID", http.StatusBadRequest)
 		return
+	}
+
+	// Look up the route before deleting so we can clear the function's trigger if needed.
+	if existing, err := service_ledger.GetAllGatewayRouteEntries(); err == nil {
+		if route, found := existing[routeID]; found {
+			if fnName := extractFunctionName(route.TargetURL); fnName != "" {
+				clearFunctionGatewayTrigger(fnName)
+			}
+		}
 	}
 
 	if err := service_ledger.DeleteGatewayRouteEntry(routeID); err != nil {
