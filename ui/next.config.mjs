@@ -34,6 +34,20 @@ const nextConfig = {
             source: '/:prefix/api/:path*',
             destination: `${backendUrl}/:path*`,
           },
+          // Gateway-prefixed direct path: /<prefix>/<endpoint> → Go backend,
+          // but ONLY when an Authorization header is present (CLI token auth).
+          // This allows: curl -u "<token>:" https://domain.com/myprefix/get-containers
+          // Browser UI requests never carry an Authorization header (they use cookies),
+          // so normal page navigation through the same prefix is unaffected.
+          //
+          // Ordering note: this rule is listed AFTER /:prefix/api/:path* so that
+          // requests like /:prefix/api/:endpoint with an Authorization header still
+          // match the more-specific api rule above (Next.js stops at the first match).
+          {
+            source: '/:prefix/:path*',
+            has: [{ type: 'header', key: 'authorization' }],
+            destination: `${backendUrl}/:path*`,
+          },
         ],
         afterFiles: [],
         fallback: [],
