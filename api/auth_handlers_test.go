@@ -509,3 +509,106 @@ func TestVerifyCLIToken(t *testing.T) {
 	}
 }
 
+// --- WithCLITokenAuth middleware tests ---
+
+// makeTestHandler returns a simple handler that records calls so we can verify
+// the middleware forwarded the request.
+func makeTestHandler(called *bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*called = true
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+// TestWithCLITokenAuthNoHeader verifies that requests without Basic Auth pass through.
+func TestWithCLITokenAuthNoHeader(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	called := false
+	handler := WithCLITokenAuth(makeTestHandler(&called))
+
+	req := httptest.NewRequest(http.MethodGet, "/get-containers", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !called {
+		t.Error("expected next handler to be called when no Authorization header is present")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+// TestWithCLITokenAuthValidToken verifies that a correct token passes through.
+func TestWithCLITokenAuthValidToken(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	// Generate a CLI token.
+	genReq := httptest.NewRequest(http.MethodPost, "/user/generate-cli-token", nil)
+	genW := httptest.NewRecorder()
+	GenerateCLIToken(genW, genReq)
+	var resp cliTokenResponse
+	json.NewDecoder(genW.Body).Decode(&resp)
+
+	called := false
+	handler := WithCLITokenAuth(makeTestHandler(&called))
+
+	req := httptest.NewRequest(http.MethodGet, "/get-containers", nil)
+	req.SetBasicAuth(resp.Token, "")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !called {
+		t.Error("expected next handler to be called for a valid CLI token")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+// TestWithCLITokenAuthInvalidToken verifies that a wrong token is rejected with 401.
+func TestWithCLITokenAuthInvalidToken(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	// Generate a token so a token file exists, then try a different token.
+	genReq := httptest.NewRequest(http.MethodPost, "/user/generate-cli-token", nil)
+	genW := httptest.NewRecorder()
+	GenerateCLIToken(genW, genReq)
+
+	called := false
+	handler := WithCLITokenAuth(makeTestHandler(&called))
+
+	req := httptest.NewRequest(http.MethodGet, "/get-containers", nil)
+	req.SetBasicAuth("wrongtoken", "")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if called {
+		t.Error("next handler must not be called for an invalid CLI token")
+	}
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+// TestWithCLITokenAuthUserRouteBypass verifies that /user/* routes always pass through.
+func TestWithCLITokenAuthUserRouteBypass(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	called := false
+	handler := WithCLITokenAuth(makeTestHandler(&called))
+
+	// Supply an invalid token — the /user/ bypass should ignore it.
+	req := httptest.NewRequest(http.MethodPost, "/user/login", nil)
+	req.SetBasicAuth("badtoken", "")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !called {
+		t.Error("expected next handler to be called for /user/ routes regardless of token validity")
+	}
+}

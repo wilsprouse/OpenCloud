@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -418,6 +419,53 @@ func RevokeCLIToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, cliTokenResponse{Exists: false, Message: "CLI token revoked"})
+}
+
+// cliAuthKey is an unexported context key used to mark requests that have
+// been authenticated via CLI token.
+type cliAuthKey struct{}
+
+// WithCLITokenAuth is an HTTP middleware that supports CLI token authentication
+// via HTTP Basic Auth.  When a caller supplies a valid CLI token as the username
+// (e.g. curl -u "<token>:"), the request is passed to the next handler.
+//
+//   - Requests with NO Authorization header are forwarded unchanged, preserving
+//     compatibility with the browser UI which uses the AccessToken header.
+//   - Requests with a Basic Auth header are validated against the stored CLI
+//     token.  An invalid token results in a 401 Unauthorized response.
+//   - Routes under /user/ are always forwarded unchanged (they manage their own
+//     authentication — login, refresh, and token management endpoints).
+func WithCLITokenAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Pass user-management endpoints through without CLI token checks.
+		if strings.HasPrefix(r.URL.Path, "/user/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		username, _, hasBasicAuth := r.BasicAuth()
+		if !hasBasicAuth {
+			// No Basic Auth header — let the request through unchanged.
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// A Basic Auth header was provided: validate the token.
+		valid, err := VerifyCLIToken(username)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "authentication service unavailable"})
+			return
+		}
+		if !valid {
+			w.Header().Set("WWW-Authenticate", `Basic realm="OpenCloud CLI"`)
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Message: "invalid CLI token"})
+			return
+		}
+
+		// Valid CLI token — mark context and forward the request.
+		ctx := context.WithValue(r.Context(), cliAuthKey{}, true)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // VerifyCLIToken checks whether the provided raw token matches the stored CLI token.

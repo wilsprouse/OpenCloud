@@ -207,8 +207,8 @@ func main() {
 	mux.HandleFunc("/delete-gateway-route/", api.DeleteGatewayRoute)
 	mux.HandleFunc("/", api.HandleGatewayRoutes)
 
-	// Wrap all routes with CORS middleware
-	handler := withCORS(mux)
+	// Wrap all routes with CORS middleware and CLI token authentication.
+	handler := withCORS(api.WithCLITokenAuth(mux))
 
 	fmt.Println("Server running on localhost:3030")
 	// IMPORTANT: Only listen on localhost for security
