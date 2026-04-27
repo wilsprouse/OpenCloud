@@ -1,7 +1,7 @@
 'use client'
 
 import { useTheme } from "next-themes"
-import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle, User, Terminal } from "lucide-react"
+import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle, Terminal } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -411,7 +411,7 @@ export default function SettingsPage() {
               disabled={cliTokenLoading}
               className="w-full sm:w-auto"
             >
-              <User className="h-4 w-4 mr-2" />
+              <Terminal className="h-4 w-4 mr-2" />
               {cliTokenLoading ? "Generating…" : "Generate CLI Token"}
             </Button>
 

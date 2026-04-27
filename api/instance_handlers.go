@@ -219,7 +219,7 @@ func GenerateCLITokenHandler(w http.ResponseWriter, r *http.Request) {
 
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		http.Error(w, "Failed to generate token: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 
