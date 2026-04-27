@@ -45,6 +45,79 @@ type UpdateFunctionRequest struct {
 	Trigger    *Trigger `json:"trigger,omitempty"`
 }
 
+// returnSentinel is the prefix written to stdout by wrapper scripts to mark
+// the return value of the user's main() function so it can be parsed out from
+// the regular print output.
+const returnSentinel = "__OPENCLOUD_RETURN__:"
+
+// buildReturnCaptureWrapper creates a temporary file that contains the
+// original function source with additional wrapper code appended. The wrapper
+// calls main() and prints its return value prefixed with returnSentinel so
+// InvokeFunction can separate it from normal print output.
+//
+// Supported runtimes: "python3", "nodejs", "ruby".
+// The caller must remove the returned tempDir (e.g. via defer os.RemoveAll).
+func buildReturnCaptureWrapper(runtime, fnPath string) (wrapperPath string, tempDir string, err error) {
+	content, readErr := os.ReadFile(fnPath)
+	if readErr != nil {
+		return "", "", fmt.Errorf("read function file: %w", readErr)
+	}
+
+	var ext, appendCode string
+	switch runtime {
+	case "python3":
+		ext = ".py"
+		appendCode = "\nimport sys as _sys, json as _json\n" +
+			"try:\n" +
+			"    _rv = main()\n" +
+			"    _sys.stdout.flush()\n" +
+			"    print('" + returnSentinel + "' + _json.dumps(_rv))\n" +
+			"except Exception:\n" +
+			"    _sys.stdout.flush()\n" +
+			"    print('" + returnSentinel + "null')\n"
+	case "nodejs":
+		ext = ".js"
+		appendCode = "\ntry { const _rv = main(); process.stdout.write('" + returnSentinel + "' + JSON.stringify(_rv) + '\\n'); }" +
+			" catch(_e) { process.stdout.write('" + returnSentinel + "null\\n'); }\n"
+	case "ruby":
+		ext = ".rb"
+		appendCode = "\nbegin\n  require 'json'\n  _rv = main()\n  $stdout.flush\n  puts('" + returnSentinel + "' + _rv.to_json)\n" +
+			"rescue\n  $stdout.flush\n  puts('" + returnSentinel + "null')\nend\n"
+	default:
+		return "", "", fmt.Errorf("unsupported runtime for return capture: %s", runtime)
+	}
+
+	tmpDir, mkErr := os.MkdirTemp("", "opencloud-fn-*")
+	if mkErr != nil {
+		return "", "", fmt.Errorf("create temp dir: %w", mkErr)
+	}
+
+	wrapperPath = filepath.Join(tmpDir, "wrapper"+ext)
+	if writeErr := os.WriteFile(wrapperPath, append(content, []byte(appendCode)...), 0644); writeErr != nil {
+		os.RemoveAll(tmpDir)
+		return "", "", fmt.Errorf("write wrapper file: %w", writeErr)
+	}
+
+	return wrapperPath, tmpDir, nil
+}
+
+// extractReturnValue scans output for the returnSentinel line, removes it from
+// the output, and returns the cleaned output alongside the extracted return value.
+// If no sentinel is found, returnVal is empty string.
+func extractReturnValue(output string) (cleanOutput string, returnVal string) {
+	lines := strings.Split(output, "\n")
+	cleanLines := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, returnSentinel) {
+			returnVal = strings.TrimPrefix(line, returnSentinel)
+		} else {
+			cleanLines = append(cleanLines, line)
+		}
+	}
+	cleanOutput = strings.Join(cleanLines, "\n")
+	return cleanOutput, returnVal
+}
+
 func detectRuntime(filename string) string {
 	switch filepath.Ext(filename) {
 	case ".py":
@@ -157,18 +230,33 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	// Detect runtime from file extension
 	runtime := detectRuntime(fnName)
 
+	// For supported runtimes, build a wrapper script that captures the return
+	// value of the user's main() function via returnSentinel.
+	execPath := fnPath
+	var wrapperDir string
+	switch runtime {
+	case "python3", "nodejs", "ruby":
+		if wp, td, wErr := buildReturnCaptureWrapper(runtime, fnPath); wErr == nil {
+			execPath = wp
+			wrapperDir = td
+		}
+	}
+	if wrapperDir != "" {
+		defer os.RemoveAll(wrapperDir)
+	}
+
 	// Choose interpreter or build command
 	var cmd *exec.Cmd
 	switch runtime {
 	case "python3":
-		cmd = exec.CommandContext(ctx, "python3", fnPath)
+		cmd = exec.CommandContext(ctx, "python3", execPath)
 	case "nodejs":
-		cmd = exec.CommandContext(ctx, "node", fnPath)
+		cmd = exec.CommandContext(ctx, "node", execPath)
 	case "go":
-		// Build and run Go file
+		// Build and run Go file (Go's main() is void; return value not captured)
 		cmd = exec.CommandContext(ctx, "go", "run", fnPath)
 	case "ruby":
-		cmd = exec.CommandContext(ctx, "ruby", fnPath)
+		cmd = exec.CommandContext(ctx, "ruby", execPath)
 	default:
 		http.Error(w, "Unsupported runtime", http.StatusBadRequest)
 		return
@@ -208,6 +296,9 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		defer logFile.Close()
 	}
 
+	// Extract the return value from the returnSentinel line and clean the output.
+	cleanOutput, returnVal := extractReturnValue(out.String())
+
 	// Add log entry to host system with timestamp separator
 	timestamp := time.Now().Format(time.RFC3339)
 	hasError := stderr.Len() > 0
@@ -215,7 +306,7 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	if hasError {
 		statusMarker = "ERROR"
 	}
-	logEntry := fmt.Sprintf("===EXECUTION_START:%s|%s===\n%s%s===EXECUTION_END===\n", timestamp, statusMarker, out.String(), stderr.String())
+	logEntry := fmt.Sprintf("===EXECUTION_START:%s|%s===\n%s%s===EXECUTION_END===\n", timestamp, statusMarker, cleanOutput, stderr.String())
 
 	if logFile != nil {
 		if _, writeErr := logFile.WriteString(logEntry); writeErr != nil {
@@ -228,11 +319,12 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Warning: failed to increment invocation count: %v\n", incrementErr)
 	}
 
-	fmt.Print(out.String() + stderr.String())
+	fmt.Print(cleanOutput + stderr.String())
 
-	// Send JSON response
+	// Send JSON response with both the printed output and the main() return value.
 	resp := map[string]string{
-		"output": out.String(),
+		"output": cleanOutput,
+		"return": returnVal,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
