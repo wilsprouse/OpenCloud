@@ -319,3 +319,197 @@ func TestApplyGatewayNginxConfig_generatesFile(t *testing.T) {
 		t.Errorf("config missing expected target URL; got:\n%s", content)
 	}
 }
+
+// TestHandleGatewayRoutes_noRoutes verifies that a request to an unknown path
+// returns 404 when no gateway routes have been configured.
+func TestHandleGatewayRoutes_noRoutes(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	req := httptest.NewRequest(http.MethodGet, "/openc", nil)
+	w := httptest.NewRecorder()
+
+	HandleGatewayRoutes(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// TestHandleGatewayRoutes_matchesRoute verifies that a request whose path
+// matches a configured gateway route is proxied to the target.  An httptest
+// server acts as the upstream so we can inspect what was received.
+func TestHandleGatewayRoutes_matchesRoute(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Start a local upstream server that records the request URI it receives.
+	var receivedPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.RequestURI()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"output":"hello"}`))
+	}))
+	defer upstream.Close()
+
+	// Register a gateway route pointing to the upstream.
+	targetURL := upstream.URL + "/invoke-function?name=hello.py"
+	route := service_ledger.GatewayRouteEntry{
+		ID:        "testroute1",
+		PathPrefix: "/hello",
+		TargetURL:  targetURL,
+	}
+	if err := service_ledger.UpsertGatewayRouteEntry(route); err != nil {
+		t.Fatalf("failed to seed route: %v", err)
+	}
+	defer service_ledger.DeleteGatewayRouteEntry("testroute1")
+
+	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
+	w := httptest.NewRecorder()
+
+	HandleGatewayRoutes(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// The upstream should have received the path+query from the target URL.
+	if !strings.Contains(receivedPath, "/invoke-function") {
+		t.Errorf("expected upstream to receive /invoke-function path, got %q", receivedPath)
+	}
+	if !strings.Contains(receivedPath, "name=hello.py") {
+		t.Errorf("expected upstream to receive name=hello.py query param, got %q", receivedPath)
+	}
+}
+
+// TestHandleGatewayRoutes_trailingSlash verifies that a request with a trailing
+// slash still matches the configured route (e.g. /openc/ matches /openc).
+func TestHandleGatewayRoutes_trailingSlash(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	route := service_ledger.GatewayRouteEntry{
+		ID:         "testroute2",
+		PathPrefix: "/openc",
+		TargetURL:  upstream.URL + "/invoke-function?name=openc.py",
+	}
+	if err := service_ledger.UpsertGatewayRouteEntry(route); err != nil {
+		t.Fatalf("failed to seed route: %v", err)
+	}
+	defer service_ledger.DeleteGatewayRouteEntry("testroute2")
+
+	req := httptest.NewRequest(http.MethodGet, "/openc/", nil)
+	w := httptest.NewRecorder()
+
+	HandleGatewayRoutes(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleGatewayRoutes_longestPrefixWins verifies that when multiple routes
+// could match a request path, the most specific (longest) prefix wins.
+func TestHandleGatewayRoutes_longestPrefixWins(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	// Track which upstream was called.
+	var calledTarget string
+
+	shortUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledTarget = "short"
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer shortUpstream.Close()
+
+	longUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledTarget = "long"
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer longUpstream.Close()
+
+	short := service_ledger.GatewayRouteEntry{
+		ID:         "short",
+		PathPrefix: "/api",
+		TargetURL:  shortUpstream.URL,
+	}
+	long := service_ledger.GatewayRouteEntry{
+		ID:         "long",
+		PathPrefix: "/api/v2",
+		TargetURL:  longUpstream.URL,
+	}
+	if err := service_ledger.UpsertGatewayRouteEntry(short); err != nil {
+		t.Fatalf("seed short: %v", err)
+	}
+	defer service_ledger.DeleteGatewayRouteEntry("short")
+	if err := service_ledger.UpsertGatewayRouteEntry(long); err != nil {
+		t.Fatalf("seed long: %v", err)
+	}
+	defer service_ledger.DeleteGatewayRouteEntry("long")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/users", nil)
+	w := httptest.NewRecorder()
+
+	HandleGatewayRoutes(w, req)
+
+	if calledTarget != "long" {
+		t.Errorf("expected longest-prefix route to be called (long), got %q", calledTarget)
+	}
+}
+
+// TestHandleGatewayRoutes_mergesQueryParams verifies that client-supplied query
+// parameters are merged with those already present in the target URL.
+func TestHandleGatewayRoutes_mergesQueryParams(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	var receivedQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	route := service_ledger.GatewayRouteEntry{
+		ID:         "testroute3",
+		PathPrefix: "/fn",
+		TargetURL:  upstream.URL + "/invoke-function?name=myfn.py",
+	}
+	if err := service_ledger.UpsertGatewayRouteEntry(route); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	defer service_ledger.DeleteGatewayRouteEntry("testroute3")
+
+	// Client request carries an extra query param.
+	req := httptest.NewRequest(http.MethodGet, "/fn?extra=1", nil)
+	w := httptest.NewRecorder()
+
+	HandleGatewayRoutes(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	// Both the target's name param and the client's extra param must be present.
+	if !strings.Contains(receivedQuery, "name=myfn.py") {
+		t.Errorf("target query param name=myfn.py missing from %q", receivedQuery)
+	}
+	if !strings.Contains(receivedQuery, "extra=1") {
+		t.Errorf("client query param extra=1 missing from %q", receivedQuery)
+	}
+}

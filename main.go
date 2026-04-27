@@ -164,6 +164,7 @@ func main() {
 	mux.HandleFunc("/invoke-function", computeapi.InvokeFunction)
 	mux.HandleFunc("/create-function", computeapi.CreateFunction)
 	mux.HandleFunc("/delete-function", computeapi.DeleteFunction)
+	mux.HandleFunc("/get-function/", computeapi.GetFunction)
 	mux.HandleFunc("/update-function/", computeapi.UpdateFunction)
 	mux.HandleFunc("/get-function-logs/", computeapi.GetFunctionLogs)
 	mux.HandleFunc("/get-service-status", service_ledger.GetServiceStatusHandler)
@@ -201,7 +202,7 @@ func main() {
 	mux.HandleFunc("/create-gateway-route", api.CreateGatewayRoute)
 	mux.HandleFunc("/update-gateway-route/", api.UpdateGatewayRoute)
 	mux.HandleFunc("/delete-gateway-route/", api.DeleteGatewayRoute)
-	mux.HandleFunc("/", computeapi.GetFunction)
+	mux.HandleFunc("/", api.HandleGatewayRoutes)
 
 	// Wrap all routes with CORS middleware
 	handler := withCORS(mux)
