@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -194,6 +196,37 @@ func GetSSLStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"email": email})
+}
+
+// GenerateCLITokenResponse is the JSON body returned by GenerateCLITokenHandler.
+type GenerateCLITokenResponse struct {
+	// Token is the newly generated CLI token. It is never persisted — the user
+	// must copy it immediately because it cannot be retrieved again.
+	Token string `json:"token"`
+}
+
+// GenerateCLITokenHandler handles POST /generate-cli-token.
+// It generates a cryptographically random 32-byte token (hex-encoded) and
+// returns it to the caller. The token is NOT stored anywhere — this endpoint
+// exists solely to provide a token value for display in the UI.
+//
+// Response: GenerateCLITokenResponse
+func GenerateCLITokenHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		http.Error(w, "Failed to generate token: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	token := hex.EncodeToString(raw)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(GenerateCLITokenResponse{Token: token})
 }
 
 // ConfigureSSLHandler handles POST /configure-ssl.

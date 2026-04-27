@@ -198,6 +198,7 @@ func main() {
 	mux.HandleFunc("/set-instance-domain", api.SetInstanceDomainHandler)
 	mux.HandleFunc("/get-ssl-status", api.GetSSLStatusHandler)
 	mux.HandleFunc("/configure-ssl", api.ConfigureSSLHandler)
+	mux.HandleFunc("/generate-cli-token", api.GenerateCLITokenHandler)
 	mux.HandleFunc("/list-gateway-routes", api.ListGatewayRoutes)
 	mux.HandleFunc("/create-gateway-route", api.CreateGatewayRoute)
 	mux.HandleFunc("/update-gateway-route/", api.UpdateGatewayRoute)

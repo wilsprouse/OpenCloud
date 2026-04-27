@@ -1,7 +1,7 @@
 'use client'
 
 import { useTheme } from "next-themes"
-import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle } from "lucide-react"
+import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle, User, Terminal } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -28,6 +28,11 @@ export default function SettingsPage() {
   const [sslCertbotInstallCmd, setSSLCertbotInstallCmd] = useState("")
   const [sslCertbotCmd, setSSLCertbotCmd] = useState("")
   const [sslAutoRenewCmd, setSSLAutoRenewCmd] = useState("")
+
+  // CLI token state
+  const [cliTokenLoading, setCliTokenLoading] = useState(false)
+  const [cliTokenError, setCliTokenError] = useState("")
+  const [cliToken, setCliToken] = useState("")
 
   // Track which code snippet was just copied
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -155,6 +160,26 @@ export default function SettingsPage() {
       setSSLError("Network error. Please try again.")
     } finally {
       setSSLLoading(false)
+    }
+  }
+
+  async function handleGenerateCLIToken() {
+    setCliTokenError("")
+    setCliToken("")
+    setCliTokenLoading(true)
+    try {
+      const res = await fetch("/api/generate-cli-token", { method: "POST" })
+      if (!res.ok) {
+        const text = await res.text()
+        setCliTokenError(text || "Failed to generate CLI token.")
+        return
+      }
+      const data = await res.json()
+      setCliToken(data.token ?? "")
+    } catch {
+      setCliTokenError("Network error. Please try again.")
+    } finally {
+      setCliTokenLoading(false)
     }
   }
 
@@ -362,6 +387,52 @@ export default function SettingsPage() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* User Management section */}
+      <section className="rounded-lg border p-6 mt-6">
+        <h2 className="mb-4 text-lg font-semibold">User Management</h2>
+
+        <div className="flex items-start gap-3">
+          <Terminal className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-3">
+            <div>
+              <Label className="text-sm font-medium">CLI Token</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Generate a token to authenticate CLI requests to this OpenCloud instance.
+                Copy it immediately — the token will not be shown again once you navigate away.
+              </p>
+            </div>
+
+            <Button
+              onClick={handleGenerateCLIToken}
+              disabled={cliTokenLoading}
+              className="w-full sm:w-auto"
+            >
+              <User className="h-4 w-4 mr-2" />
+              {cliTokenLoading ? "Generating…" : "Generate CLI Token"}
+            </Button>
+
+            {cliTokenError && (
+              <p className="text-xs text-destructive" role="alert">{cliTokenError}</p>
+            )}
+
+            {cliToken && (
+              <div className="rounded-md border bg-muted/50 p-4 space-y-3 text-sm">
+                <div className="flex items-start gap-2 text-xs text-yellow-800 dark:text-yellow-300">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-yellow-500" />
+                  <span>Copy this token now. It will not be stored or shown again.</span>
+                </div>
+                <CodeRow
+                  code={cliToken}
+                  copyKey="cliToken"
+                  copiedKey={copiedKey}
+                  onCopy={copyToClipboard}
+                />
+              </div>
+            )}
           </div>
         </div>
       </section>

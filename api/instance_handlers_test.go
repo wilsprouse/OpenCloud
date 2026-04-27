@@ -27,7 +27,68 @@ func saveLedgerState(t *testing.T) {
 	})
 }
 
-// TestIsValidDomain checks the domain validation helper for a range of inputs.
+// TestGenerateCLITokenHandlerMethodNotAllowed verifies that non-POST requests are rejected.
+func TestGenerateCLITokenHandlerMethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/generate-cli-token", nil)
+	w := httptest.NewRecorder()
+	GenerateCLITokenHandler(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestGenerateCLITokenHandlerSuccess verifies that the handler returns a non-empty
+// hex-encoded token and that two successive calls return different tokens.
+func TestGenerateCLITokenHandlerSuccess(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/generate-cli-token", nil)
+	w := httptest.NewRecorder()
+	GenerateCLITokenHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp GenerateCLITokenResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("invalid JSON response: %v", err)
+	}
+
+	if resp.Token == "" {
+		t.Error("token should not be empty")
+	}
+	// A 32-byte random value hex-encoded is always 64 characters.
+	if len(resp.Token) != 64 {
+		t.Errorf("token length = %d; want 64", len(resp.Token))
+	}
+	// The token must be valid hex.
+	if !isHex(resp.Token) {
+		t.Errorf("token is not valid hex: %q", resp.Token)
+	}
+
+	// A second call should produce a different token.
+	req2 := httptest.NewRequest(http.MethodPost, "/generate-cli-token", nil)
+	w2 := httptest.NewRecorder()
+	GenerateCLITokenHandler(w2, req2)
+
+	var resp2 GenerateCLITokenResponse
+	if err := json.NewDecoder(w2.Body).Decode(&resp2); err != nil {
+		t.Fatalf("second call: invalid JSON response: %v", err)
+	}
+	if resp.Token == resp2.Token {
+		t.Error("two successive calls returned the same token; expected unique tokens")
+	}
+}
+
+// isHex returns true if every character in s is a valid lowercase hex digit.
+func isHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 func TestIsValidDomain(t *testing.T) {
 	cases := []struct {
 		domain string
