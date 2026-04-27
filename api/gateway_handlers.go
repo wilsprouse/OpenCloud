@@ -127,6 +127,7 @@ func applyGatewayNginxConfig(routes map[string]service_ledger.GatewayRouteEntry)
 		sb.WriteString("    proxy_set_header X-Real-IP $remote_addr;\n")
 		sb.WriteString("    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
 		sb.WriteString("    proxy_set_header X-Forwarded-Proto $scheme;\n")
+		sb.WriteString("    proxy_set_header Authorization $http_authorization;\n")
 		sb.WriteString("    proxy_cache_bypass $http_upgrade;\n")
 		sb.WriteString("}\n\n")
 	}
