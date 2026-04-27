@@ -68,21 +68,15 @@ func buildReturnCaptureWrapper(runtime, fnPath string) (wrapperPath string, temp
 	case "python3":
 		ext = ".py"
 		appendCode = "\nimport sys as _sys, json as _json\n" +
-			"try:\n" +
-			"    _rv = main()\n" +
-			"    _sys.stdout.flush()\n" +
-			"    print('" + returnSentinel + "' + _json.dumps(_rv))\n" +
-			"except Exception:\n" +
-			"    _sys.stdout.flush()\n" +
-			"    print('" + returnSentinel + "null')\n"
+			"_rv = main()\n" +
+			"_sys.stdout.flush()\n" +
+			"print('" + returnSentinel + "' + _json.dumps(_rv))\n"
 	case "nodejs":
 		ext = ".js"
-		appendCode = "\ntry { const _rv = main(); process.stdout.write('" + returnSentinel + "' + JSON.stringify(_rv) + '\\n'); }" +
-			" catch(_e) { process.stdout.write('" + returnSentinel + "null\\n'); }\n"
+		appendCode = "\nconst _rv = main();\nprocess.stdout.write('" + returnSentinel + "' + JSON.stringify(_rv) + '\\n');\n"
 	case "ruby":
 		ext = ".rb"
-		appendCode = "\nbegin\n  require 'json'\n  _rv = main()\n  $stdout.flush\n  puts('" + returnSentinel + "' + _rv.to_json)\n" +
-			"rescue\n  $stdout.flush\n  puts('" + returnSentinel + "null')\nend\n"
+		appendCode = "\nrequire 'json'\n_rv = main()\n$stdout.flush\nputs('" + returnSentinel + "' + _rv.to_json)\n"
 	default:
 		return "", "", fmt.Errorf("unsupported runtime for return capture: %s", runtime)
 	}
@@ -253,7 +247,7 @@ func InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	case "nodejs":
 		cmd = exec.CommandContext(ctx, "node", execPath)
 	case "go":
-		// Build and run Go file (Go's main() is void; return value not captured)
+		// Build and run Go file. Go's main() is void; return value is not captured.
 		cmd = exec.CommandContext(ctx, "go", "run", fnPath)
 	case "ruby":
 		cmd = exec.CommandContext(ctx, "ruby", execPath)
