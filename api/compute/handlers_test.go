@@ -89,6 +89,143 @@ func cronWrapperPath(home, funcPath string) string {
 	return filepath.Join(home, ".opencloud", "cron", baseName+".sh")
 }
 
+// TestExtractReturnValue verifies that extractReturnValue correctly separates
+// the __OPENCLOUD_RETURN__: sentinel line from the regular output.
+func TestExtractReturnValue(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedOutput  string
+		expectedReturn  string
+	}{
+		{
+			name:           "sentinel present",
+			input:          "hello\n__OPENCLOUD_RETURN__:\"world\"\n",
+			expectedOutput: "hello\n",
+			expectedReturn: "\"world\"",
+		},
+		{
+			name:           "no sentinel",
+			input:          "just output\n",
+			expectedOutput: "just output\n",
+			expectedReturn: "",
+		},
+		{
+			name:           "sentinel with null return",
+			input:          "some output\n__OPENCLOUD_RETURN__:null\n",
+			expectedOutput: "some output\n",
+			expectedReturn: "null",
+		},
+		{
+			name:           "empty output with sentinel",
+			input:          "__OPENCLOUD_RETURN__:42",
+			expectedOutput: "",
+			expectedReturn: "42",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotOutput, gotReturn := extractReturnValue(tc.input)
+			if gotOutput != tc.expectedOutput {
+				t.Errorf("output: got %q, want %q", gotOutput, tc.expectedOutput)
+			}
+			if gotReturn != tc.expectedReturn {
+				t.Errorf("return: got %q, want %q", gotReturn, tc.expectedReturn)
+			}
+		})
+	}
+}
+
+// TestBuildReturnCaptureWrapper_Python verifies that the wrapper file for Python
+// contains the original function code and the sentinel-emitting capture snippet.
+func TestBuildReturnCaptureWrapper_Python(t *testing.T) {
+	// Write a minimal Python function file.
+	tmpSrc := t.TempDir()
+	fnPath := filepath.Join(tmpSrc, "fn.py")
+	if err := os.WriteFile(fnPath, []byte("def main():\n    return 'hello'\n"), 0644); err != nil {
+		t.Fatalf("write fn: %v", err)
+	}
+
+	wp, td, err := buildReturnCaptureWrapper("python3", fnPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer os.RemoveAll(td)
+
+	content, readErr := os.ReadFile(wp)
+	if readErr != nil {
+		t.Fatalf("read wrapper: %v", readErr)
+	}
+	body := string(content)
+	if !strings.Contains(body, "def main():") {
+		t.Error("wrapper should contain original function body")
+	}
+	if !strings.Contains(body, returnSentinel) {
+		t.Errorf("wrapper should contain sentinel %q", returnSentinel)
+	}
+}
+
+// TestBuildReturnCaptureWrapper_UnsupportedRuntime verifies that an unsupported
+// runtime returns an error.
+func TestBuildReturnCaptureWrapper_UnsupportedRuntime(t *testing.T) {
+	tmpSrc := t.TempDir()
+	fnPath := filepath.Join(tmpSrc, "fn.go")
+	if err := os.WriteFile(fnPath, []byte("package main\nfunc main(){}\n"), 0644); err != nil {
+		t.Fatalf("write fn: %v", err)
+	}
+
+	_, _, err := buildReturnCaptureWrapper("go", fnPath)
+	if err == nil {
+		t.Fatal("expected error for unsupported runtime, got nil")
+	}
+}
+
+// TestInvokeFunctionReturnValue runs a real Python function (if available) and
+// verifies that InvokeFunction returns both "output" and "return" fields.
+func TestInvokeFunctionReturnValue(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	funcDir := filepath.Join(tmpHome, ".opencloud", "functions")
+	if err := os.MkdirAll(funcDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write a function that prints something and returns a value.
+	fnName := "test_return.py"
+	fnContent := "def main():\n    print('hello')\n    return 'myreturn'\n"
+	if err := os.WriteFile(filepath.Join(funcDir, fnName), []byte(fnContent), 0644); err != nil {
+		t.Fatalf("write fn: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/invoke-function?name="+fnName, nil)
+	w := httptest.NewRecorder()
+	InvokeFunction(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if !strings.Contains(resp["output"], "hello") {
+		t.Errorf("expected 'hello' in output, got %q", resp["output"])
+	}
+	if resp["return"] != `"myreturn"` {
+		t.Errorf("expected return value %q, got %q", `"myreturn"`, resp["return"])
+	}
+}
+
 func TestAddCron(t *testing.T) {
 	// Skip test if crontab is not available
 	if _, err := exec.LookPath("crontab"); err != nil {
