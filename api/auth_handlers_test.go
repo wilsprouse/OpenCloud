@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
@@ -245,3 +246,266 @@ func TestRefreshAuthNoSession(t *testing.T) {
 		t.Errorf("expected %d, got %d", http.StatusUnauthorized, w.Code)
 	}
 }
+
+// TestGenerateCLITokenMethodNotAllowed verifies that non-POST requests are rejected.
+func TestGenerateCLITokenMethodNotAllowed(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/user/generate-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	GenerateCLIToken(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected %d, got %d", http.StatusMethodNotAllowed, w.Code)
+	}
+}
+
+// TestGenerateCLITokenSuccess verifies that a POST request generates and returns a token.
+func TestGenerateCLITokenSuccess(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/user/generate-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	GenerateCLIToken(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d — body: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	var resp cliTokenResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Token == "" {
+		t.Error("expected non-empty token in response")
+	}
+	if !resp.Exists {
+		t.Error("expected exists=true in response")
+	}
+}
+
+// TestGenerateCLITokenPersisted verifies that the token is written to disk.
+func TestGenerateCLITokenPersisted(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/user/generate-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	GenerateCLIToken(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var resp cliTokenResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	// Verify the token was written to the expected path.
+	path, err := cliTokenPath()
+	if err != nil {
+		t.Fatalf("cliTokenPath() error: %v", err)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read stored CLI token: %v", err)
+	}
+	if strings.TrimSpace(string(stored)) != resp.Token {
+		t.Errorf("stored token %q does not match response token %q", string(stored), resp.Token)
+	}
+}
+
+// TestGenerateCLITokenRotation verifies that regenerating replaces the old token.
+func TestGenerateCLITokenRotation(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	generate := func() string {
+		req := httptest.NewRequest(http.MethodPost, "/user/generate-cli-token", nil)
+		w := httptest.NewRecorder()
+		GenerateCLIToken(w, req)
+		var resp cliTokenResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		return resp.Token
+	}
+
+	first := generate()
+	second := generate()
+
+	if first == "" || second == "" {
+		t.Fatal("one of the generated tokens was empty")
+	}
+	if first == second {
+		t.Error("expected different tokens on regeneration")
+	}
+}
+
+// TestGetCLITokenStatusMethodNotAllowed verifies that non-GET requests are rejected.
+func TestGetCLITokenStatusMethodNotAllowed(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/user/get-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	GetCLITokenStatus(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected %d, got %d", http.StatusMethodNotAllowed, w.Code)
+	}
+}
+
+// TestGetCLITokenStatusNotExists verifies that a missing token file returns exists=false.
+func TestGetCLITokenStatusNotExists(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/user/get-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	GetCLITokenStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d — body: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	var resp cliTokenResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Exists {
+		t.Error("expected exists=false when no CLI token has been generated")
+	}
+}
+
+// TestGetCLITokenStatusExists verifies that an existing token file returns exists=true.
+func TestGetCLITokenStatusExists(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	// Generate a token first.
+	genReq := httptest.NewRequest(http.MethodPost, "/user/generate-cli-token", nil)
+	genW := httptest.NewRecorder()
+	GenerateCLIToken(genW, genReq)
+	if genW.Code != http.StatusOK {
+		t.Fatalf("setup: GenerateCLIToken failed: %d", genW.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/user/get-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	GetCLITokenStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, w.Code)
+	}
+
+	var resp cliTokenResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if !resp.Exists {
+		t.Error("expected exists=true after generating a CLI token")
+	}
+	if resp.Token != "" {
+		t.Error("GetCLITokenStatus must not return the token value")
+	}
+}
+
+// TestRevokeCLITokenMethodNotAllowed verifies that non-DELETE requests are rejected.
+func TestRevokeCLITokenMethodNotAllowed(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/user/revoke-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	RevokeCLIToken(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected %d, got %d", http.StatusMethodNotAllowed, w.Code)
+	}
+}
+
+// TestRevokeCLITokenSuccess verifies that an existing token can be revoked.
+func TestRevokeCLITokenSuccess(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	// Generate first.
+	genReq := httptest.NewRequest(http.MethodPost, "/user/generate-cli-token", nil)
+	genW := httptest.NewRecorder()
+	GenerateCLIToken(genW, genReq)
+
+	// Revoke.
+	req := httptest.NewRequest(http.MethodDelete, "/user/revoke-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	RevokeCLIToken(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d — body: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	var resp cliTokenResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Exists {
+		t.Error("expected exists=false after revoking")
+	}
+}
+
+// TestRevokeCLITokenNoToken verifies that revoking when no token exists still returns 200.
+func TestRevokeCLITokenNoToken(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodDelete, "/user/revoke-cli-token", nil)
+	w := httptest.NewRecorder()
+
+	RevokeCLIToken(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+// TestVerifyCLIToken verifies that VerifyCLIToken correctly matches stored tokens.
+func TestVerifyCLIToken(t *testing.T) {
+	cleanup := setupCredentialsFile(t, "admin", "admin")
+	defer cleanup()
+
+	// No token file yet.
+	ok, err := VerifyCLIToken("sometoken")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected false when no token file exists")
+	}
+
+	// Generate a token.
+	genReq := httptest.NewRequest(http.MethodPost, "/user/generate-cli-token", nil)
+	genW := httptest.NewRecorder()
+	GenerateCLIToken(genW, genReq)
+	var resp cliTokenResponse
+	json.NewDecoder(genW.Body).Decode(&resp)
+
+	// Correct token should match.
+	ok, err = VerifyCLIToken(resp.Token)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("expected true for the correct CLI token")
+	}
+
+	// Wrong token should not match.
+	ok, err = VerifyCLIToken("wrongtoken")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected false for an incorrect CLI token")
+	}
+}
+

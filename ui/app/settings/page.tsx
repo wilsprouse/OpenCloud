@@ -1,7 +1,7 @@
 'use client'
 
 import { useTheme } from "next-themes"
-import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle } from "lucide-react"
+import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle, KeyRound, Trash2 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -29,6 +29,13 @@ export default function SettingsPage() {
   const [sslCertbotCmd, setSSLCertbotCmd] = useState("")
   const [sslAutoRenewCmd, setSSLAutoRenewCmd] = useState("")
 
+  // CLI token state
+  const [cliTokenExists, setCliTokenExists] = useState(false)
+  const [cliToken, setCliToken] = useState("")
+  const [cliTokenLoading, setCliTokenLoading] = useState(false)
+  const [cliTokenError, setCliTokenError] = useState("")
+  const [cliTokenRevoked, setCliTokenRevoked] = useState(false)
+
   // Track which code snippet was just copied
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
@@ -44,6 +51,18 @@ export default function SettingsPage() {
       })
       .catch(() => {
         // Non-fatal: domain may not be configured yet.
+      })
+  }, [])
+
+  // Check whether a CLI token has already been generated.
+  useEffect(() => {
+    fetch("/api/user/get-cli-token")
+      .then((res) => res.json())
+      .then((data) => {
+        setCliTokenExists(!!data.exists)
+      })
+      .catch(() => {
+        // Non-fatal: token status unavailable.
       })
   }, [])
 
@@ -158,6 +177,57 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleGenerateCLIToken() {
+    setCliTokenError("")
+    setCliToken("")
+    setCliTokenRevoked(false)
+    setCliTokenLoading(true)
+    try {
+      const res = await fetch("/api/user/generate-cli-token", {
+        method: "POST",
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ message: "Failed to generate CLI token." }))
+        setCliTokenError(data.message || "Failed to generate CLI token.")
+        return
+      }
+
+      const data = await res.json()
+      setCliToken(data.token ?? "")
+      setCliTokenExists(true)
+    } catch {
+      setCliTokenError("Network error. Please try again.")
+    } finally {
+      setCliTokenLoading(false)
+    }
+  }
+
+  async function handleRevokeCLIToken() {
+    setCliTokenError("")
+    setCliToken("")
+    setCliTokenRevoked(false)
+    setCliTokenLoading(true)
+    try {
+      const res = await fetch("/api/user/revoke-cli-token", {
+        method: "DELETE",
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ message: "Failed to revoke CLI token." }))
+        setCliTokenError(data.message || "Failed to revoke CLI token.")
+        return
+      }
+
+      setCliTokenExists(false)
+      setCliTokenRevoked(true)
+    } catch {
+      setCliTokenError("Network error. Please try again.")
+    } finally {
+      setCliTokenLoading(false)
+    }
+  }
+
   return (
     <div className="container mx-auto max-w-2xl px-4 py-10">
       <h1 className="mb-8 text-2xl font-bold">Settings</h1>
@@ -186,6 +256,83 @@ export default function SettingsPage() {
             onCheckedChange={handleThemeToggle}
             aria-label="Toggle dark mode"
           />
+        </div>
+      </section>
+
+      {/* User Management section */}
+      <section className="rounded-lg border p-6 mb-6">
+        <h2 className="mb-4 text-lg font-semibold">User Management</h2>
+
+        <div className="flex items-start gap-3">
+          <KeyRound className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-3">
+            <div>
+              <Label className="text-sm font-medium">CLI Token</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Generate a token to authenticate CLI or API calls without using your password.
+                {cliTokenExists && !cliToken && (
+                  <span className="ml-1 text-green-600 dark:text-green-400 font-medium">
+                    A token is currently active.
+                    <span className="sr-only"> CLI token status: active</span>
+                  </span>
+                )}
+              </p>
+            </div>
+
+            <div className="flex gap-2 flex-wrap">
+              <Button
+                onClick={handleGenerateCLIToken}
+                disabled={cliTokenLoading}
+                className="w-full sm:w-auto"
+              >
+                {cliTokenLoading ? "Generating…" : cliTokenExists ? "Regenerate Token" : "Generate Token"}
+              </Button>
+
+              {cliTokenExists && !cliToken && (
+                <Button
+                  variant="destructive"
+                  onClick={handleRevokeCLIToken}
+                  disabled={cliTokenLoading}
+                  className="w-full sm:w-auto"
+                >
+                  <Trash2 className="h-4 w-4 mr-1.5" />
+                  Revoke Token
+                </Button>
+              )}
+            </div>
+
+            {cliTokenError && (
+              <p className="text-xs text-destructive" role="alert">{cliTokenError}</p>
+            )}
+
+            {cliTokenRevoked && (
+              <p className="text-xs text-muted-foreground" role="status">
+                CLI token has been revoked successfully.
+              </p>
+            )}
+
+            {/* Show the new token immediately after generation */}
+            {cliToken && (
+              <div className="rounded-md border bg-muted/50 p-4 space-y-3 text-sm">
+                <div className="flex items-start gap-2 rounded-md border border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950/30 px-3 py-2 text-xs text-yellow-800 dark:text-yellow-300">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>
+                    Copy this token now — it will not be shown again once you leave this page.
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">Your CLI token:</p>
+                  <CodeRow
+                    code={cliToken}
+                    copyKey="cliToken"
+                    copiedKey={copiedKey}
+                    onCopy={copyToClipboard}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -394,5 +541,4 @@ function CodeRow({ code, copyKey, copiedKey, onCopy }: CodeRowProps) {
     </div>
   )
 }
-
 

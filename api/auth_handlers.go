@@ -303,6 +303,142 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// cliTokenPath returns the path to the CLI token file.
+func cliTokenPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".opencloud", "user", "cli_token"), nil
+}
+
+// generateCLITokenValue creates a cryptographically random hex token string.
+func generateCLITokenValue() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// cliTokenResponse is returned by the generate and get CLI token handlers.
+type cliTokenResponse struct {
+	Token   string `json:"token,omitempty"`
+	Exists  bool   `json:"exists"`
+	Message string `json:"message,omitempty"`
+}
+
+// GenerateCLIToken handles POST /user/generate-cli-token.
+// It generates a new random CLI token, persists it to ~/.opencloud/user/cli_token,
+// and returns the token value to the caller. Any previously issued CLI token is
+// replaced. The token is returned only on generation — use this response to copy
+// the token before navigating away.
+func GenerateCLIToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Message: "method not allowed"})
+		return
+	}
+
+	token, err := generateCLITokenValue()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "failed to generate CLI token"})
+		return
+	}
+
+	path, err := cliTokenPath()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "failed to resolve token path"})
+		return
+	}
+
+	// Ensure the parent directory exists (created at startup, but guard anyway).
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "failed to create token directory"})
+		return
+	}
+
+	if err := os.WriteFile(path, []byte(token), 0600); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "failed to save CLI token"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, cliTokenResponse{Token: token, Exists: true})
+}
+
+// GetCLITokenStatus handles GET /user/get-cli-token.
+// It reports whether a CLI token has been generated, but does NOT return the
+// token value (to avoid exposing it over the wire after initial generation).
+func GetCLITokenStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Message: "method not allowed"})
+		return
+	}
+
+	path, err := cliTokenPath()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "failed to resolve token path"})
+		return
+	}
+
+	_, err = os.Stat(path)
+	if os.IsNotExist(err) {
+		writeJSON(w, http.StatusOK, cliTokenResponse{Exists: false})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "failed to check CLI token"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, cliTokenResponse{Exists: true})
+}
+
+// RevokeCLIToken handles DELETE /user/revoke-cli-token.
+// It removes the stored CLI token file, immediately invalidating the token.
+func RevokeCLIToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Message: "method not allowed"})
+		return
+	}
+
+	path, err := cliTokenPath()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "failed to resolve token path"})
+		return
+	}
+
+	err = os.Remove(path)
+	if os.IsNotExist(err) {
+		writeJSON(w, http.StatusOK, cliTokenResponse{Exists: false, Message: "no CLI token to revoke"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Message: "failed to revoke CLI token"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, cliTokenResponse{Exists: false, Message: "CLI token revoked"})
+}
+
+// VerifyCLIToken checks whether the provided raw token matches the stored CLI token.
+// Returns true if the token matches, false otherwise.
+func VerifyCLIToken(token string) (bool, error) {
+	path, err := cliTokenPath()
+	if err != nil {
+		return false, err
+	}
+
+	stored, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return strings.TrimSpace(string(stored)) == strings.TrimSpace(token), nil
+}
+
 // RefreshAuth handles GET /user/get-auth/.
 // It reads the current (possibly expired) access token from the AccessToken
 // header, verifies the HMAC signature to identify the user, checks that a
