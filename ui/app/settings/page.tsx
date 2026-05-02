@@ -1,12 +1,17 @@
 'use client'
 
 import { useTheme } from "next-themes"
-import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle, Terminal } from "lucide-react"
+import { Moon, Sun, Globe, Lock, Copy, Check, AlertCircle, Terminal, Trash2 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { useState, useEffect } from "react"
+
+interface CLITokenMeta {
+  id: string
+  createdAt: string
+}
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
@@ -32,12 +37,17 @@ export default function SettingsPage() {
   // CLI token state
   const [cliTokenLoading, setCliTokenLoading] = useState(false)
   const [cliTokenError, setCliTokenError] = useState("")
-  const [cliToken, setCliToken] = useState("")
+  // Newly generated token (shown once)
+  const [newToken, setNewToken] = useState<{ token: string; id: string } | null>(null)
+  // List of all active tokens
+  const [cliTokens, setCliTokens] = useState<CLITokenMeta[]>([])
+  const [cliTokensLoading, setCliTokensLoading] = useState(false)
+  const [revokeLoadingId, setRevokeLoadingId] = useState<string | null>(null)
 
   // Track which code snippet was just copied
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
-  // Load the current configured domain on mount.
+  // Load the current configured domain and CLI token list on mount.
   useEffect(() => {
     fetch("/api/get-instance-domain")
       .then((res) => res.json())
@@ -50,7 +60,18 @@ export default function SettingsPage() {
       .catch(() => {
         // Non-fatal: domain may not be configured yet.
       })
+
+    loadCLITokens()
   }, [])
+
+  function loadCLITokens() {
+    setCliTokensLoading(true)
+    fetch("/api/list-cli-tokens")
+      .then((res) => res.json())
+      .then((data: CLITokenMeta[]) => setCliTokens(data ?? []))
+      .catch(() => setCliTokens([]))
+      .finally(() => setCliTokensLoading(false))
+  }
 
   function handleThemeToggle(checked: boolean) {
     setTheme(checked ? "dark" : "light")
@@ -165,7 +186,7 @@ export default function SettingsPage() {
 
   async function handleGenerateCLIToken() {
     setCliTokenError("")
-    setCliToken("")
+    setNewToken(null)
     setCliTokenLoading(true)
     try {
       const res = await fetch("/api/generate-cli-token", { method: "POST" })
@@ -175,11 +196,32 @@ export default function SettingsPage() {
         return
       }
       const data = await res.json()
-      setCliToken(data.token ?? "")
+      setNewToken({ token: data.token ?? "", id: data.id ?? "" })
+      // Refresh the token list to show the new entry.
+      loadCLITokens()
     } catch {
       setCliTokenError("Network error. Please try again.")
     } finally {
       setCliTokenLoading(false)
+    }
+  }
+
+  async function handleRevokeToken(id: string) {
+    setRevokeLoadingId(id)
+    try {
+      const res = await fetch(`/api/revoke-cli-token/${id}`, { method: "DELETE" })
+      if (!res.ok && res.status !== 404) {
+        // Non-fatal: silently reload the list
+      }
+      // If the revoked token was the one just generated, clear it.
+      if (newToken?.id === id) {
+        setNewToken(null)
+      }
+      loadCLITokens()
+    } catch {
+      // Non-fatal
+    } finally {
+      setRevokeLoadingId(null)
     }
   }
 
@@ -211,6 +253,90 @@ export default function SettingsPage() {
             onCheckedChange={handleThemeToggle}
             aria-label="Toggle dark mode"
           />
+        </div>
+      </section>
+
+      {/* User Management section — shown before Instance Management */}
+      <section className="rounded-lg border p-6 mb-6">
+        <h2 className="mb-4 text-lg font-semibold">User Management</h2>
+
+        <div className="flex items-start gap-3">
+          <Terminal className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-3">
+            <div>
+              <Label className="text-sm font-medium">CLI Tokens</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Generate tokens to authenticate CLI requests to this OpenCloud instance.
+                Multiple tokens can be active at once. Copy a token immediately after generating it —
+                the plaintext will not be shown again.
+              </p>
+            </div>
+
+            <Button
+              onClick={handleGenerateCLIToken}
+              disabled={cliTokenLoading}
+              className="w-full sm:w-auto"
+            >
+              <Terminal className="h-4 w-4 mr-2" />
+              {cliTokenLoading ? "Generating…" : "Generate CLI Token"}
+            </Button>
+
+            {cliTokenError && (
+              <p className="text-xs text-destructive" role="alert">{cliTokenError}</p>
+            )}
+
+            {/* Newly generated token — shown once */}
+            {newToken && (
+              <div className="rounded-md border bg-muted/50 p-4 space-y-3 text-sm">
+                <div className="flex items-start gap-2 text-xs text-yellow-800 dark:text-yellow-300">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-yellow-500" />
+                  <span>Copy this token now. The plaintext will not be shown again.</span>
+                </div>
+                <CodeRow
+                  code={newToken.token}
+                  copyKey="cliToken"
+                  copiedKey={copiedKey}
+                  onCopy={copyToClipboard}
+                />
+                <p className="text-xs text-muted-foreground">Use with curl:</p>
+                <CodeRow
+                  code={`curl -u "${newToken.token}:" http://${savedDomain || "localhost:3000"}/api/get-server-metrics`}
+                  copyKey="cliTokenCurl"
+                  copiedKey={copiedKey}
+                  onCopy={copyToClipboard}
+                />
+              </div>
+            )}
+
+            {/* Active tokens table */}
+            {!cliTokensLoading && cliTokens.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Active tokens</p>
+                <div className="rounded-md border divide-y">
+                  {cliTokens.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between px-3 py-2 text-xs">
+                      <div className="space-y-0.5">
+                        <p className="font-mono text-muted-foreground truncate max-w-[260px]">{t.id}</p>
+                        <p className="text-muted-foreground">
+                          Created {new Date(t.createdAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
+                        onClick={() => handleRevokeToken(t.id)}
+                        disabled={revokeLoadingId === t.id}
+                        aria-label="Revoke token"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -390,59 +516,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </section>
-
-      {/* User Management section */}
-      <section className="rounded-lg border p-6 mt-6">
-        <h2 className="mb-4 text-lg font-semibold">User Management</h2>
-
-        <div className="flex items-start gap-3">
-          <Terminal className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
-          <div className="flex-1 space-y-3">
-            <div>
-              <Label className="text-sm font-medium">CLI Token</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Generate a token to authenticate CLI requests to this OpenCloud instance.
-                Copy it immediately — the token will not be shown again once you navigate away.
-              </p>
-            </div>
-
-            <Button
-              onClick={handleGenerateCLIToken}
-              disabled={cliTokenLoading}
-              className="w-full sm:w-auto"
-            >
-              <Terminal className="h-4 w-4 mr-2" />
-              {cliTokenLoading ? "Generating…" : "Generate CLI Token"}
-            </Button>
-
-            {cliTokenError && (
-              <p className="text-xs text-destructive" role="alert">{cliTokenError}</p>
-            )}
-
-            {cliToken && (
-              <div className="rounded-md border bg-muted/50 p-4 space-y-3 text-sm">
-                <div className="flex items-start gap-2 text-xs text-yellow-800 dark:text-yellow-300">
-                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-yellow-500" />
-                  <span>Copy this token now. The plaintext will not be shown again.</span>
-                </div>
-                <CodeRow
-                  code={cliToken}
-                  copyKey="cliToken"
-                  copiedKey={copiedKey}
-                  onCopy={copyToClipboard}
-                />
-                <p className="text-xs text-muted-foreground">Use with curl:</p>
-                <CodeRow
-                  code={`curl -u "${cliToken}:" http://localhost:3000/api/get-server-metrics`}
-                  copyKey="cliTokenCurl"
-                  copiedKey={copiedKey}
-                  onCopy={copyToClipboard}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
     </div>
   )
 }
@@ -472,5 +545,6 @@ function CodeRow({ code, copyKey, copiedKey, onCopy }: CodeRowProps) {
     </div>
   )
 }
+
 
 

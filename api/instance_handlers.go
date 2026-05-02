@@ -201,15 +201,20 @@ func GetSSLStatusHandler(w http.ResponseWriter, r *http.Request) {
 // GenerateCLITokenResponse is the JSON body returned by GenerateCLITokenHandler.
 type GenerateCLITokenResponse struct {
 	// Token is the newly generated CLI token shown once to the user.
-	// A bcrypt hash of the token is persisted on the server for future
-	// authentication; the plaintext is never stored.
+	// A bcrypt hash of the token is persisted on the server; the plaintext is
+	// never stored.
 	Token string `json:"token"`
+	// ID is the unique identifier for this token, used to revoke it later.
+	ID string `json:"id"`
+	// CreatedAt is the RFC3339-formatted creation timestamp.
+	CreatedAt string `json:"createdAt"`
 }
 
 // GenerateCLITokenHandler handles POST /generate-cli-token.
 // It generates a cryptographically random 32-byte token (hex-encoded),
-// persists a bcrypt hash of the token on disk (replacing any previous CLI
-// token), and returns the plaintext token to the caller exactly once.
+// persists a bcrypt hash of the token on disk alongside a unique ID, and
+// returns the plaintext token to the caller exactly once.  Multiple tokens may
+// be active simultaneously; each has its own ID that can be used to revoke it.
 //
 // Usage with curl:
 //
@@ -230,13 +235,69 @@ func GenerateCLITokenHandler(w http.ResponseWriter, r *http.Request) {
 
 	token := hex.EncodeToString(raw)
 
-	if err := StoreCLITokenHash(token); err != nil {
+	id, createdAt, err := StoreCLITokenHash(token)
+	if err != nil {
 		http.Error(w, "Failed to store token", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GenerateCLITokenResponse{Token: token})
+	json.NewEncoder(w).Encode(GenerateCLITokenResponse{
+		Token:     token,
+		ID:        id,
+		CreatedAt: createdAt,
+	})
+}
+
+// ListCLITokensHandler handles GET /list-cli-tokens.
+// It returns metadata (ID and creation timestamp) for all active CLI tokens.
+// Hash material is never included in the response.
+//
+// Response: []cliTokenMeta — may be an empty array if no tokens exist.
+func ListCLITokensHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	meta, err := ListCLITokenMeta()
+	if err != nil {
+		http.Error(w, "Failed to list tokens", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(meta)
+}
+
+// RevokeCLITokenHandler handles DELETE /revoke-cli-token/{id}.
+// It removes the token with the given ID from persistent storage.
+// Returns 404 if the ID does not match any active token.
+func RevokeCLITokenHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract the token ID from the URL path:  /revoke-cli-token/<id>
+	id := strings.TrimPrefix(r.URL.Path, "/revoke-cli-token/")
+	id = strings.TrimSpace(id)
+	if id == "" {
+		http.Error(w, "Missing token ID", http.StatusBadRequest)
+		return
+	}
+
+	found, err := RevokeCLIToken(id)
+	if err != nil {
+		http.Error(w, "Failed to revoke token", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "Token not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ConfigureSSLHandler handles POST /configure-ssl.

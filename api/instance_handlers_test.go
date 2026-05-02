@@ -55,8 +55,8 @@ func TestGenerateCLITokenHandlerMethodNotAllowed(t *testing.T) {
 }
 
 // TestGenerateCLITokenHandlerSuccess verifies that the handler returns a non-empty
-// hex-encoded token, stores a hash on disk, and that two successive calls return
-// different tokens.
+// hex-encoded token with an ID, stores a hash on disk, and that two successive
+// calls both remain valid (multi-token support).
 func TestGenerateCLITokenHandlerSuccess(t *testing.T) {
 	setupTempHome(t)
 
@@ -84,6 +84,13 @@ func TestGenerateCLITokenHandlerSuccess(t *testing.T) {
 	if !isHex(resp.Token) {
 		t.Errorf("token is not valid hex: %q", resp.Token)
 	}
+	// Response must include a non-empty ID and creation timestamp.
+	if resp.ID == "" {
+		t.Error("response ID should not be empty")
+	}
+	if resp.CreatedAt == "" {
+		t.Error("response CreatedAt should not be empty")
+	}
 
 	// The token hash must have been persisted on disk and be verifiable.
 	ok, err := VerifyCLIToken(resp.Token)
@@ -106,13 +113,17 @@ func TestGenerateCLITokenHandlerSuccess(t *testing.T) {
 	if resp.Token == resp2.Token {
 		t.Error("two successive calls returned the same token; expected unique tokens")
 	}
-	// After regeneration, the old token must no longer verify.
+	if resp.ID == resp2.ID {
+		t.Error("two successive calls returned the same ID; expected unique IDs")
+	}
+
+	// With multi-token support, the FIRST token must still be valid after a second is generated.
 	ok, err = VerifyCLIToken(resp.Token)
 	if err != nil {
-		t.Fatalf("VerifyCLIToken (old token) error: %v", err)
+		t.Fatalf("VerifyCLIToken (first token after second generated) error: %v", err)
 	}
-	if ok {
-		t.Error("old token should no longer verify after a new token is generated")
+	if !ok {
+		t.Error("first token should still be valid after a second token is generated")
 	}
 }
 
@@ -139,30 +150,168 @@ func TestVerifyCLITokenNoFile(t *testing.T) {
 	}
 }
 
-// TestStoreCLITokenHashAndVerify verifies round-trip storage and verification.
+// TestStoreCLITokenHashAndVerify verifies round-trip storage and verification
+// for multiple tokens simultaneously.
 func TestStoreCLITokenHashAndVerify(t *testing.T) {
 	setupTempHome(t)
 
-	token := "mysecrettoken"
-	if err := StoreCLITokenHash(token); err != nil {
-		t.Fatalf("StoreCLITokenHash: %v", err)
+	token1 := "mysecrettoken1"
+	id1, createdAt1, err := StoreCLITokenHash(token1)
+	if err != nil {
+		t.Fatalf("StoreCLITokenHash (token1): %v", err)
+	}
+	if id1 == "" {
+		t.Error("id1 should not be empty")
+	}
+	if createdAt1 == "" {
+		t.Error("createdAt1 should not be empty")
 	}
 
-	ok, err := VerifyCLIToken(token)
+	token2 := "mysecrettoken2"
+	id2, _, err := StoreCLITokenHash(token2)
 	if err != nil {
-		t.Fatalf("VerifyCLIToken: %v", err)
+		t.Fatalf("StoreCLITokenHash (token2): %v", err)
 	}
-	if !ok {
-		t.Error("expected token to verify successfully")
+	if id1 == id2 {
+		t.Error("two tokens must have distinct IDs")
+	}
+
+	// Both tokens must verify.
+	for _, tok := range []string{token1, token2} {
+		ok, err := VerifyCLIToken(tok)
+		if err != nil {
+			t.Fatalf("VerifyCLIToken(%q): %v", tok, err)
+		}
+		if !ok {
+			t.Errorf("expected token %q to verify", tok)
+		}
 	}
 
 	// Wrong token must not verify.
-	ok, err = VerifyCLIToken("wrongtoken")
+	ok, err := VerifyCLIToken("wrongtoken")
 	if err != nil {
 		t.Fatalf("VerifyCLIToken (wrong): %v", err)
 	}
 	if ok {
 		t.Error("wrong token must not verify")
+	}
+}
+
+// TestListCLITokensHandler verifies that the list endpoint returns the correct
+// metadata after tokens are generated.
+func TestListCLITokensHandler(t *testing.T) {
+	setupTempHome(t)
+
+	// Generate two tokens.
+	req1 := httptest.NewRequest(http.MethodPost, "/generate-cli-token", nil)
+	GenerateCLITokenHandler(httptest.NewRecorder(), req1)
+	req2 := httptest.NewRequest(http.MethodPost, "/generate-cli-token", nil)
+	GenerateCLITokenHandler(httptest.NewRecorder(), req2)
+
+	// List tokens.
+	listReq := httptest.NewRequest(http.MethodGet, "/list-cli-tokens", nil)
+	listW := httptest.NewRecorder()
+	ListCLITokensHandler(listW, listReq)
+
+	if listW.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+
+	var meta []cliTokenMeta
+	if err := json.NewDecoder(listW.Body).Decode(&meta); err != nil {
+		t.Fatalf("invalid JSON response: %v", err)
+	}
+	if len(meta) != 2 {
+		t.Errorf("expected 2 tokens, got %d", len(meta))
+	}
+	for _, m := range meta {
+		if m.ID == "" {
+			t.Error("token meta ID should not be empty")
+		}
+		if m.CreatedAt == "" {
+			t.Error("token meta CreatedAt should not be empty")
+		}
+	}
+}
+
+// TestListCLITokensHandlerMethodNotAllowed verifies that non-GET requests are rejected.
+func TestListCLITokensHandlerMethodNotAllowed(t *testing.T) {
+	setupTempHome(t)
+	req := httptest.NewRequest(http.MethodPost, "/list-cli-tokens", nil)
+	w := httptest.NewRecorder()
+	ListCLITokensHandler(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestRevokeCLITokenHandler verifies that revoking a token removes it from the
+// store and makes it unverifiable, while leaving other tokens intact.
+func TestRevokeCLITokenHandler(t *testing.T) {
+	setupTempHome(t)
+
+	// Generate two tokens via the handler.
+	genReq1 := httptest.NewRequest(http.MethodPost, "/generate-cli-token", nil)
+	genW1 := httptest.NewRecorder()
+	GenerateCLITokenHandler(genW1, genReq1)
+	var genResp1 GenerateCLITokenResponse
+	json.NewDecoder(genW1.Body).Decode(&genResp1)
+
+	genReq2 := httptest.NewRequest(http.MethodPost, "/generate-cli-token", nil)
+	genW2 := httptest.NewRecorder()
+	GenerateCLITokenHandler(genW2, genReq2)
+	var genResp2 GenerateCLITokenResponse
+	json.NewDecoder(genW2.Body).Decode(&genResp2)
+
+	// Revoke the first token.
+	revokeReq := httptest.NewRequest(http.MethodDelete, "/revoke-cli-token/"+genResp1.ID, nil)
+	revokeReq.RequestURI = "/revoke-cli-token/" + genResp1.ID
+	revokeW := httptest.NewRecorder()
+	RevokeCLITokenHandler(revokeW, revokeReq)
+	if revokeW.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", revokeW.Code, revokeW.Body.String())
+	}
+
+	// First token must no longer verify.
+	ok, err := VerifyCLIToken(genResp1.Token)
+	if err != nil {
+		t.Fatalf("VerifyCLIToken (revoked): %v", err)
+	}
+	if ok {
+		t.Error("revoked token should not verify")
+	}
+
+	// Second token must still verify.
+	ok, err = VerifyCLIToken(genResp2.Token)
+	if err != nil {
+		t.Fatalf("VerifyCLIToken (remaining): %v", err)
+	}
+	if !ok {
+		t.Error("non-revoked token should still verify")
+	}
+}
+
+// TestRevokeCLITokenHandlerNotFound verifies that revoking a non-existent ID
+// returns 404.
+func TestRevokeCLITokenHandlerNotFound(t *testing.T) {
+	setupTempHome(t)
+	req := httptest.NewRequest(http.MethodDelete, "/revoke-cli-token/doesnotexist", nil)
+	req.RequestURI = "/revoke-cli-token/doesnotexist"
+	w := httptest.NewRecorder()
+	RevokeCLITokenHandler(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// TestRevokeCLITokenHandlerMethodNotAllowed verifies that non-DELETE requests are rejected.
+func TestRevokeCLITokenHandlerMethodNotAllowed(t *testing.T) {
+	setupTempHome(t)
+	req := httptest.NewRequest(http.MethodGet, "/revoke-cli-token/someid", nil)
+	w := httptest.NewRecorder()
+	RevokeCLITokenHandler(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 
@@ -196,7 +345,7 @@ func TestWithCLITokenAuthValidToken(t *testing.T) {
 	setupTempHome(t)
 
 	token := "validtoken123"
-	if err := StoreCLITokenHash(token); err != nil {
+	if _, _, err := StoreCLITokenHash(token); err != nil {
 		t.Fatalf("StoreCLITokenHash: %v", err)
 	}
 
@@ -225,7 +374,7 @@ func TestWithCLITokenAuthValidToken(t *testing.T) {
 func TestWithCLITokenAuthInvalidToken(t *testing.T) {
 	setupTempHome(t)
 
-	if err := StoreCLITokenHash("correcttoken"); err != nil {
+	if _, _, err := StoreCLITokenHash("correcttoken"); err != nil {
 		t.Fatalf("StoreCLITokenHash: %v", err)
 	}
 

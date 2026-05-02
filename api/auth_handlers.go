@@ -19,65 +19,172 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// cliTokensPath returns the path to the file that stores the active CLI token hash.
-// Only one CLI token is active at a time; generating a new one overwrites the previous.
+// cliTokensPath returns the path to the JSON file that stores all active CLI
+// token hashes.
 func cliTokensPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".opencloud", "user", "cli_token_hash"), nil
+	return filepath.Join(home, ".opencloud", "user", "cli_tokens.json"), nil
 }
 
-// StoreCLITokenHash bcrypt-hashes the given plaintext CLI token and persists
-// the hash to disk, replacing any previously stored hash.
-func StoreCLITokenHash(token string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("cli token: hash failed: %w", err)
-	}
+// cliTokenEntry represents one stored CLI token (without the plaintext).
+type cliTokenEntry struct {
+	// ID is the unique identifier for this token (hex-encoded random bytes).
+	ID string `json:"id"`
+	// Hash is the bcrypt hash of the plaintext token.
+	Hash string `json:"hash"`
+	// CreatedAt is the RFC3339-formatted creation timestamp.
+	CreatedAt string `json:"createdAt"`
+}
 
+// readCLITokens reads all stored CLI token entries from disk.
+// Returns an empty slice when no tokens have been stored yet.
+func readCLITokens() ([]cliTokenEntry, error) {
 	path, err := cliTokensPath()
 	if err != nil {
-		return fmt.Errorf("cli token: cannot resolve path: %w", err)
+		return nil, err
+	}
+
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return []cliTokenEntry{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cli tokens: cannot read file: %w", err)
+	}
+
+	var entries []cliTokenEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("cli tokens: cannot parse file: %w", err)
+	}
+	return entries, nil
+}
+
+// writeCLITokens persists the given CLI token entries to disk.
+func writeCLITokens(entries []cliTokenEntry) error {
+	path, err := cliTokensPath()
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return fmt.Errorf("cli token: cannot create directory: %w", err)
+		return fmt.Errorf("cli tokens: cannot create directory: %w", err)
 	}
 
-	if err := os.WriteFile(path, hash, 0600); err != nil {
-		return fmt.Errorf("cli token: cannot write hash: %w", err)
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return fmt.Errorf("cli tokens: cannot encode entries: %w", err)
 	}
 
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("cli tokens: cannot write file: %w", err)
+	}
 	return nil
 }
 
-// VerifyCLIToken checks whether the provided plaintext token matches the stored
-// bcrypt hash.  It returns (false, nil) when no token has been generated yet.
+// StoreCLITokenHash bcrypt-hashes the given plaintext CLI token, appends a new
+// entry to the token list, and persists it to disk.  The generated token ID and
+// creation timestamp are returned.
+func StoreCLITokenHash(token string) (id string, createdAt string, err error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
+	if err != nil {
+		return "", "", fmt.Errorf("cli token: hash failed: %w", err)
+	}
+
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
+		return "", "", fmt.Errorf("cli token: cannot generate id: %w", err)
+	}
+	id = hex.EncodeToString(idBytes)
+	createdAt = time.Now().UTC().Format(time.RFC3339)
+
+	entries, err := readCLITokens()
+	if err != nil {
+		return "", "", err
+	}
+
+	entries = append(entries, cliTokenEntry{
+		ID:        id,
+		Hash:      string(hash),
+		CreatedAt: createdAt,
+	})
+
+	if err := writeCLITokens(entries); err != nil {
+		return "", "", err
+	}
+
+	return id, createdAt, nil
+}
+
+// VerifyCLIToken checks whether the provided plaintext token matches any of the
+// stored bcrypt hashes.  It returns (false, nil) when no tokens exist.
 func VerifyCLIToken(token string) (bool, error) {
-	path, err := cliTokensPath()
+	entries, err := readCLITokens()
 	if err != nil {
-		return false, fmt.Errorf("cli token: cannot resolve path: %w", err)
+		return false, err
 	}
 
-	hash, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		// No CLI token has ever been generated.
+	for _, e := range entries {
+		err := bcrypt.CompareHashAndPassword([]byte(e.Hash), []byte(token))
+		if err == nil {
+			return true, nil
+		}
+		if err != bcrypt.ErrMismatchedHashAndPassword {
+			// Unexpected error (e.g. malformed hash); skip this entry.
+			continue
+		}
+	}
+	return false, nil
+}
+
+// ListCLITokenMeta returns metadata for all stored CLI tokens (IDs and creation
+// timestamps) without exposing any hash material.
+func ListCLITokenMeta() ([]cliTokenMeta, error) {
+	entries, err := readCLITokens()
+	if err != nil {
+		return nil, err
+	}
+
+	meta := make([]cliTokenMeta, len(entries))
+	for i, e := range entries {
+		meta[i] = cliTokenMeta{ID: e.ID, CreatedAt: e.CreatedAt}
+	}
+	return meta, nil
+}
+
+// cliTokenMeta is a safe, hash-free view of a cliTokenEntry for API responses.
+type cliTokenMeta struct {
+	ID        string `json:"id"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// RevokeCLIToken removes the token with the given ID from persistent storage.
+// Returns (false, nil) when no token with that ID exists.
+func RevokeCLIToken(id string) (bool, error) {
+	entries, err := readCLITokens()
+	if err != nil {
+		return false, err
+	}
+
+	filtered := make([]cliTokenEntry, 0, len(entries))
+	found := false
+	for _, e := range entries {
+		if e.ID == id {
+			found = true
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+
+	if !found {
 		return false, nil
 	}
-	if err != nil {
-		return false, fmt.Errorf("cli token: cannot read hash: %w", err)
-	}
 
-	err = bcrypt.CompareHashAndPassword(hash, []byte(token))
-	if err == bcrypt.ErrMismatchedHashAndPassword {
-		return false, nil
+	if err := writeCLITokens(filtered); err != nil {
+		return false, err
 	}
-	if err != nil {
-		return false, fmt.Errorf("cli token: comparison error: %w", err)
-	}
-
 	return true, nil
 }
 
