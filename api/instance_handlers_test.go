@@ -2,14 +2,30 @@ package api
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/WavexSoftware/OpenCloud/service_ledger"
 )
+
+// setupTempHome creates a temporary home directory with the .opencloud/user
+// subdirectory and redirects HOME to it.  It registers a t.Cleanup that
+// restores the original HOME value.
+func setupTempHome(t *testing.T) {
+	t.Helper()
+	tmpHome := t.TempDir()
+	if err := os.MkdirAll(tmpHome+"/.opencloud/user", 0700); err != nil {
+		t.Fatalf("setupTempHome: %v", err)
+	}
+	orig := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	t.Cleanup(func() { os.Setenv("HOME", orig) })
+}
 
 // saveLedgerState reads the current service ledger and registers a t.Cleanup that
 // restores it when the test finishes, preventing test state from leaking.
@@ -29,6 +45,7 @@ func saveLedgerState(t *testing.T) {
 
 // TestGenerateCLITokenHandlerMethodNotAllowed verifies that non-POST requests are rejected.
 func TestGenerateCLITokenHandlerMethodNotAllowed(t *testing.T) {
+	setupTempHome(t)
 	req := httptest.NewRequest(http.MethodGet, "/generate-cli-token", nil)
 	w := httptest.NewRecorder()
 	GenerateCLITokenHandler(w, req)
@@ -38,8 +55,11 @@ func TestGenerateCLITokenHandlerMethodNotAllowed(t *testing.T) {
 }
 
 // TestGenerateCLITokenHandlerSuccess verifies that the handler returns a non-empty
-// hex-encoded token and that two successive calls return different tokens.
+// hex-encoded token, stores a hash on disk, and that two successive calls return
+// different tokens.
 func TestGenerateCLITokenHandlerSuccess(t *testing.T) {
+	setupTempHome(t)
+
 	req := httptest.NewRequest(http.MethodPost, "/generate-cli-token", nil)
 	w := httptest.NewRecorder()
 	GenerateCLITokenHandler(w, req)
@@ -65,6 +85,15 @@ func TestGenerateCLITokenHandlerSuccess(t *testing.T) {
 		t.Errorf("token is not valid hex: %q", resp.Token)
 	}
 
+	// The token hash must have been persisted on disk and be verifiable.
+	ok, err := VerifyCLIToken(resp.Token)
+	if err != nil {
+		t.Fatalf("VerifyCLIToken error: %v", err)
+	}
+	if !ok {
+		t.Error("generated token should verify against the stored hash")
+	}
+
 	// A second call should produce a different token.
 	req2 := httptest.NewRequest(http.MethodPost, "/generate-cli-token", nil)
 	w2 := httptest.NewRecorder()
@@ -77,6 +106,14 @@ func TestGenerateCLITokenHandlerSuccess(t *testing.T) {
 	if resp.Token == resp2.Token {
 		t.Error("two successive calls returned the same token; expected unique tokens")
 	}
+	// After regeneration, the old token must no longer verify.
+	ok, err = VerifyCLIToken(resp.Token)
+	if err != nil {
+		t.Fatalf("VerifyCLIToken (old token) error: %v", err)
+	}
+	if ok {
+		t.Error("old token should no longer verify after a new token is generated")
+	}
 }
 
 // isHex returns true if every character in s is a valid lowercase hex digit.
@@ -87,6 +124,145 @@ func isHex(s string) bool {
 		}
 	}
 	return true
+}
+
+// TestVerifyCLITokenNoFile verifies that VerifyCLIToken returns false (not an
+// error) when no CLI token has ever been generated.
+func TestVerifyCLITokenNoFile(t *testing.T) {
+	setupTempHome(t)
+	ok, err := VerifyCLIToken("anything")
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if ok {
+		t.Error("expected false when no token file exists")
+	}
+}
+
+// TestStoreCLITokenHashAndVerify verifies round-trip storage and verification.
+func TestStoreCLITokenHashAndVerify(t *testing.T) {
+	setupTempHome(t)
+
+	token := "mysecrettoken"
+	if err := StoreCLITokenHash(token); err != nil {
+		t.Fatalf("StoreCLITokenHash: %v", err)
+	}
+
+	ok, err := VerifyCLIToken(token)
+	if err != nil {
+		t.Fatalf("VerifyCLIToken: %v", err)
+	}
+	if !ok {
+		t.Error("expected token to verify successfully")
+	}
+
+	// Wrong token must not verify.
+	ok, err = VerifyCLIToken("wrongtoken")
+	if err != nil {
+		t.Fatalf("VerifyCLIToken (wrong): %v", err)
+	}
+	if ok {
+		t.Error("wrong token must not verify")
+	}
+}
+
+// TestWithCLITokenAuthNoHeader verifies that requests without an Authorization
+// header pass through untouched.
+func TestWithCLITokenAuthNoHeader(t *testing.T) {
+	setupTempHome(t)
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := WithCLITokenAuth(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/some-endpoint", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !called {
+		t.Error("inner handler should have been called when no Authorization header is present")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+// TestWithCLITokenAuthValidToken verifies that a request with a valid CLI token
+// in the Basic auth username field passes through to the inner handler.
+func TestWithCLITokenAuthValidToken(t *testing.T) {
+	setupTempHome(t)
+
+	token := "validtoken123"
+	if err := StoreCLITokenHash(token); err != nil {
+		t.Fatalf("StoreCLITokenHash: %v", err)
+	}
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := WithCLITokenAuth(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/some-endpoint", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(token+":")))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !called {
+		t.Error("inner handler should have been called for a valid CLI token")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+// TestWithCLITokenAuthInvalidToken verifies that a request with an incorrect token
+// is rejected with 401.
+func TestWithCLITokenAuthInvalidToken(t *testing.T) {
+	setupTempHome(t)
+
+	if err := StoreCLITokenHash("correcttoken"); err != nil {
+		t.Fatalf("StoreCLITokenHash: %v", err)
+	}
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := WithCLITokenAuth(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/some-endpoint", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("wrongtoken:")))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+// TestWithCLITokenAuthMalformedHeader verifies that a malformed Authorization
+// header returns 401.
+func TestWithCLITokenAuthMalformedHeader(t *testing.T) {
+	setupTempHome(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := WithCLITokenAuth(inner)
+
+	// Non-Basic scheme
+	req := httptest.NewRequest(http.MethodGet, "/some-endpoint", nil)
+	req.Header.Set("Authorization", "Bearer sometoken")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for non-Basic scheme, got %d", w.Code)
+	}
 }
 
 func TestIsValidDomain(t *testing.T) {

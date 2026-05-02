@@ -423,11 +423,18 @@ export default function SettingsPage() {
               <div className="rounded-md border bg-muted/50 p-4 space-y-3 text-sm">
                 <div className="flex items-start gap-2 text-xs text-yellow-800 dark:text-yellow-300">
                   <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-yellow-500" />
-                  <span>Copy this token now. It will not be stored or shown again.</span>
+                  <span>Copy this token now. The plaintext will not be shown again.</span>
                 </div>
                 <CodeRow
                   code={cliToken}
                   copyKey="cliToken"
+                  copiedKey={copiedKey}
+                  onCopy={copyToClipboard}
+                />
+                <p className="text-xs text-muted-foreground">Use with curl:</p>
+                <CodeRow
+                  code={`curl -u "${cliToken}:" http://localhost:3000/api/get-server-metrics`}
+                  copyKey="cliTokenCurl"
                   copiedKey={copiedKey}
                   onCopy={copyToClipboard}
                 />

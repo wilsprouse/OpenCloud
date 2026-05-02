@@ -200,15 +200,20 @@ func GetSSLStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 // GenerateCLITokenResponse is the JSON body returned by GenerateCLITokenHandler.
 type GenerateCLITokenResponse struct {
-	// Token is the newly generated CLI token. It is never persisted — the user
-	// must copy it immediately because it cannot be retrieved again.
+	// Token is the newly generated CLI token shown once to the user.
+	// A bcrypt hash of the token is persisted on the server for future
+	// authentication; the plaintext is never stored.
 	Token string `json:"token"`
 }
 
 // GenerateCLITokenHandler handles POST /generate-cli-token.
-// It generates a cryptographically random 32-byte token (hex-encoded) and
-// returns it to the caller. The token is NOT stored anywhere — this endpoint
-// exists solely to provide a token value for display in the UI.
+// It generates a cryptographically random 32-byte token (hex-encoded),
+// persists a bcrypt hash of the token on disk (replacing any previous CLI
+// token), and returns the plaintext token to the caller exactly once.
+//
+// Usage with curl:
+//
+//	curl -u "<token>:" http://localhost:3000/api/<path>
 //
 // Response: GenerateCLITokenResponse
 func GenerateCLITokenHandler(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +229,11 @@ func GenerateCLITokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := hex.EncodeToString(raw)
+
+	if err := StoreCLITokenHash(token); err != nil {
+		http.Error(w, "Failed to store token", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(GenerateCLITokenResponse{Token: token})

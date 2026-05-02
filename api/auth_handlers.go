@@ -19,6 +19,115 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// cliTokensPath returns the path to the file that stores the active CLI token hash.
+// Only one CLI token is active at a time; generating a new one overwrites the previous.
+func cliTokensPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".opencloud", "user", "cli_token_hash"), nil
+}
+
+// StoreCLITokenHash bcrypt-hashes the given plaintext CLI token and persists
+// the hash to disk, replacing any previously stored hash.
+func StoreCLITokenHash(token string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("cli token: hash failed: %w", err)
+	}
+
+	path, err := cliTokensPath()
+	if err != nil {
+		return fmt.Errorf("cli token: cannot resolve path: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("cli token: cannot create directory: %w", err)
+	}
+
+	if err := os.WriteFile(path, hash, 0600); err != nil {
+		return fmt.Errorf("cli token: cannot write hash: %w", err)
+	}
+
+	return nil
+}
+
+// VerifyCLIToken checks whether the provided plaintext token matches the stored
+// bcrypt hash.  It returns (false, nil) when no token has been generated yet.
+func VerifyCLIToken(token string) (bool, error) {
+	path, err := cliTokensPath()
+	if err != nil {
+		return false, fmt.Errorf("cli token: cannot resolve path: %w", err)
+	}
+
+	hash, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		// No CLI token has ever been generated.
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("cli token: cannot read hash: %w", err)
+	}
+
+	err = bcrypt.CompareHashAndPassword(hash, []byte(token))
+	if err == bcrypt.ErrMismatchedHashAndPassword {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("cli token: comparison error: %w", err)
+	}
+
+	return true, nil
+}
+
+// WithCLITokenAuth is HTTP middleware that authenticates requests using HTTP
+// Basic Auth where the CLI token is supplied as the username (password is
+// ignored).  This supports the usage pattern:
+//
+//	curl -u "<token>:" http://localhost:3000/api/<path>
+//
+// Behavior:
+//   - Request has no Authorization header → passed through unchanged.
+//   - Request has a valid Basic-auth CLI token → passed through.
+//   - Request has an Authorization header with an invalid/unknown token → 401.
+func WithCLITokenAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			// No auth header — let the request pass through as before.
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		const prefix = "Basic "
+		if !strings.HasPrefix(authHeader, prefix) {
+			// Non-Basic auth schemes are not supported for CLI tokens.
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(authHeader, prefix))
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Basic auth format: "username:password".  For CLI token auth the
+		// token is the username; the password field is intentionally empty.
+		parts := strings.SplitN(string(decoded), ":", 2)
+		token := parts[0]
+
+		ok, err := VerifyCLIToken(token)
+		if err != nil || !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // tokenClaims holds the data encoded inside an auth token.
 type tokenClaims struct {
 	Subject   string `json:"sub"`
