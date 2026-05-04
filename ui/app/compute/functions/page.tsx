@@ -578,7 +578,7 @@ export default function FunctionsPage() {
                           {fn.trigger.type === "gateway" ? (
                             <span className="flex items-center text-green-600">
                               <Globe className="h-3 w-3 mr-1" />
-                              GATEWAY: {fn.trigger.gatewayPathPrefix}
+                              GATEWAY: {fn.trigger.gatewayPathPrefix} | /api/invoke-function?name={fn.name}
                             </span>
                           ) : (
                             <span className="flex items-center text-blue-600">

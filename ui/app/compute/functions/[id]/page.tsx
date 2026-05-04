@@ -488,6 +488,10 @@ export default function FunctionDetail({ params }: { params: Promise<{ id: strin
                   <p className="text-xs text-muted-foreground">
                     HTTP requests to this path will invoke the function.
                   </p>
+                  <p className="text-xs text-muted-foreground">
+                    Direct API endpoint:{" "}
+                    <span className="font-mono bg-muted px-1 py-0.5 rounded">/api/invoke-function?name={functionId}</span>
+                  </p>
                 </div>
               )}
             </div>

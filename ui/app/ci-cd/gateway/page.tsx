@@ -543,10 +543,24 @@ function GatewayPageInner() {
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="space-y-1">
                     <p className="text-xs text-muted-foreground">
                       Created: {new Date(route.createdAt).toLocaleString()}
                     </p>
+                    {(() => {
+                      try {
+                        const url = new URL(route.targetURL, 'http://localhost')
+                        const apiPath = `/api${url.pathname}${url.search}`
+                        return (
+                          <p className="text-xs text-muted-foreground">
+                            Direct API path:{" "}
+                            <span className="font-mono bg-muted px-1 py-0.5 rounded">{apiPath}</span>
+                          </p>
+                        )
+                      } catch {
+                        return null
+                      }
+                    })()}
                   </CardContent>
                 </Card>
               ))
