@@ -199,14 +199,16 @@ func main() {
 	mux.HandleFunc("/get-ssl-status", api.GetSSLStatusHandler)
 	mux.HandleFunc("/configure-ssl", api.ConfigureSSLHandler)
 	mux.HandleFunc("/generate-cli-token", api.GenerateCLITokenHandler)
+	mux.HandleFunc("/list-cli-tokens", api.ListCLITokensHandler)
+	mux.HandleFunc("/revoke-cli-token/", api.RevokeCLITokenHandler)
 	mux.HandleFunc("/list-gateway-routes", api.ListGatewayRoutes)
 	mux.HandleFunc("/create-gateway-route", api.CreateGatewayRoute)
 	mux.HandleFunc("/update-gateway-route/", api.UpdateGatewayRoute)
 	mux.HandleFunc("/delete-gateway-route/", api.DeleteGatewayRoute)
 	mux.HandleFunc("/", api.HandleGatewayRoutes)
 
-	// Wrap all routes with CORS middleware
-	handler := withCORS(mux)
+	// Wrap all routes with CORS middleware, then CLI token authentication.
+	handler := withCORS(api.WithCLITokenAuth(mux))
 
 	fmt.Println("Server running on localhost:3030")
 	// IMPORTANT: Only listen on localhost for security
